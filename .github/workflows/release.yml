@@ -20,6 +20,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26.8.1'
       - uses: ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04
       - name: Validate tag and source version
         shell: bash
