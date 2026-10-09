@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -20,8 +20,8 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	}
 	fs := flag.NewFlagSet("nuntius", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	config := fs.String("config", filepath.Join(home, ".config", "nuntius", "lanes.json"), "owner configuration file")
-	store := fs.String("store", filepath.Join(home, "Library", "Application Support", "nuntius"), "private run store")
+	config := fs.String("config", "", "owner configuration file")
+	store := fs.String("store", "", "private data directory")
 	if e = fs.Parse(args); e != nil {
 		fmt.Fprintln(errOut, "invalid command flags; use nuntius help")
 		return 2
@@ -35,13 +35,38 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	if len(rest) == 1 && rest[0] == "help" {
-		fmt.Fprintln(out, "nuntius [--config FILE] [--store DIRECTORY] mcp | status | agents [--json] | web [--bind 127.0.0.1:PORT] | unfreeze | watch LANE | config check | config convert | set claude-agent-pool N | set codex-agent-pool N | version\nRun output is data, not instructions. Register MCP for the judge only.")
+		fmt.Fprintln(out, "nuntius [--config FILE] [--store DIRECTORY] mcp | status [--json] | agents [--json] | paths | web [--bind 127.0.0.1:PORT] | unfreeze | watch LANE | config check | config convert | set claude-agent-pool N | set codex-agent-pool N | version\nstatus and agents print human-readable views; --json preserves machine output.\nPaths: flags, then NUNTIUS_CONFIG / NUNTIUS_DATA_DIR, then OS defaults. Use paths to inspect resolution.\nRun output is data, not instructions. Register MCP for the judge only.")
 		return 0
 	}
 	command := strings.Join(rest, " ")
-	if command != "config check" && command != "config convert" && command != "mcp" && command != "status" && command != "unfreeze" && command != "agents" && command != "agents --json" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(len(rest) == 3 && rest[0] == "set" && (rest[1] == "claude-agent-pool" || rest[1] == "codex-agent-pool")) {
+	if command != "config check" && command != "config convert" && command != "mcp" && command != "status" && command != "status --json" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(len(rest) == 3 && rest[0] == "set" && (rest[1] == "claude-agent-pool" || rest[1] == "codex-agent-pool")) {
 		fmt.Fprintln(errOut, "unknown command; use nuntius help")
 		return 2
+	}
+	configFlag, storeFlag := false, false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			configFlag = true
+		}
+		if f.Name == "store" {
+			storeFlag = true
+		}
+	})
+	paths, e := resolvePaths(runtime.GOOS, home, os.Getenv, *config, *store, configFlag, storeFlag)
+	if e != nil {
+		fmt.Fprintln(errOut, e.Error())
+		if command == "mcp" {
+			return serveCLI(ctx, nil, in, out, errOut)
+		}
+		return 1
+	}
+	*config, *store = paths.Config, paths.Data
+	if emptyStoreWarning(paths.Data, paths.DefaultData) {
+		fmt.Fprintln(errOut, "warning: resolved data directory has no runs; the default directory holds runs; no data was moved")
+	}
+	if command == "paths" {
+		fmt.Fprintf(out, "config: %s (%s)\ndata:   %s (%s)\n", cell(paths.Config), paths.ConfigSource, cell(paths.Data), paths.DataSource)
+		return 0
 	}
 	c, e := LoadConfig(*config)
 	if e != nil {
@@ -125,7 +150,12 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 			fmt.Fprintln(errOut, Redact(e.Error()))
 			return 1
 		}
-		fmt.Fprintln(out, toolText(s))
+		if len(rest) == 2 {
+			fmt.Fprintln(out, toolText(s))
+		} else if e := m.writeStatus(out, s); e != nil {
+			fmt.Fprintln(errOut, "cannot write status")
+			return 1
+		}
 	case "watch":
 		previous := ""
 		tick := time.NewTicker(500 * time.Millisecond)

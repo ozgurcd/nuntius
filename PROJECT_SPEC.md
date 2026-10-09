@@ -1,11 +1,11 @@
-# Nuntius v0.2.0 — specification as built
+# Nuntius v0.2.1 — specification as built
 
 ## Boundary
 
 Nuntius is a Go, standard-library-only stdio MCP server for an owner-approved
-judge on macOS. Linux CI tests the same process and file contracts. The module
+judge on macOS or Linux. Linux CI tests the same process and file contracts. The module
 is `github.com/ozgurcd/nuntius`. It has no network client, LLM or shell runner.
-Version v0.2.0 is compiled in; publication is a separate release workflow.
+Version v0.2.1 is compiled in; publication is a separate release workflow.
 
 Do not register it for coding agents. The MCP host owns approval. The server
 cannot verify that a caller is the judge or force a host to display a click.
@@ -34,7 +34,8 @@ digits, dots or hyphens and begin with a letter or digit. Names are unique.
 There are 1..32 lanes. Binary must exist and be executable; workdir must exist.
 The report directory is absolute and may be created later by the owner.
 
-Config defaults to `~/.config/nuntius/lanes.json`; only a CLI flag changes it.
+Config resolves from --config, NUNTIUS_CONFIG, then
+$XDG_CONFIG_HOME/nuntius/lanes.json or ~/.config/nuntius/lanes.json, on macOS too.
 The maximum config size is 64 KiB. Duration is required, positive and at most
 seven days. Notifications default on and can be disabled in config.
 Model selection and Claude effort/budget arguments are permitted.
@@ -57,8 +58,11 @@ Claude argv: `-p --output-format stream-json --verbose`, then optional
 extra_args, then optional `resume ID`, then `-`. Exec-only options precede
 resume. CLI help and the strict offline fake verify option scope, not a real run.
 
-Store defaults to `~/Library/Application Support/nuntius`, with CLI-only
-`--store` override. It belongs outside repositories. Run directories are 0700;
+The data directory resolves from --store, NUNTIUS_DATA_DIR, then macOS
+~/Library/Application Support/nuntius or Linux $XDG_DATA_HOME/nuntius
+(~/.local/share/nuntius when unset). Other OS have no default and require
+an explicit data directory. It holds runs, audit, notes, freeze, signals and
+locks and belongs outside repositories. Run directories are 0700;
 goal.txt, events.jsonl, stderr.log, meta.json and audit.jsonl are 0600.
 Stdout/stderr go straight to files. Metadata is atomically replaced and includes
 run ID, lane, goal ID, prompt SHA-256, start/end, exit, PID, process start time, state, session ID
@@ -73,6 +77,10 @@ Cancel uses the same escalation. Runs start with setsid and direct file output.
 Server shutdown detaches and leaves runs alive. Every signal requires a live
 group leader with the recorded PID and kernel start time. macOS end notifications use fixed
 AppleScript with data passed as argv; notification failure is ignored.
+Notifications are skipped outside macOS and for an unknown exit code.
+Every terminal outcome writes an empty private signals/<agent>.<goal_id>.ended
+file through atomic exclusive creation; duplicate names coalesce. Recovery
+also writes a signal. A normal completion's signal persistence failure is audited.
 
 Restart reads persisted metadata. A dead run becomes ended with unknown exit.
 Verified survivors regain supervision under an exclusive per-run supervisor lock.
@@ -114,6 +122,9 @@ notification precede tools. The tools are:
 - nuntius_unfreeze(): remove the marker. The host must ask the owner each time.
 - nuntius_owner_notes(since): up to 50 redacted notes after an RFC3339 timestamp.
 - nuntius_owner_notes_ack(ids): persist acknowledgements for 1..50 known IDs.
+- nuntius_signals(): only a sorted JSON array of pending end-signal names.
+- nuntius_signals_ack(names): remove 1..10000 named signals, idempotently;
+  validate all names first and refuse traversal, directory and linked entries.
 
 Notes and acknowledgements append to private notes.jsonl. Notes have at most
 12000 bytes; reads refuse a file over 16 MiB. The judge owns the digest and
@@ -142,13 +153,26 @@ shapes and Desktop permission interaction remain owner-pilot questions.
 
 ## CLI and validation
 
-Commands: mcp, status, agents [--json], web [--bind 127.0.0.1:PORT], unfreeze,
+Commands: mcp, status [--json], agents [--json], paths, web [--bind 127.0.0.1:PORT], unfreeze,
 watch LANE, config check, config convert, set KIND-agent-pool N, version and help. Global config
-and store flags precede the command. Status is JSON; watch prints changed tail
+and store flags precede the command. Status and agents default to human views;
+--json preserves their machine shapes. MCP output stays JSON. Status columns
+show name/state/goal/elapsed/ETA/event age/activity/report; the header shows
+freeze state and data directory. Idle agents become frozen in the human view
+only. ETA needs at least three earlier completed same-kind/same-size runs;
+goal size comes only from the first line. Median minus elapsed is shown as
+approximate minutes left, or minutes over the median. Missing history gives -.
+Activity uses fixed labels without command arguments. No colour escapes.
+Paths prints resolved config/data and provenance without opening either.
+An empty selected run store and nonempty default store produce a stderr warning
+without moving data. The app needs explicit env entries to share shell overrides.
+Watch prints changed tail
 snapshots and ends when the run ends. Ctrl-C cancels the watch only.
 
 `make verify` runs formatting, build, vet, Staticcheck, unit tests, race tests
-and govulncheck. Tests compile only the offline testagent fixture and use temp
+and govulncheck. Unit tests also enforce explicit darwin/linux-only goos blocks
+in the release config, refusing unknown OS and unsupported YAML forms.
+Tests compile only the offline testagent fixture and use temp
 directories. Required cases: config/bypass refusal, busy lanes, timeout kill,
 restart recovery, redaction, goal ID and size bounds, sessionless reply refusal,
 MCP round trip, and the three amended continuation behaviors. Additional cases

@@ -1,7 +1,7 @@
 # nuntius
 
-Nuntius v0.2.0 is a small local Go MCP server for a judge using Claude Desktop.
-It starts and follows configured Claude Code and Codex agent pools on the owner's Mac.
+Nuntius v0.2.1 is a small local Go MCP server for a judge using Claude Desktop.
+It starts and follows configured Claude Code and Codex agent pools on macOS or Linux.
 It contains no LLM and makes no network requests of its own. Agent programs may
 use the network under their existing settings.
 
@@ -99,12 +99,46 @@ Desktop with the intended normal environment and agent settings.
 ```sh
 nuntius config check
 nuntius status
+nuntius status --json
+nuntius paths
 nuntius watch claude-1
 ```
 
+`status` and `agents` print human views by default; add `--json` for machine
+output. Status JSON retains the v0.2.0 shape, and MCP tools always return JSON.
+The aligned status view shows agent, state, goal, elapsed, ETA, last event age,
+last activity kind and report presence. Its header shows freeze state and the
+data directory. Idle agents show `frozen` during a freeze; active and ended
+agents keep their run state. No terminal colour escapes are emitted.
+
+ETA uses the first line's `size S`, `size M` or `size L` and the median duration
+of earlier finished runs of the same agent kind and size. Only runs that ended
+before the current run started count. With fewer than three matches or unavailable
+history it shows `-`; otherwise it shows `~12m left (n=5)` or
+`over usual (+8m)`. It is an estimate, never a dispatch or waiting rule.
+Activity shows fixed kinds such as `editing files`, `running tests` and
+`git push`, never tool arguments or command text. Unknown kinds use a generic label.
+
 Global `--config FILE` and `--store DIRECTORY` flags precede the command.
-The default store is `~/Library/Application Support/nuntius`. It must be
-outside source repositories. `watch` prints changed tail snapshots until the
+One private data directory holds `runs/`, `audit.jsonl`, `notes.jsonl`,
+`freeze.json`, `signals/` and control locks. Resolution order is `--store`,
+`NUNTIUS_DATA_DIR`, then the OS default:
+
+- macOS: `~/Library/Application Support/nuntius`.
+- Linux: `$XDG_DATA_HOME/nuntius`, or `~/.local/share/nuntius` when unset.
+- Other OS: no default; set `NUNTIUS_DATA_DIR` or `--store` explicitly.
+
+Config resolution is `--config`, `NUNTIUS_CONFIG`, then
+`$XDG_CONFIG_HOME/nuntius/lanes.json`, or `~/.config/nuntius/lanes.json` when
+unset, including on macOS. Environment values must be nonempty; data paths must
+be absolute. `nuntius paths` prints both resolved paths and their source
+(`flag`, `env`, `default`) without loading config or creating a store.
+If the selected store has no runs while the OS default holds runs, CLI stderr
+prints a warning. No files move automatically. macOS notifications are skipped
+on other systems. Release checks reject every build OS except Darwin/Linux.
+
+The data directory must be outside source repositories.
+`watch` prints changed tail snapshots until the
 lane ends; it is not a raw transcript. Ctrl-C stops watching.
 
 ## Claude Desktop entry
@@ -117,9 +151,16 @@ Do not overwrite other entries. This repository does not edit app settings.
 ```json
 "nuntius": {
   "command": "/absolute/homebrew/prefix/bin/nuntius",
-  "args": ["mcp"]
+  "args": ["mcp"],
+  "env": {"NUNTIUS_DATA_DIR": "/absolute/private/nuntius"}
 }
 ```
+
+The Claude app starts the MCP server without your shell's environment. If you
+set `NUNTIUS_DATA_DIR` in your shell, set the same variable in the app's
+`nuntius` entry as above, or the CLI and server will read different stores.
+Set `NUNTIUS_CONFIG` there too if you override the config file in your shell.
+Use `nuntius paths` locally to check the selected paths.
 
 Restart Desktop after saving. Set dispatch, reply, cancel and unfreeze to ask each time.
 Ask the judge for status first, then approve one small read-only pilot goal.
@@ -142,6 +183,7 @@ Tool approvals in Claude Desktop:
 - **Ask**: `nuntius_dispatch`, `nuntius_reply`, `nuntius_cancel`, `nuntius_unfreeze`.
 - **Allow**: `nuntius_status`, `nuntius_tail`, `nuntius_report`,
   `nuntius_owner_notes`, `nuntius_owner_notes_ack`, `nuntius_freeze`.
+  `nuntius_signals` and `nuntius_signals_ack` read and acknowledge end signals.
 
 Freeze is immediate: it persists a marker, interrupts verified running runs,
 and refuses dispatch, reply and automatic continuation until unfreeze.
@@ -212,7 +254,8 @@ stays held between them. A manual reply never triggers another automatic reply.
 
 The tools are `nuntius_status`, `nuntius_dispatch`, `nuntius_reply`,
 `nuntius_tail`, `nuntius_report`, `nuntius_cancel`, `nuntius_freeze`,
-`nuntius_unfreeze`, `nuntius_owner_notes` and `nuntius_owner_notes_ack`. See `PROJECT_SPEC.md` for
+`nuntius_unfreeze`, `nuntius_owner_notes`, `nuntius_owner_notes_ack`,
+`nuntius_signals` and `nuntius_signals_ack`. See `PROJECT_SPEC.md` for
 arguments, limits and failure behavior. The transport uses newline-delimited
 JSON-RPC over stdio and MCP 2025-11-25. Stdout carries protocol messages only.
 References: [stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
@@ -234,6 +277,14 @@ redaction is not a claim that arbitrary prose can never contain private data.
 The audit log records tool, lane, goal, prompt hash and result, not prompt text.
 No automatic history deletion occurs. Archive ended runs before reaching the
 10,000-entry limit. Incomplete `.pending-*` folders are not exposed as runs.
+
+Every run end, including failure, cancellation, timeout or restart recovery,
+atomically creates an empty private `signals/<agent>.<goal_id>.ended` file.
+`nuntius_signals()` returns only a sorted JSON list of pending names.
+`nuntius_signals_ack(names)` removes the named signals; paths, traversal and
+linked files are refused. Duplicate agent/goal signals coalesce until acknowledged;
+use distinct goal IDs when each run needs a separate signal. Acknowledgements
+are idempotent. A failed signal write is recorded in the audit log.
 
 Timeout sends SIGINT to the run's process group, then SIGKILL after 30 seconds.
 Cancel follows the same escalation. Each run starts in its own session with

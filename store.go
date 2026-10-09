@@ -159,7 +159,7 @@ func (m *Manager) recoverEnded(r *Run) error {
 		r.StopReason = "unknown_exit"
 	}
 	r.SessionID = m.session(r.ID)
-	return m.save(r)
+	return m.endRun(r)
 }
 func (m *Manager) audit(tool, lane, goal, digest, result string) error {
 	f, e := privateFile(filepath.Join(m.store, "audit.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND)

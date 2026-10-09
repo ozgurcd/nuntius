@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.1 — 2026-10-09
+
+- Show aligned human status by default, with freeze/data header, elapsed,
+  bounded activity kinds, event age, report presence and median same-size ETA.
+- Preserve status JSON with --json and keep MCP output JSON.
+- Resolve config/data paths from flags, environment and macOS/Linux defaults;
+  add paths provenance, empty-store warnings and app environment guidance.
+- Skip notifications outside macOS and enforce Darwin/Linux-only releases.
+- Create atomic empty end signals for all terminal outcomes; add MCP listing
+  and confined acknowledgements with offline tests.
+
 ## v0.2.0 — 2026-10-09
 
 - Detach each agent run into its own session and recover supervision by PID

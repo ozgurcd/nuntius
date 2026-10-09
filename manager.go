@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -378,7 +379,10 @@ func (m *Manager) follow(r Run, cmd *exec.Cmd, lock, supervisor *os.File, a *act
 		r.StopReason = "unknown_exit"
 	}
 	r.SessionID = m.session(r.ID)
-	saved := m.save(&r) == nil
+	saved := m.endRun(&r) == nil
+	if !saved {
+		_ = m.audit("run_end_signal", r.Lane, r.GoalID, r.SHA256, "persistence_failed")
+	}
 	_ = m.audit("run_end", r.Lane, r.GoalID, r.SHA256, "ended")
 	if lock == nil {
 		lock, _ = m.lock(r.Lane)
@@ -530,6 +534,9 @@ func (m *Manager) Close() error {
 	return nil
 }
 func notify(r Run) {
+	if !notificationsSupported(runtime.GOOS) || r.Exit == nil {
+		return
+	}
 	if _, e := os.Stat("/usr/bin/osascript"); e != nil {
 		return
 	}

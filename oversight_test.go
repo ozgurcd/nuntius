@@ -117,6 +117,7 @@ func TestProcessStartTimeMismatchNeverSignalled(t *testing.T) {
 }
 
 func TestFreezeAcrossManagersAndCLI(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	m, c, store := manager(t)
 	_, err := m.Dispatch("codex", "FREEZE-1", "wait")
 	if err != nil {

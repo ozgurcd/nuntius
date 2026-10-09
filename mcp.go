@@ -26,6 +26,8 @@ func tools() []tool {
 	}
 	return []tool{
 		makeTool("nuntius_status", "Read all configured lane states.", map[string]any{}, []string{}, true),
+		makeTool("nuntius_signals", "List only pending run-end signal names.", map[string]any{}, []string{}, true),
+		makeTool("nuntius_signals_ack", "Remove named run-end signals.", map[string]any{"names": map[string]any{"type": "array", "items": stringProp(), "minItems": 1, "maxItems": 10000}}, []string{"names"}, false),
 		makeTool("nuntius_dispatch", "Start a goal in an idle configured lane.", map[string]any{"lane": stringProp(), "goal_id": map[string]any{"type": "string", "pattern": goalPattern.String()}, "text": map[string]any{"type": "string", "minLength": 1, "maxLength": 12000}}, []string{"lane", "goal_id", "text"}, false),
 		makeTool("nuntius_reply", "Resume the last ended run with a recorded session id.", map[string]any{"lane": stringProp(), "text": stringProp()}, []string{"lane", "text"}, false),
 		makeTool("nuntius_tail", "Read at most 200 recent assistant entries and tool names; excludes tool results.", map[string]any{"lane": stringProp(), "lines": map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "default": 50}}, []string{"lane"}, true),
@@ -48,6 +50,20 @@ func call(m *Manager, name string, args json.RawMessage) (any, error) {
 		return nil, errors.New("arguments must be an object")
 	}
 	switch name {
+	case "nuntius_signals":
+		var a struct{}
+		if e := strictJSON(args, &a); e != nil {
+			return nil, e
+		}
+		return m.Signals()
+	case "nuntius_signals_ack":
+		var a struct {
+			Names []string `json:"names"`
+		}
+		if e := strictJSON(args, &a); e != nil {
+			return nil, e
+		}
+		return []string{}, m.AckSignals(a.Names)
 	case "nuntius_freeze":
 		var a struct {
 			Reason string `json:"reason"`

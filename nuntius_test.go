@@ -454,7 +454,7 @@ func TestMCPRoundTrip(t *testing.T) {
 		} `json:"result"`
 	}
 	_ = json.Unmarshal(lines[1], &list)
-	if len(list.Result.Tools) != 10 {
+	if len(list.Result.Tools) != 12 {
 		t.Fatal("tool count")
 	}
 	if !bytes.Contains(lines[4], []byte(`"isError":true`)) || !bytes.Contains(lines[5], []byte(`-32601`)) {
@@ -610,6 +610,7 @@ func TestTailPhysicalLinesAndMultilineRedaction(t *testing.T) {
 	}
 }
 func TestCLICheckStatusWatchAndMCPUnavailable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	c, store := fixture(t)
 	path := filepath.Join(t.TempDir(), "lanes.json")
 	b, _ := json.Marshal(c)

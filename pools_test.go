@@ -13,6 +13,7 @@ import (
 )
 
 func TestPoolsConversionResizeAndAgents(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	c, store := fixture(t)
 	c.Lanes[0].Name = "identuum"
 	c.Lanes[1].Name = "codex-1"

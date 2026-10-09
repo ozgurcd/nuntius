@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const Version = "v0.2.0"
+const Version = "v0.2.1"
 
 type Lane struct {
 	Name         string   `json:"name"`
