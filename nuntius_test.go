@@ -1,0 +1,603 @@
+package nuntius
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+var fakeBinary string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "nuntius-fixture-")
+	if err != nil {
+		os.Exit(1)
+	}
+	fakeBinary = filepath.Join(dir, "fake-agent")
+	cmd := exec.Command("go", "build", "-o", fakeBinary, "./internal/testagent")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Println(string(out))
+		_ = os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+func fixture(t *testing.T) (Config, string) {
+	t.Helper()
+	d := t.TempDir()
+	off := false
+	return Config{Lanes: []Lane{{Name: "claude", Kind: "claude", Workdir: d, Binary: fakeBinary}, {Name: "codex", Kind: "codex", Workdir: d, Binary: fakeBinary}}, MaxRuntime: "10s", ReportsDir: d, Notifications: &off}, filepath.Join(d, "store")
+}
+func manager(t *testing.T) (*Manager, Config, string) {
+	t.Helper()
+	c, s := fixture(t)
+	m, e := NewManager(c, s)
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+	return m, c, s
+}
+func waitState(t *testing.T, m *Manager, lane, state string) Status {
+	t.Helper()
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		s, e := m.Status()
+		if e != nil {
+			t.Fatal(e)
+		}
+		for _, v := range s {
+			if v.Lane == lane && (v.State == state || state == "ended" && v.State == "ended_no_report") {
+				return v
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("lane did not reach %s", state)
+	return Status{}
+}
+func waitReady(t *testing.T, m *Manager, lane string) {
+	t.Helper()
+	for i := 0; i < 400; i++ {
+		rows, e := m.Tail(lane, 200)
+		if e == nil && strings.Contains(strings.Join(rows, "\n"), "ready") {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("fixture not ready")
+}
+
+func TestConfigAndBypassRefusal(t *testing.T) {
+	bad := [][]string{{"--dangerously-skip-permissions"}, {"--permission-mode", "bypassPermissions"}, {"--permission-mode=bypassPermissions"}, {"--dangerously-bypass-approvals-and-sandbox"}, {"--yolo"}, {"--sandbox", "danger-full-access"}, {"--allow-dangerously-skip-permissions"}, {"--dangerously-bypass-hook-trust"}, {"--bare"}, {"--safe-mode"}, {"--ignore-rules"}, {"-c", "sandbox_mode=\"danger-full-access\""}, {"--settings", "{}"}, {"--cd", "/tmp"}, {"--output-format", "text"}}
+	for i, args := range bad {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			c, _ := fixture(t)
+			c.Lanes[0].ExtraArgs = args
+			if _, e := c.Validate(); e == nil {
+				t.Fatal("unsafe arguments accepted")
+			}
+		})
+	}
+	c, _ := fixture(t)
+	c.Lanes[0].ExtraArgs = []string{"--model", "example", "--effort", "high"}
+	if _, e := c.Validate(); e != nil {
+		t.Fatal(e)
+	}
+	for _, change := range []func(*Config){func(c *Config) { c.Lanes[0].Binary = "agent" }, func(c *Config) { c.Lanes[0].Name = "../bad" }, func(c *Config) { c.Lanes[1].Name = c.Lanes[0].Name }, func(c *Config) { c.MaxRuntime = "0s" }, func(c *Config) { c.ReportsDir = "relative" }, func(c *Config) { c.Lanes[0].Kind = "shell" }} {
+		x, _ := fixture(t)
+		change(&x)
+		if _, e := x.Validate(); e == nil {
+			t.Fatal("invalid config accepted")
+		}
+	}
+	p := filepath.Join(t.TempDir(), "lanes.json")
+	b, _ := json.Marshal(c)
+	if e := os.WriteFile(p, b, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := LoadConfig(p); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(p, []byte(`{"lanes":[],"unknown":true}`), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := LoadConfig(p); e == nil {
+		t.Fatal("unknown config field accepted")
+	}
+}
+
+func TestGoalIDAndSize(t *testing.T) {
+	m, _, _ := manager(t)
+	for _, goal := range []string{"A", "a-b", "../AA", strings.Repeat("A", 65), "OK/NO"} {
+		if _, e := m.Dispatch("claude", goal, "hello"); e == nil {
+			t.Fatal("invalid goal accepted")
+		}
+	}
+	for _, text := range []string{"", strings.Repeat("x", 12001)} {
+		if _, e := m.Dispatch("claude", "AB", text); e == nil {
+			t.Fatal("invalid text size accepted")
+		}
+	}
+	if _, e := m.Dispatch("missing", "AB", "hello"); e == nil {
+		t.Fatal("unknown lane accepted")
+	}
+	if _, e := m.Dispatch("claude", strings.Repeat("A", 64), strings.Repeat("x", 12000)); e != nil {
+		t.Fatal(e)
+	}
+	waitState(t, m, "claude", "ended")
+}
+
+func TestDispatchReplyArgvAndStore(t *testing.T) {
+	m, c, store := manager(t)
+	if e := os.WriteFile(filepath.Join(c.ReportsDir, "DEMO-1.txt"), []byte("done"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	for _, lane := range []string{"claude", "codex"} {
+		id, e := m.Dispatch(lane, "DEMO-1", "hello")
+		if e != nil {
+			t.Fatal(e)
+		}
+		s := waitState(t, m, lane, "ended")
+		if s.Exit == nil || *s.Exit != 0 {
+			t.Fatal("exit missing")
+		}
+		dir := filepath.Join(store, "runs", id)
+		for _, name := range []string{"goal.txt", "events.jsonl", "stderr.log", "meta.json"} {
+			st, e := os.Stat(filepath.Join(dir, name))
+			if e != nil || st.Mode().Perm() != 0600 {
+				t.Fatal("private file mode", name, e)
+			}
+		}
+		st, e := os.Stat(dir)
+		if e != nil || st.Mode().Perm() != 0700 {
+			t.Fatal("directory mode")
+		}
+		var r Run
+		b, _ := os.ReadFile(filepath.Join(dir, "meta.json"))
+		if e := json.Unmarshal(b, &r); e != nil {
+			t.Fatal(e)
+		}
+		sum := sha256.Sum256([]byte("hello"))
+		if r.SHA256 != hex.EncodeToString(sum[:]) || r.SessionID == "" {
+			t.Fatal("metadata mismatch")
+		}
+		rows, e := m.Tail(lane, 200)
+		if e != nil {
+			t.Fatal(e)
+		}
+		joined := strings.Join(rows, "\n")
+		if !strings.Contains(joined, "cwd="+c.Lanes[0].Workdir) || strings.Contains(joined, "must-not-return") {
+			t.Fatal("tail contract")
+		}
+		if lane == "claude" && !strings.Contains(joined, `["-p","--output-format","stream-json","--verbose"]`) {
+			t.Fatal("claude argv")
+		}
+		if lane == "codex" && !strings.Contains(joined, `["exec","--json","-"]`) {
+			t.Fatal("codex argv")
+		}
+		if _, e := m.Reply(lane, "follow up"); e != nil {
+			t.Fatal(e)
+		}
+		waitState(t, m, lane, "ended")
+		rows, e = m.Tail(lane, 200)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if !strings.Contains(strings.Join(rows, "\n"), "resume") {
+			t.Fatal("no resume argv")
+		}
+	}
+	b, e := os.ReadFile(filepath.Join(store, "audit.jsonl"))
+	if e != nil || bytes.Contains(b, []byte("follow up")) {
+		t.Fatal("audit must omit prompt text")
+	}
+	for _, l := range bytes.Split(bytes.TrimSpace(b), []byte("\n")) {
+		if !json.Valid(l) {
+			t.Fatal("invalid audit line")
+		}
+	}
+}
+
+func TestBusyLaneAndConcurrentDispatch(t *testing.T) {
+	m, c, store := manager(t)
+	if _, e := m.Dispatch("claude", "BUSY-1", "wait"); e != nil {
+		t.Fatal(e)
+	}
+	waitReady(t, m, "claude")
+	second, e := NewManager(c, store)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer second.Close()
+	if _, e := second.Dispatch("claude", "BUSY-2", "hello"); e == nil {
+		t.Fatal("cross-manager busy lane accepted")
+	}
+	if _, e := m.Reply("claude", "hello"); e == nil {
+		t.Fatal("reply on running lane accepted")
+	}
+	if e := m.Cancel("claude"); e != nil {
+		t.Fatal(e)
+	}
+	waitState(t, m, "claude", "ended")
+	var wg sync.WaitGroup
+	wins := make(chan bool, 12)
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _, e := m.Dispatch("codex", "BUSY-3", "wait"); wins <- e == nil }()
+	}
+	wg.Wait()
+	close(wins)
+	n := 0
+	for b := range wins {
+		if b {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("successful dispatches=%d", n)
+	}
+}
+
+func TestTimeoutKill(t *testing.T) {
+	c, store := fixture(t)
+	c.MaxRuntime = "150ms"
+	m, e := NewManager(c, store)
+	if e != nil {
+		t.Fatal(e)
+	}
+	m.Grace = 25 * time.Millisecond
+	defer m.Close()
+	if _, e := m.Dispatch("claude", "TIME-1", "ignore-int"); e != nil {
+		t.Fatal(e)
+	}
+	s := waitState(t, m, "claude", "ended")
+	if s.Outcome != "timed_out" || s.Exit == nil || *s.Exit == 0 {
+		t.Fatal("timeout was not forced")
+	}
+}
+func TestRestartRecovery(t *testing.T) {
+	m, c, store := manager(t)
+	id, e := m.Dispatch("claude", "RECOVER-1", "hello")
+	if e != nil {
+		t.Fatal(e)
+	}
+	waitState(t, m, "claude", "ended")
+	if e := m.Close(); e != nil {
+		t.Fatal(e)
+	}
+	p := filepath.Join(store, "runs", id, "meta.json")
+	b, _ := os.ReadFile(p)
+	var r Run
+	_ = json.Unmarshal(b, &r)
+	r.State = "running"
+	r.Exit = nil
+	r.Ended = nil
+	r.PID = 99999999
+	b, _ = json.Marshal(r)
+	if e := os.WriteFile(p, b, 0600); e != nil {
+		t.Fatal(e)
+	}
+	next, e := NewManager(c, store)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer next.Close()
+	s := waitState(t, next, "claude", "ended")
+	if s.Exit != nil || s.Outcome != "unknown_exit" {
+		t.Fatal("recovered exit invented")
+	}
+	if _, e := next.Reply("claude", "hello"); e != nil {
+		t.Fatal(e)
+	}
+	waitState(t, next, "claude", "ended")
+}
+func TestReplyNeedsSession(t *testing.T) {
+	m, _, _ := manager(t)
+	if _, e := m.Reply("claude", "hello"); e == nil {
+		t.Fatal("reply without run accepted")
+	}
+	if _, e := m.Dispatch("claude", "NOSESSION-1", "no-session"); e != nil {
+		t.Fatal(e)
+	}
+	waitState(t, m, "claude", "ended")
+	if _, e := m.Reply("claude", "hello"); e == nil {
+		t.Fatal("reply without session accepted")
+	}
+}
+func TestRedaction(t *testing.T) {
+	samples := []string{"ghp_" + strings.Repeat("a", 30), "gho_abc123", "ghs_abc123", "github_pat_abcdef", "sk-abcdef123", "sk-ant-abcdef123", "xoxb-123-456-abcdef", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.fixture", "-----BEGIN PRIVATE KEY-----\nfixture material\n-----END PRIVATE KEY-----", "password=synthetic-value", "secret=synthetic-value", "token=synthetic-value", "PASSWORD = synthetic-value", "-----BEGIN RSA PRIVATE KEY-----\nunfinished"}
+	for i, s := range samples {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			got := Redact("prefix " + s + " suffix")
+			if strings.Contains(got, s) || !strings.Contains(got, "[REDACTED]") {
+				t.Fatal("secret class not redacted")
+			}
+		})
+	}
+	if Redact("ordinary data") != "ordinary data" {
+		t.Fatal("ordinary text changed")
+	}
+}
+func TestReportAndOutputBounds(t *testing.T) {
+	m, c, _ := manager(t)
+	if _, e := m.Report("../outside"); e == nil {
+		t.Fatal("traversal accepted")
+	}
+	p := filepath.Join(c.ReportsDir, "DEMO-2.txt")
+	if e := os.WriteFile(p, []byte("token=synthetic-value\n"+strings.Repeat("x", 70000)), 0600); e != nil {
+		t.Fatal(e)
+	}
+	s, e := m.Report("DEMO-2")
+	if e != nil || len(s) > 65536 || strings.Contains(s, "synthetic-value") {
+		t.Fatal("report bound or redaction")
+	}
+	if _, e := m.Tail("claude", 201); e == nil {
+		t.Fatal("tail limit accepted")
+	}
+	link := filepath.Join(c.ReportsDir, "LINK-1.txt")
+	if e := os.Symlink(p, link); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := m.Report("LINK-1"); e == nil {
+		t.Fatal("report symlink accepted")
+	}
+}
+
+func TestMCPRoundTrip(t *testing.T) {
+	m, _, _ := manager(t)
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"fixture","version":"1"}}}`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"nuntius_status","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"nuntius_dispatch","arguments":{"lane":"claude","goal_id":"RPC-1","text":"hello"}}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"nuntius_dispatch","arguments":{"lane":"claude","goal_id":"RPC-1","text":"hello","binary":"bad"}}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"unknown"}`}, "\n") + "\n"
+	var out bytes.Buffer
+	if e := Serve(context.Background(), m, strings.NewReader(input), &out); e != nil {
+		t.Fatal(e)
+	}
+	lines := bytes.Split(bytes.TrimSpace(out.Bytes()), []byte("\n"))
+	if len(lines) != 6 {
+		t.Fatalf("responses=%d", len(lines))
+	}
+	for _, l := range lines {
+		if !json.Valid(l) {
+			t.Fatal("non-JSON stdout")
+		}
+	}
+	var list struct {
+		Result struct {
+			Tools []json.RawMessage `json:"tools"`
+		} `json:"result"`
+	}
+	_ = json.Unmarshal(lines[1], &list)
+	if len(list.Result.Tools) != 6 {
+		t.Fatal("tool count")
+	}
+	if !bytes.Contains(lines[4], []byte(`"isError":true`)) || !bytes.Contains(lines[5], []byte(`-32601`)) {
+		t.Fatal("error shape")
+	}
+	waitState(t, m, "claude", "ended")
+}
+
+func TestCLIVersion(t *testing.T) {
+	var out, err bytes.Buffer
+	if code := CLI(context.Background(), []string{"version"}, strings.NewReader(""), &out, &err); code != 0 || !strings.Contains(out.String(), Version) {
+		t.Fatal("version CLI")
+	}
+}
+
+func TestEndedQuestion(t *testing.T) {
+	m, _, store := manager(t)
+	id, e := m.Dispatch("codex", "QUESTION-1", "hello")
+	if e != nil {
+		t.Fatal(e)
+	}
+	waitState(t, m, "codex", "ended")
+	question := strings.Repeat("Which option?\n", 80)
+	events := "{\"type\":\"item.completed\",\"item\":{\"type\":\"mcp_tool_call\",\"tool\":\"request_user_input\",\"error\":\"unavailable\"}}\n"
+	b, _ := json.Marshal(map[string]any{"type": "item.completed", "item": map[string]string{"type": "agent_message", "text": question}})
+	if e := os.WriteFile(filepath.Join(store, "runs", id, "events.jsonl"), []byte(events+string(b)+"\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	s, e := m.Status()
+	if e != nil || s[1].State != "ended_no_report" {
+		t.Fatal("missing ended_no_report")
+	}
+	b, _ = json.Marshal(s[1])
+	if !bytes.Contains(b, []byte(`"asked_interactively":true`)) {
+		t.Fatal("missing interactive question flag")
+	}
+	rows, e := m.Tail("codex", 1)
+	if e != nil || strings.Join(rows, "\n") != question {
+		t.Fatal("final question truncated to requested lines")
+	}
+}
+
+func TestClaudeGoalThenContinue(t *testing.T) {
+	m, c, store := manager(t)
+	if e := os.WriteFile(filepath.Join(c.ReportsDir, "CONTINUE-1.txt"), []byte("done"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	first, e := m.Dispatch("claude", "CONTINUE-1", "ack-goal")
+	if e != nil {
+		t.Fatal(e)
+	}
+	s := waitState(t, m, "claude", "ended")
+	if s.RunID == first {
+		t.Fatal("acknowledgement did not trigger continuation")
+	}
+	for _, id := range []string{first, s.RunID} {
+		b, e := os.ReadFile(filepath.Join(store, "runs", id, "meta.json"))
+		if e != nil {
+			t.Fatal(e)
+		}
+		if !bytes.Contains(b, []byte(first)) || !bytes.Contains(b, []byte(s.RunID)) {
+			t.Fatal("linked run ids missing")
+		}
+	}
+	b, e := os.ReadFile(filepath.Join(store, "runs", s.RunID, "goal.txt"))
+	if e != nil || string(b) != "continue" {
+		t.Fatal("default continuation text")
+	}
+	rows, e := m.Tail("claude", 200)
+	if e != nil || !strings.Contains(strings.Join(rows, "\n"), "--resume") {
+		t.Fatal("continuation did not resume")
+	}
+	entries, _ := os.ReadDir(filepath.Join(store, "runs"))
+	if len(entries) != 2 {
+		t.Fatal("continuation repeated")
+	}
+}
+func TestClaudeAlreadyWorkedNotContinued(t *testing.T) {
+	m, _, store := manager(t)
+	id, e := m.Dispatch("claude", "WORK-1", "hello")
+	if e != nil {
+		t.Fatal(e)
+	}
+	s := waitState(t, m, "claude", "ended")
+	entries, _ := os.ReadDir(filepath.Join(store, "runs"))
+	if s.RunID != id || len(entries) != 1 {
+		t.Fatal("working Claude continued")
+	}
+}
+func TestCodexNeverContinued(t *testing.T) {
+	m, _, store := manager(t)
+	id, e := m.Dispatch("codex", "CODEX-1", "ack-goal")
+	if e != nil {
+		t.Fatal(e)
+	}
+	s := waitState(t, m, "codex", "ended")
+	entries, _ := os.ReadDir(filepath.Join(store, "runs"))
+	if s.RunID != id || len(entries) != 1 {
+		t.Fatal("Codex continued")
+	}
+}
+
+func TestContinuationConfiguration(t *testing.T) {
+	for _, mode := range []string{"as_is", "goal_then_continue"} {
+		t.Run(mode, func(t *testing.T) {
+			c, store := fixture(t)
+			c.Lanes[0].StartMode = mode
+			c.Lanes[0].ContinueText = "owner continuation"
+			m, e := NewManager(c, store)
+			if e != nil {
+				t.Fatal(e)
+			}
+			defer m.Close()
+			id, e := m.Dispatch("claude", "MODE-1", "ack-goal")
+			if e != nil {
+				t.Fatal(e)
+			}
+			s := waitState(t, m, "claude", "ended")
+			if mode == "as_is" && s.RunID != id {
+				t.Fatal("as_is continued")
+			}
+			if mode != "as_is" {
+				b, e := os.ReadFile(filepath.Join(store, "runs", s.RunID, "goal.txt"))
+				if e != nil || string(b) != "owner continuation" {
+					t.Fatal("custom continue text")
+				}
+			}
+		})
+	}
+}
+func TestTailPhysicalLinesAndMultilineRedaction(t *testing.T) {
+	m, c, store := manager(t)
+	if e := os.WriteFile(filepath.Join(c.ReportsDir, "TAIL-1.txt"), []byte("done"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	id, e := m.Dispatch("codex", "TAIL-1", "hello")
+	if e != nil {
+		t.Fatal(e)
+	}
+	waitState(t, m, "codex", "ended")
+	var data bytes.Buffer
+	for _, s := range []string{"-----BEGIN PRIVATE KEY-----", "synthetic material", "-----END PRIVATE KEY-----", strings.Repeat("line\n", 300)} {
+		v, _ := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{map[string]string{"type": "text", "text": s}}}})
+		data.Write(v)
+		data.WriteByte('\n')
+	}
+	if e := os.WriteFile(filepath.Join(store, "runs", id, "events.jsonl"), data.Bytes(), 0600); e != nil {
+		t.Fatal(e)
+	}
+	rows, e := m.Tail("codex", 200)
+	if e != nil || len(rows) > 200 || strings.Contains(strings.Join(rows, "\n"), "synthetic material") {
+		t.Fatal("tail physical lines/redaction")
+	}
+}
+func TestCLICheckStatusWatchAndMCPUnavailable(t *testing.T) {
+	c, store := fixture(t)
+	path := filepath.Join(t.TempDir(), "lanes.json")
+	b, _ := json.Marshal(c)
+	if e := os.WriteFile(path, b, 0600); e != nil {
+		t.Fatal(e)
+	}
+	for _, command := range [][]string{{"config", "check"}, {"status"}, {"watch", "claude"}} {
+		var out, err bytes.Buffer
+		args := append([]string{"--config", path, "--store", store}, command...)
+		if CLI(context.Background(), args, strings.NewReader(""), &out, &err) != 0 {
+			t.Fatal("CLI command failed")
+		}
+	}
+	in := `{"jsonrpc":"2.0","id":1,"method":"initialize"}` + "\n" + `{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n" + `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"nuntius_status","arguments":{}}}` + "\n"
+	var out, err bytes.Buffer
+	if CLI(context.Background(), []string{"--config", filepath.Join(t.TempDir(), "missing"), "mcp"}, strings.NewReader(in), &out, &err) != 0 || !strings.Contains(out.String(), "not serving") {
+		t.Fatal("MCP startup fault was not exposed on live transport")
+	}
+}
+func TestRecoveredLivePIDNotSignalled(t *testing.T) {
+	m, c, store := manager(t)
+	id, e := m.Dispatch("codex", "LIVE-1", "hello")
+	if e != nil {
+		t.Fatal(e)
+	}
+	waitState(t, m, "codex", "ended")
+	_ = m.Close()
+	p := filepath.Join(store, "runs", id, "meta.json")
+	b, _ := os.ReadFile(p)
+	var r Run
+	_ = json.Unmarshal(b, &r)
+	r.State = "running"
+	r.PID = os.Getpid()
+	r.Ended = nil
+	r.Exit = nil
+	r.Started = time.Now().Add(-time.Hour)
+	b, _ = json.Marshal(r)
+	if e := os.WriteFile(p, b, 0600); e != nil {
+		t.Fatal(e)
+	}
+	next, e := NewManager(c, store)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer next.Close()
+	s, e := next.Status()
+	if e != nil {
+		t.Fatal(e)
+	}
+	if s[1].State != "running" {
+		t.Fatal("live process considered gone")
+	}
+	if _, e = next.Dispatch("codex", "LIVE-2", "hello"); e == nil {
+		t.Fatal("live PID lane reused")
+	}
+	if next.Cancel("codex") == nil {
+		t.Fatal("foreign PID signalled")
+	}
+}
