@@ -48,7 +48,14 @@ func manager(t *testing.T) (*Manager, Config, string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { _ = m.Close() })
+	t.Cleanup(func() {
+		for _, l := range c.Lanes {
+			if m.Cancel(l.Name) == nil {
+				waitState(t, m, l.Name, "ended")
+			}
+		}
+		_ = m.Close()
+	})
 	return m, c, s
 }
 func waitState(t *testing.T, m *Manager, lane, state string) Status {
@@ -447,7 +454,7 @@ func TestMCPRoundTrip(t *testing.T) {
 		} `json:"result"`
 	}
 	_ = json.Unmarshal(lines[1], &list)
-	if len(list.Result.Tools) != 6 {
+	if len(list.Result.Tools) != 10 {
 		t.Fatal("tool count")
 	}
 	if !bytes.Contains(lines[4], []byte(`"isError":true`)) || !bytes.Contains(lines[5], []byte(`-32601`)) {
@@ -636,6 +643,8 @@ func TestRecoveredLivePIDNotSignalled(t *testing.T) {
 	_ = json.Unmarshal(b, &r)
 	r.State = "running"
 	r.PID = os.Getpid()
+	// A v1 record has no identity; it must remain busy and never be signalled.
+	r.ProcessStart = ""
 	r.Ended = nil
 	r.Exit = nil
 	r.Started = time.Now().Add(-time.Hour)

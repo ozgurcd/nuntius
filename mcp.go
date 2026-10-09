@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"time"
 )
 
 const ProtocolVersion = "2025-11-25"
@@ -30,6 +31,10 @@ func tools() []tool {
 		makeTool("nuntius_tail", "Read at most 200 recent assistant entries and tool names; excludes tool results.", map[string]any{"lane": stringProp(), "lines": map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "default": 50}}, []string{"lane"}, true),
 		makeTool("nuntius_report", "Read at most 64 KiB of a redacted goal report.", map[string]any{"goal_id": stringProp()}, []string{"goal_id"}, true),
 		makeTool("nuntius_cancel", "Interrupt the lane's running process group.", map[string]any{"lane": stringProp()}, []string{"lane"}, false),
+		makeTool("nuntius_freeze", "Freeze dispatch and replies and interrupt running agents.", map[string]any{"reason": stringProp()}, []string{"reason"}, false),
+		makeTool("nuntius_unfreeze", "Unfreeze agents. Configure this tool to ask for owner approval.", map[string]any{}, []string{}, false),
+		makeTool("nuntius_owner_notes", "Read up to 50 redacted owner notes after an RFC3339 timestamp.", map[string]any{"since": stringProp()}, []string{}, true),
+		makeTool("nuntius_owner_notes_ack", "Mark the specified owner notes read.", map[string]any{"ids": map[string]any{"type": "array", "items": stringProp(), "minItems": 1, "maxItems": 50}}, []string{"ids"}, false),
 	}
 }
 func call(m *Manager, name string, args json.RawMessage) (any, error) {
@@ -43,12 +48,50 @@ func call(m *Manager, name string, args json.RawMessage) (any, error) {
 		return nil, errors.New("arguments must be an object")
 	}
 	switch name {
+	case "nuntius_freeze":
+		var a struct {
+			Reason string `json:"reason"`
+		}
+		if e := strictJSON(args, &a); e != nil {
+			return nil, e
+		}
+		return map[string]string{"state": "frozen"}, m.Freeze(a.Reason)
+	case "nuntius_unfreeze":
+		var a struct{}
+		if e := strictJSON(args, &a); e != nil {
+			return nil, e
+		}
+		return map[string]string{"state": "unfrozen"}, m.Unfreeze()
+	case "nuntius_owner_notes":
+		var a struct {
+			Since string `json:"since"`
+		}
+		if e := strictJSON(args, &a); e != nil {
+			return nil, e
+		}
+		var since time.Time
+		if a.Since != "" {
+			var e error
+			since, e = time.Parse(time.RFC3339Nano, a.Since)
+			if e != nil {
+				return nil, errors.New("since must be RFC3339")
+			}
+		}
+		return m.OwnerNotes(since)
+	case "nuntius_owner_notes_ack":
+		var a struct {
+			IDs []string `json:"ids"`
+		}
+		if e := strictJSON(args, &a); e != nil {
+			return nil, e
+		}
+		return map[string]string{"state": "read"}, m.AckOwnerNotes(a.IDs)
 	case "nuntius_status":
 		var a struct{}
 		if e := strictJSON(args, &a); e != nil {
 			return nil, e
 		}
-		return m.Status()
+		return m.StatusView()
 	case "nuntius_dispatch":
 		var a struct {
 			Lane string `json:"lane"`

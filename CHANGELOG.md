@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0 — 2026-10-09
+
+- Detach each agent run into its own session and recover supervision by PID
+  and kernel start time after a server restart. Refuse unverifiable signals.
+- Add durable freeze, owner notes and acknowledgements, and event-age status.
+- Add the loopback-only oversight dashboard with per-start authentication,
+  Host/Origin checks, POST-only actions, bounded redacted views and queued replies.
+- Add owner CLI pool sizes, atomic private config conversion and agents listing.
+- Put Codex exec options before resume; enforce the real scope in the offline fake.
+- Document mobile oversight, owner tool approvals and pool conversion.
+
 ## v0.1.2 — 2026-10-09
 
 - Publish macOS and Linux archives for amd64 and arm64 with release checksums.

@@ -1,17 +1,31 @@
-# Nuntius v0.1.1 — specification as built
+# Nuntius v0.2.0 — specification as built
 
 ## Boundary
 
 Nuntius is a Go, standard-library-only stdio MCP server for an owner-approved
 judge on macOS. Linux CI tests the same process and file contracts. The module
 is `github.com/ozgurcd/nuntius`. It has no network client, LLM or shell runner.
-Version v0.1.1 is compiled in; no release tag is implied.
+Version v0.2.0 is compiled in; publication is a separate release workflow.
 
 Do not register it for coding agents. The MCP host owns approval. The server
 cannot verify that a caller is the judge or force a host to display a click.
 The owner must keep dispatch/reply/cancel approvals enabled in Desktop.
 
 ## Lanes
+
+The preferred format is pools: one entry per claude/codex kind, size 0..8,
+and one template (binary, workdir, extra_args, start_mode, continue_text).
+Agents expand to claude-1..N and codex-1..N. Templates are validated even
+at size zero. Both pools can be disabled. Legacy lanes still load; lanes
+and pools cannot be mixed in the file.
+
+config convert numbers each kind in original order (identuum -> claude-1)
+and preserves stored session associations. Busy lanes, more than eight of
+one kind, or differing templates refuse conversion. set claude-agent-pool N
+and set codex-agent-pool N change size only, refuse removal of a busy agent,
+and rewrite config atomically as 0600. A pool needs an owner template.
+No MCP tool changes config. Servers reload it on checks and before dispatch.
+The store control lock serializes these changes with starts and freeze.
 
 The owner supplies `lanes`, `max_runtime` and `reports_dir` in lanes.json.
 Each lane has name, kind (claude/codex), absolute binary, absolute workdir and
@@ -39,14 +53,15 @@ across server instances. A recorded surviving PID also prevents lane reuse.
 Only configured argv is executed, in its configured directory, with prompt stdin.
 
 Claude argv: `-p --output-format stream-json --verbose`, then optional
-`--resume ID`, then owner extra_args. Codex argv: `exec [resume ID] --json`,
-then extra_args, then `-`. CLI help, not a real agent run, verified these forms.
+`--resume ID`, then owner extra_args. Codex argv: `exec --json`, then
+extra_args, then optional `resume ID`, then `-`. Exec-only options precede
+resume. CLI help and the strict offline fake verify option scope, not a real run.
 
 Store defaults to `~/Library/Application Support/nuntius`, with CLI-only
 `--store` override. It belongs outside repositories. Run directories are 0700;
 goal.txt, events.jsonl, stderr.log, meta.json and audit.jsonl are 0600.
 Stdout/stderr go straight to files. Metadata is atomically replaced and includes
-run ID, lane, goal ID, prompt SHA-256, start/end, exit, PID, state, session ID
+run ID, lane, goal ID, prompt SHA-256, start/end, exit, PID, process start time, state, session ID
 and continuation links. Completed folders are published atomically. Run files
 and report files refuse symlink leaves; report reads are rooted to reports_dir.
 The append-only audit has time, tool, lane, goal ID, prompt hash and result.
@@ -54,14 +69,17 @@ Raw private storage is not redacted; all returned text is.
 
 Normal completion is ended. Timeout metadata uses timed_out; status presents
 ended with outcome timed_out. SIGINT escalates to SIGKILL after 30 seconds.
-Cancel and graceful server shutdown use the same escalation. Only owned
-process groups can be signalled by v1. macOS end notifications use fixed
+Cancel uses the same escalation. Runs start with setsid and direct file output.
+Server shutdown detaches and leaves runs alive. Every signal requires a live
+group leader with the recorded PID and kernel start time. macOS end notifications use fixed
 AppleScript with data passed as argv; notification failure is ignored.
 
-Restart reads persisted metadata. A dead run becomes ended with unknown exit;
-an observed surviving process stays busy. V1 cannot safely adopt or cancel that
-process, nor guarantee its timeout after a hard server crash. Detached takeover
-with process start-time identity is queued for v2. Never infer an exit code.
+Restart reads persisted metadata. A dead run becomes ended with unknown exit.
+Verified survivors regain supervision under an exclusive per-run supervisor lock.
+Darwin uses the kernel's microsecond start time; Linux uses boot ID plus start
+ticks. Mismatched identities are never signalled and become ended with unknown
+exit. Legacy records with a live PID but no identity remain busy and unsignalable.
+Never infer an exit code. While all servers are down timeout supervision is absent.
 
 ## Goal start amendment
 
@@ -77,10 +95,11 @@ The lane remains locked throughout the transition. Resumes never auto-resume.
 ## MCP tools
 
 Protocol 2025-11-25 over newline-delimited JSON-RPC. Initialize and the initialized
-notification precede tools. Exactly six tools:
+notification precede tools. The tools are:
 
-- nuntius_status(): all lanes, state idle/running/ended/ended_no_report, goal/run IDs, start,
-  elapsed, last event time, exit, outcome and report existence.
+- nuntius_status(): an object with frozen, freeze time/reason and lanes. Each lane
+  has state idle/running/ended/ended_no_report, goal/run IDs, start, elapsed,
+  last event time and age, exit, outcome and report existence.
 - nuntius_dispatch(lane, goal_id, text): start when idle; return run_id.
 - nuntius_reply(lane, text): resume the ended last run when its session ID exists.
 - nuntius_tail(lane, lines=50): 1..200 physical lines of assistant text and tool
@@ -89,7 +108,16 @@ notification precede tools. Exactly six tools:
   Exception: an ended run without a report returns the final assistant message
   in one entry, capped at 8 KiB after redaction, without the line-count limit.
 - nuntius_report(goal_id): a rooted regular report, at most 64 KiB after redaction.
-- nuntius_cancel(lane): request SIGINT of a run owned by this server.
+- nuntius_cancel(lane): request SIGINT of a verified running process group.
+- nuntius_freeze(reason): persist a state-dir marker and interrupt verified runs.
+  Dispatch, reply, queued delivery and automatic continuation refuse while frozen.
+- nuntius_unfreeze(): remove the marker. The host must ask the owner each time.
+- nuntius_owner_notes(since): up to 50 redacted notes after an RFC3339 timestamp.
+- nuntius_owner_notes_ack(ids): persist acknowledgements for 1..50 known IDs.
+
+Notes and acknowledgements append to private notes.jsonl. Notes have at most
+12000 bytes; reads refuse a file over 16 MiB. The judge owns the digest and
+decides when to check notes. No settings editor or LLM is part of this program.
 
 Unexpected tool argument keys are refused. Error messages do not echo inputs.
 Input protocol lines are limited to 128 KiB. Unknown methods receive JSON-RPC
@@ -114,7 +142,8 @@ shapes and Desktop permission interaction remain owner-pilot questions.
 
 ## CLI and validation
 
-Commands: mcp, status, watch LANE, config check, version and help. Global config
+Commands: mcp, status, agents [--json], web [--bind 127.0.0.1:PORT], unfreeze,
+watch LANE, config check, config convert, set KIND-agent-pool N, version and help. Global config
 and store flags precede the command. Status is JSON; watch prints changed tail
 snapshots and ends when the run ends. Ctrl-C cancels the watch only.
 
@@ -124,10 +153,28 @@ directories. Required cases: config/bypass refusal, busy lanes, timeout kill,
 restart recovery, redaction, goal ID and size bounds, sessionless reply refusal,
 MCP round trip, and the three amended continuation behaviors. Additional cases
 cover private modes, argv, cwd, audit, report links/bounds, CLI, multiline tails
-and refusal to signal recovered unverified PIDs.
+and refusal to signal recovered unverified PIDs. V2 tests also cover killed-server
+recovery, start-time mismatches, durable freeze/notes, pool conversion/resize,
+strict Codex resume argv, and HTTP guards. All agents are offline fakes.
+
+## Local dashboard
+
+Only 127.0.0.1 binds are accepted. A new random credential is printed in the
+start URL and required on every request. Host must be 127.0.0.1 or localhost
+with the listener port; POST Origin must equal the local HTTP origin. Actions
+accept only POST with the credential in a header. No CORS, external assets or
+access logs. The browser removes the credential from its address bar.
+
+Bounded redacted views show agent state/tails, the latest 50 runs' goal/report,
+highlighted QUESTIONS/DECISIONS, audit, owner notes and OVERSIGHT.md next to
+reports_dir (or an absolute owner-set oversight_path). DOM text nodes prevent
+agent text from becoming active HTML. Raw stderr, tool results and session IDs
+are excluded. Controls cancel, freeze, unfreeze, write notes and send messages.
+One durable private message can queue per running run. Stop-and-send interrupts
+the run and delivers after it ends; freeze suppresses queued delivery.
 
 ## Not included
 
-No real-agent integration test, queue beyond lane exclusion, dashboard, freeze,
-owner notes, HTTP listener, automatic deletion, app-settings edits or release.
+No real-agent integration test, scheduler, public listener, automatic deletion,
+app/agent-settings edits or LLM. Release publishing belongs to CI.
 Store scans refuse over 10,000 entries; archive only ended records externally.

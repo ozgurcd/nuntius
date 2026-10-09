@@ -25,6 +25,7 @@ type Run struct {
 	State         string     `json:"state"`
 	SessionID     string     `json:"session_id,omitempty"`
 	PID           int        `json:"pid"`
+	ProcessStart  string     `json:"process_start,omitempty"`
 	StopReason    string     `json:"stop_reason,omitempty"`
 	StopAt        *time.Time `json:"stop_at,omitempty"`
 	Resumed       bool       `json:"resumed"`
@@ -32,17 +33,19 @@ type Run struct {
 	ContinueRunID string     `json:"continue_run_id,omitempty"`
 }
 type Status struct {
-	Lane               string     `json:"lane"`
-	State              string     `json:"state"`
-	RunID              string     `json:"run_id,omitempty"`
-	GoalID             string     `json:"goal_id,omitempty"`
-	Started            *time.Time `json:"started,omitempty"`
-	ElapsedSeconds     int64      `json:"elapsed_seconds"`
-	LastEvent          *time.Time `json:"last_event,omitempty"`
-	Exit               *int       `json:"exit,omitempty"`
-	ReportExists       bool       `json:"report_exists"`
-	AskedInteractively bool       `json:"asked_interactively"`
-	Outcome            string     `json:"outcome,omitempty"`
+	Freeze              *FreezeState `json:"freeze,omitempty"`
+	LastEventAgeSeconds *int64       `json:"last_event_age_seconds,omitempty"`
+	Lane                string       `json:"lane"`
+	State               string       `json:"state"`
+	RunID               string       `json:"run_id,omitempty"`
+	GoalID              string       `json:"goal_id,omitempty"`
+	Started             *time.Time   `json:"started,omitempty"`
+	ElapsedSeconds      int64        `json:"elapsed_seconds"`
+	LastEvent           *time.Time   `json:"last_event,omitempty"`
+	Exit                *int         `json:"exit,omitempty"`
+	ReportExists        bool         `json:"report_exists"`
+	AskedInteractively  bool         `json:"asked_interactively"`
+	Outcome             string       `json:"outcome,omitempty"`
 }
 type activeRun struct {
 	done chan struct{}
@@ -62,6 +65,10 @@ type Manager struct {
 
 func NewManager(c Config, store string) (*Manager, error) {
 	d, e := c.Validate()
+	if e != nil {
+		return nil, e
+	}
+	c.Lanes, e = c.expanded()
 	if e != nil {
 		return nil, e
 	}
@@ -106,6 +113,17 @@ func (m *Manager) Reply(lane, text string) (string, error) { return m.start(lane
 func (m *Manager) start(name, goal, text string, resume bool) (id string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	guard, e := m.controlLock()
+	if e != nil {
+		return "", e
+	}
+	defer guard.Close()
+	if e = m.reload(); e != nil {
+		return "", e
+	}
+	if e = m.checkFrozen(); e != nil {
+		return "", e
+	}
 	tool := "nuntius_dispatch"
 	if resume {
 		tool = "nuntius_reply"
@@ -146,7 +164,7 @@ func (m *Manager) start(name, goal, text string, resume bool) (id string, err er
 		return "", readErr
 	}
 	if previous != nil && previous.State == "running" && processExists(previous.PID) {
-		return "", errors.New("lane has a surviving process; v1 will not reuse it")
+		return "", errors.New("lane has a surviving process")
 	}
 	if resume {
 		last, e := m.latest(name)
@@ -232,7 +250,7 @@ func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, p
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	// The child inherits the lane lock so a server crash cannot admit another run.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.ExtraFiles = []*os.File{lock}
 	if e = cmd.Start(); e != nil {
 		r.State = "ended"
@@ -244,14 +262,21 @@ func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, p
 		return "", errors.New("agent could not start")
 	}
 	r.PID = cmd.Process.Pid
+	r.ProcessStart, _ = processStart(r.PID)
 	if e = m.save(&r); e != nil {
-		_ = syscall.Kill(-r.PID, syscall.SIGKILL)
+		_ = signalRun(r, syscall.SIGKILL)
 		_ = cmd.Wait()
 		return "", e
 	}
 	a := &activeRun{done: make(chan struct{}), stop: make(chan string, 1)}
+	supervisor, e := m.lock("supervisor-" + r.ID)
+	if e != nil {
+		_ = signalRun(r, syscall.SIGKILL)
+		_ = cmd.Wait()
+		return "", e
+	}
 	m.active[name] = a
-	go m.follow(r, cmd, lock, a, m.Grace)
+	go m.follow(r, cmd, lock, supervisor, a, m.Grace)
 	return id, nil
 }
 func agentArgs(l Lane, session string) []string {
@@ -263,73 +288,128 @@ func agentArgs(l Lane, session string) []string {
 		return append(args, l.ExtraArgs...)
 	}
 	args := []string{"exec"}
+	args = append(args, "--json")
+	args = append(args, l.ExtraArgs...)
 	if session != "" {
 		args = append(args, "resume", session)
 	}
-	args = append(args, "--json")
-	args = append(args, l.ExtraArgs...)
 	return append(args, "-")
 }
-func (m *Manager) follow(r Run, cmd *exec.Cmd, lock *os.File, a *activeRun, grace time.Duration) {
+func (m *Manager) follow(r Run, cmd *exec.Cmd, lock, supervisor *os.File, a *activeRun, grace time.Duration) {
+	defer supervisor.Close()
 	waited := make(chan error, 1)
-	go func() { waited <- cmd.Wait() }()
-	timer := time.NewTimer(m.runtime)
-	defer timer.Stop()
-	var stop string
-	select {
-	case <-waited:
-	case <-timer.C:
-		stop = "timed_out"
-	case stop = <-a.stop:
+	if cmd != nil {
+		go func() { waited <- cmd.Wait() }()
 	}
-	if stop != "" {
-		_ = syscall.Kill(-r.PID, syscall.SIGINT)
-		killTimer := time.NewTimer(grace)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	finished := false
+	for !finished {
 		select {
+		case <-m.closing:
+			if lock != nil {
+				_ = lock.Close()
+			}
+			close(a.done)
+			return
 		case <-waited:
-		case <-killTimer.C:
-			_ = syscall.Kill(-r.PID, syscall.SIGKILL)
-			<-waited
+			n := cmd.ProcessState.ExitCode()
+			r.Exit = &n
+			finished = true
+		case <-tick.C:
+			m.mu.Lock()
+			guard, e := m.controlLock()
+			if e == nil {
+				current, err := m.latest(r.Lane)
+				if err == nil && current != nil && current.ID == r.ID {
+					r.StopReason = current.StopReason
+					r.StopAt = current.StopAt
+					if current.ProcessStart != r.ProcessStart {
+						e = errors.New("process identity changed")
+					}
+				} else {
+					e = errors.New("run metadata unavailable")
+				}
+				if e == nil {
+					if cmd == nil && !sameProcess(r) {
+						finished = true
+					}
+					if sameProcess(r) {
+						if r.StopAt == nil && (time.Since(r.Started) >= m.runtime || m.checkFrozen() != nil) {
+							reason := "timed_out"
+							if time.Since(r.Started) < m.runtime {
+								reason = "cancelled"
+							}
+							_ = m.requestStop(&r, reason)
+						}
+						if r.StopAt != nil && time.Since(*r.StopAt) >= grace {
+							_ = signalRun(r, syscall.SIGKILL)
+						}
+					}
+				}
+				_ = guard.Close()
+			}
+			m.mu.Unlock()
 		}
-		killTimer.Stop()
 	}
-	_ = syscall.Kill(-r.PID, syscall.SIGKILL)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	guard, e := m.controlLock()
+	if e != nil {
+		close(a.done)
+		if lock != nil {
+			_ = lock.Close()
+		}
+		delete(m.active, r.Lane)
+		return
+	}
+	defer guard.Close()
+	if current, err := m.latest(r.Lane); err == nil && current != nil && current.ID == r.ID {
+		r.StopReason = current.StopReason
+		r.StopAt = current.StopAt
+	}
 	now := time.Now().UTC()
 	r.Ended = &now
 	r.State = "ended"
-	r.StopReason = stop
-	if stop == "timed_out" {
+	if r.StopReason == "timed_out" {
 		r.State = "timed_out"
 	}
-	n := cmd.ProcessState.ExitCode()
-	r.Exit = &n
+	if cmd == nil && r.StopReason == "" {
+		r.StopReason = "unknown_exit"
+	}
 	r.SessionID = m.session(r.ID)
-	canContinue := !r.Resumed && stop == "" && n == 0 && r.SessionID != "" && m.noWork(r.ID)
-	m.mu.Lock()
-	saved := true
-	if e := m.save(&r); e != nil {
-		saved = false
-		_ = m.audit("run_end", r.Lane, r.GoalID, r.SHA256, "store_error")
-	} else {
-		_ = m.audit("run_end", r.Lane, r.GoalID, r.SHA256, "ended")
+	saved := m.save(&r) == nil
+	_ = m.audit("run_end", r.Lane, r.GoalID, r.SHA256, "ended")
+	if lock == nil {
+		lock, _ = m.lock(r.Lane)
 	}
 	continued := false
 	lane, _ := m.lane(r.Lane)
-	if saved && canContinue && !m.closed && lane.Kind == "claude" && lane.mode() == "goal_then_continue" {
-		_, e := m.launch(lane, r.GoalID, lane.continuation(), r.SessionID, lock, &r)
-		continued = e == nil
-		if e != nil {
-			_ = m.audit("automatic_continue", r.Lane, r.GoalID, r.SHA256, "failed")
+	pending, queueErr := m.pendingMessage(r.ID)
+	if saved && !m.closed && m.checkFrozen() == nil && lock != nil && r.SessionID != "" {
+		text := ""
+		if queueErr == nil && pending != "" {
+			text = pending
+		} else if !r.Resumed && r.StopReason == "" && r.Exit != nil && *r.Exit == 0 && m.noWork(r.ID) && lane.Kind == "claude" && lane.mode() == "goal_then_continue" {
+			text = lane.continuation()
+		}
+		if text != "" {
+			_, e = m.launch(lane, r.GoalID, text, r.SessionID, lock, &r)
+			continued = e == nil
+			if continued && pending != "" {
+				_ = os.Remove(filepath.Join(m.store, "runs", r.ID, "message.json"))
+			}
 		}
 	}
 	if !continued {
 		delete(m.active, r.Lane)
-		_ = lock.Close()
+		if lock != nil {
+			_ = lock.Close()
+		}
 	}
 	close(a.done)
-	m.mu.Unlock()
 	if m.config.Notifications == nil || *m.config.Notifications {
-		notify(r)
+		go notify(r)
 	}
 }
 func (m *Manager) Cancel(name string) error {
@@ -338,40 +418,59 @@ func (m *Manager) Cancel(name string) error {
 	if _, e := m.lane(name); e != nil {
 		return e
 	}
-	if a := m.active[name]; a != nil {
-		select {
-		case a.stop <- "cancelled":
-		default:
-		}
-		return m.audit("nuntius_cancel", name, "", "", "accepted")
+	guard, e := m.controlLock()
+	if e != nil {
+		return e
 	}
+	defer guard.Close()
 	r, e := m.latest(name)
-	busy, lockErr := m.busy(name)
-	if e != nil || r == nil || r.State != "running" || !busy || !errors.Is(lockErr, errBusy) {
+	if e != nil || r == nil || r.State != "running" {
 		return errors.New("lane is not running")
 	}
-	return errors.New("v1 cannot safely signal a run owned by another server; use its original server or inspect it locally")
+	if e = m.requestStop(r, "cancelled"); e != nil {
+		return e
+	}
+	return m.audit("nuntius_cancel", name, r.GoalID, "", "accepted")
 }
 func (m *Manager) Status() ([]Status, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	guard, e := m.controlLock()
+	if e != nil {
+		return nil, e
+	}
+	defer guard.Close()
+	if e = m.reload(); e != nil {
+		return nil, e
+	}
+	frozen, e := m.freezeState()
+	if e != nil {
+		return nil, e
+	}
 	out := make([]Status, 0, len(m.config.Lanes))
 	for _, l := range m.config.Lanes {
-		s := Status{Lane: l.Name, State: "idle"}
+		s := Status{Lane: l.Name, State: "idle", Freeze: frozen}
 		r, e := m.latest(l.Name)
 		if e != nil {
 			return nil, e
 		}
 		if r != nil {
 			if r.State == "running" && m.active[l.Name] == nil {
-				lock, e := m.lock(l.Name)
+				lock, e := m.lock("supervisor-" + r.ID)
 				if e == nil {
-					if !processExists(r.PID) {
+					if sameProcess(*r) {
+						a := &activeRun{done: make(chan struct{}), stop: make(chan string, 1)}
+						m.active[l.Name] = a
+						go m.follow(*r, nil, nil, lock, a, m.Grace)
+						lock = nil
+					} else if !processExists(r.PID) || r.ProcessStart != "" {
 						e = m.recoverEnded(r)
 					} else {
 						r.StopReason = "surviving_process_unverified"
 					}
-					_ = lock.Close()
+					if lock != nil {
+						_ = lock.Close()
+					}
 					if e != nil {
 						return nil, e
 					}
@@ -396,6 +495,8 @@ func (m *Manager) Status() ([]Status, error) {
 			if fi, e := os.Lstat(filepath.Join(m.store, "runs", r.ID, "events.jsonl")); e == nil && fi.Mode().IsRegular() {
 				v := fi.ModTime().UTC()
 				s.LastEvent = &v
+				age := max(0, int64(time.Since(v).Seconds()))
+				s.LastEventAgeSeconds = &age
 			}
 			s.ReportExists = m.reportExists(r.GoalID)
 			if s.State == "ended" && !s.ReportExists {
@@ -419,10 +520,6 @@ func (m *Manager) Close() error {
 	close(m.closing)
 	var pending []chan struct{}
 	for _, a := range m.active {
-		select {
-		case a.stop <- "cancelled":
-		default:
-		}
 		pending = append(pending, a.done)
 	}
 	m.mu.Unlock()

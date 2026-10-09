@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const Version = "v0.1.2"
+const Version = "v0.2.0"
 
 type Lane struct {
 	Name         string   `json:"name"`
@@ -25,10 +25,13 @@ type Lane struct {
 }
 
 type Config struct {
-	Lanes         []Lane `json:"lanes"`
-	MaxRuntime    string `json:"max_runtime"`
-	ReportsDir    string `json:"reports_dir"`
-	Notifications *bool  `json:"notifications,omitempty"`
+	Lanes         []Lane               `json:"lanes,omitempty"`
+	Pools         map[string]AgentPool `json:"pools,omitempty"`
+	OversightPath string               `json:"oversight_path,omitempty"`
+	SourcePath    string               `json:"-"`
+	MaxRuntime    string               `json:"max_runtime"`
+	ReportsDir    string               `json:"reports_dir"`
+	Notifications *bool                `json:"notifications,omitempty"`
 }
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$`)
@@ -61,10 +64,34 @@ func LoadConfig(path string) (Config, error) {
 	if e = strictJSON(b, &c); e != nil {
 		return c, e
 	}
+	if c.Pools != nil && len(c.Lanes) > 0 {
+		return c, errors.New("use pools or lanes, not both")
+	}
 	_, e = c.Validate()
+	if e == nil {
+		c.Lanes, e = c.expanded()
+		c.SourcePath = path
+	}
 	return c, e
 }
 func (c Config) Validate() (time.Duration, error) {
+	if c.OversightPath != "" && !filepath.IsAbs(c.OversightPath) {
+		return 0, errors.New("oversight_path must be absolute")
+	}
+	if c.Pools != nil {
+		lanes, e := c.expanded()
+		if e != nil {
+			return 0, e
+		}
+		// Validate even disabled templates, so enabling a pool cannot bypass policy.
+		for kind, p := range c.Pools {
+			l := p.Template
+			l.Kind = kind
+			l.Name = kind + "-template"
+			lanes = append(lanes, l)
+		}
+		c.Lanes = lanes
+	}
 	fail := func() (time.Duration, error) {
 		return 0, errors.New("invalid lane configuration; check names, absolute paths, duration and permitted extra_args")
 	}
@@ -72,7 +99,7 @@ func (c Config) Validate() (time.Duration, error) {
 	if e != nil || d <= 0 || d > 7*24*time.Hour {
 		return fail()
 	}
-	if len(c.Lanes) < 1 || len(c.Lanes) > 32 || !filepath.IsAbs(c.ReportsDir) {
+	if (len(c.Lanes) < 1 && c.Pools == nil) || len(c.Lanes) > 32 || !filepath.IsAbs(c.ReportsDir) {
 		return fail()
 	}
 	seen := map[string]bool{}

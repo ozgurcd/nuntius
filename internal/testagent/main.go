@@ -13,6 +13,18 @@ import (
 )
 
 func main() {
+	// Like Codex, exec-only sandbox options are not resume options.
+	if len(os.Args) > 1 && os.Args[1] == "exec" {
+		resumed := false
+		for _, arg := range os.Args[2:] {
+			if arg == "resume" {
+				resumed = true
+			}
+			if resumed && (arg == "--sandbox" || strings.HasPrefix(arg, "--sandbox=")) {
+				os.Exit(2)
+			}
+		}
+	}
 	b, _ := io.ReadAll(os.Stdin)
 	mode := string(b)
 	if strings.Contains(mode, "ack-goal") {
