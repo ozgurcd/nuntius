@@ -1,11 +1,11 @@
-# Nuntius v0.2.1 — specification as built
+# Nuntius v0.2.2 — specification as built
 
 ## Boundary
 
 Nuntius is a Go, standard-library-only stdio MCP server for an owner-approved
 judge on macOS or Linux. Linux CI tests the same process and file contracts. The module
 is `github.com/ozgurcd/nuntius`. It has no network client, LLM or shell runner.
-Version v0.2.1 is compiled in; publication is a separate release workflow.
+Version v0.2.2 is compiled in; publication is a separate release workflow.
 
 Do not register it for coding agents. The MCP host owns approval. The server
 cannot verify that a caller is the judge or force a host to display a click.
@@ -188,6 +188,34 @@ start URL and required on every request. Host must be 127.0.0.1 or localhost
 with the listener port; POST Origin must equal the local HTTP origin. Actions
 accept only POST with the credential in a header. No CORS, external assets or
 access logs. The browser removes the credential from its address bar.
+
+The page is embedded as index.html, app.css and app.js. Asset GET requests pass
+the same credential and Host checks as the page and data. Script and style CSP
+directives are 'self'; no inline script/style or external network asset is used.
+Authenticated start-page asset URLs bootstrap the browser credential without
+inserting it into JavaScript or CSS source. All existing response headers remain.
+
+The responsive light/dark dashboard keeps freeze controls, running/idle/ended
+counts and refresh time in a sticky header. Accessible tabs select Agents
+(default), Messages & notes, Digest, History or Audit. The URL hash restores
+the selected view when opening an authenticated start URL. Arrow keys and
+Home/End move tab focus and selection; hidden panels defer updates until shown.
+Tab counts show running agents, unread notes and runs with open QUESTIONS.
+Compact two-column desktop cards include agent kind, state text/colour,
+goal, human elapsed time, ETA, event age, fixed activity label and report status.
+Only running cards offer cancel, with a two-step in-page confirmation.
+The initial cancel button hides until Keep running or the confirmation timeout.
+Every card's Message button selects that agent in the Messages composer.
+Phone history stacks lane/state, goal, then started/duration; badges, lanes and
+durations do not split words. The phone tab bar scrolls within its own bounds.
+Data adds kind, eta and activity only to web lanes, reusing the status helpers;
+CLI/MCP JSON is unchanged. Existing redaction and text limits apply.
+
+Two-second polling updates keyed cards and history rows in place. Expanded
+reports, open tails and open audit content remain stable. Focus, selection and
+recent section interaction defer updates; message drafts and lane selection
+survive polling. Relative times expose absolute dates on hover. A freshness
+indicator and visible error banner distinguish current data from stale data.
 
 Bounded redacted views show agent state/tails, the latest 50 runs' goal/report,
 highlighted QUESTIONS/DECISIONS, audit, owner notes and OVERSIGHT.md next to

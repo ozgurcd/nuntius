@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.2 — 2026-10-09
+
+- Redesign local oversight as a responsive light/dark operations dashboard
+  with summary counts, state badges, human times, ETA and bounded activity.
+- Preserve focused inputs, expanded history, tails and audit while polling;
+  add history filtering, refresh freshness and a visible data-error banner.
+- Confirm cancellation in-page and retain all existing owner actions.
+- Keep controls and counts in a sticky header with accessible, hash-selected
+  tabs; compact agent cards link to the message composer. Stack phone history
+  rows, align desktop cells and show idle placeholders in normal muted type.
+- Embed offline HTML/CSS/JavaScript, guard every asset request and tighten
+  script/style CSP to same-origin assets without unsafe-inline.
+- Add guarded-asset and data-shape tests plus a realistic redacted dashboard
+  fixture for screenshots; leave CLI/MCP JSON and owner installation unchanged.
+
 ## v0.2.1 — 2026-10-09
 
 - Show aligned human status by default, with freeze/data header, elapsed,

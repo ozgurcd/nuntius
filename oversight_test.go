@@ -209,6 +209,12 @@ func TestWebRequestGuards(t *testing.T) {
 		{"missing Origin", "POST", "127.0.0.1:8123", "", "/action", true, 403},
 		{"wrong port", "GET", "127.0.0.1:9", "", "/", true, 403},
 		{"allowed", "GET", "127.0.0.1:8123", "", "/", true, 200},
+		{"CSS guarded", "GET", "127.0.0.1:8123", "", "/app.css", false, 403},
+		{"JS guarded", "GET", "127.0.0.1:8123", "", "/app.js", false, 403},
+		{"CSS allowed", "GET", "127.0.0.1:8123", "", "/app.css", true, 200},
+		{"JS allowed", "GET", "127.0.0.1:8123", "", "/app.js", true, 200},
+		{"asset Host guarded", "GET", "evil.test:8123", "", "/app.js", true, 403},
+		{"asset method guarded", "POST", "127.0.0.1:8123", "http://127.0.0.1:8123", "/app.css", true, 405},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest(tc.method, "http://127.0.0.1:8123"+tc.path, strings.NewReader(`{"action":"unfreeze"}`))
@@ -226,6 +232,10 @@ func TestWebRequestGuards(t *testing.T) {
 			}
 			if out.Header().Get("Access-Control-Allow-Origin") != "" {
 				t.Fatal("CORS enabled")
+			}
+			csp := out.Header().Get("Content-Security-Policy")
+			if strings.Contains(csp, "unsafe-inline") || !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "style-src 'self'") {
+				t.Fatal("static asset CSP missing")
 			}
 		})
 	}
@@ -275,6 +285,17 @@ func TestWebViewsNotesQueuedReplyAndQuestions(t *testing.T) {
 	w.ServeHTTP(out, req)
 	if out.Code != 200 || !strings.Contains(out.Body.String(), "waiting for owner") || !strings.Contains(out.Body.String(), "kept normal approvals") || !strings.Contains(out.Body.String(), "goal") {
 		t.Fatal("dashboard views missing")
+	}
+	var data struct {
+		Lanes []struct{ Kind, ETA, Activity string }
+	}
+	if json.Unmarshal(out.Body.Bytes(), &data) != nil || len(data.Lanes) == 0 {
+		t.Fatal("card data missing")
+	}
+	for _, lane := range data.Lanes {
+		if lane.Kind == "" || lane.ETA == "" || lane.Activity == "" {
+			t.Fatal("card status helpers missing")
+		}
 	}
 }
 

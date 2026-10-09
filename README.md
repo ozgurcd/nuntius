@@ -1,6 +1,6 @@
 # nuntius
 
-Nuntius v0.2.1 is a small local Go MCP server for a judge using Claude Desktop.
+Nuntius v0.2.2 is a small local Go MCP server for a judge using Claude Desktop.
 It starts and follows configured Claude Code and Codex agent pools on macOS or Linux.
 It contains no LLM and makes no network requests of its own. Agent programs may
 use the network under their existing settings.
@@ -208,17 +208,37 @@ is enabled. Every request requires the credential, Host must match a loopback
 hostname and port, and POST Origin must match the request's local origin.
 Actions accept only POST and require the credential in a request header.
 
-The dashboard polls agent states and readable tails. It shows the latest 50
-runs with their goal, report and highlighted QUESTIONS/DECISIONS, the bounded
-audit log, owner notes, and the judge's `OVERSIGHT.md` digest next to the reports
-directory (or optional absolute `oversight_path` in config). It uses inline
-assets and inserts all report and note text safely as text. Output is redacted;
+The dashboard adapts to laptop and phone-width windows and your system's light
+or dark mode. The sticky top bar shows dispatch/freeze controls, running, idle
+and ended counts, and refresh freshness on every tab. Agents opens by default;
+Messages & notes, Digest, History and Audit have their own panels. Arrow keys
+and Home/End navigate tabs. The URL hash selects the view when opening the
+authenticated start URL. The tab bar scrolls within phone-width windows.
+Compact agent cards show kind, state, goal, elapsed time, ETA, event age, activity and
+report presence. Open a card's tail to read its bounded output. Cancel uses
+an in-page confirmation before interrupting a running agent; Keep running or
+the timeout restores the initial button. Message opens that agent's composer.
+
+The other tabs show messages and notes, the judge's `OVERSIGHT.md` digest next
+to the reports directory (or optional absolute `oversight_path` in config),
+the latest 50 runs and the bounded audit log. Filter history by goal ID or lane,
+then expand a row for highlighted QUESTIONS/DECISIONS, goal and report.
+Times are relative with absolute dates on hover.
+History rows stack on phones without splitting badge, lane or duration words.
+Tab counts show running agents, unread owner notes and runs with open questions.
+
+Polling runs every two seconds; hidden panels update when shown. Stable cards and rows keep focus and expansion;
+reading an open tail, report or audit log pauses its content updates. Sections
+pause briefly after interaction and while focused or selected. A visible banner
+reports refresh failures while retaining the last data. All assets are embedded,
+offline and authenticated; CSP permits only same-origin scripts/styles, with no
+inline code. All report and note text is inserted as text. Output stays redacted;
 raw tool results, session IDs and stderr are not dashboard data.
 
 Send a message to an ended session, queue one message for delivery after a
 running run ends, or choose “Stop and send”. The pending message is private and
 durable. Freeze suppresses delivery. Duplicate queued messages are refused.
-Cancel, FREEZE ALL, UNFREEZE and owner-note entry are local owner actions.
+Cancel, Freeze, Unfreeze and owner-note entry are local owner actions.
 
 ## Measured CLI interface
 

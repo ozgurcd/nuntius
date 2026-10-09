@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Nuntius · Operations</title>
+  <link rel="stylesheet" href="/app.css?token=__ASSET_TOKEN__">
+  <script defer src="/app.js?token=__ASSET_TOKEN__"></script>
+</head>
+<body>
+  <a class="skip-link" href="#agents">Skip to dashboard</a>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">N</span><div><h1>Nuntius</h1><p>Local operations</p></div></div>
+    <div class="dispatch"><span id="freeze" class="badge">Connecting</span><button id="freezeButton">Freeze</button><button id="unfreezeButton" hidden>Unfreeze</button></div>
+    <div class="overview" aria-label="Overview">
+      <div class="metric"><strong id="runningCount">—</strong><span>Running</span></div>
+      <div class="metric"><strong id="idleCount">—</strong><span>Idle</span></div>
+      <div class="metric"><strong id="endedCount">—</strong><span>Ended</span></div>
+      <div class="refresh-meta"><span id="updated">Waiting for first update</span><time id="lastRefresh">Last refresh —</time></div>
+    </div>
+  </header>
+  <main>
+    <nav class="tabs" role="tablist" aria-label="Dashboard views">
+      <button id="tab-agents" role="tab" aria-selected="true" tabindex="0" aria-controls="agents">Agents <span id="agentsTabCount" class="tab-count" aria-label="running agents">0</span></button>
+      <button id="tab-messages" role="tab" aria-selected="false" tabindex="-1" aria-controls="messages">Messages &amp; notes <span id="notesTabCount" class="tab-count" aria-label="unread owner notes">0</span></button>
+      <button id="tab-digest" role="tab" aria-selected="false" tabindex="-1" aria-controls="digest">Digest</button>
+      <button id="tab-runs" role="tab" aria-selected="false" tabindex="-1" aria-controls="runs">History <span id="questionsTabCount" class="tab-count" aria-label="runs with open questions">0</span></button>
+      <button id="tab-auditSection" role="tab" aria-selected="false" tabindex="-1" aria-controls="auditSection">Audit</button>
+    </nav>
+    <div id="error" class="error" role="alert" hidden></div>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <section id="agents" role="tabpanel" aria-labelledby="tab-agents" tabindex="0"><div class="section-heading"><h2>Agents</h2><span class="muted">Live · every 2 seconds</span></div><div id="lanes" class="agent-grid"></div><p id="agentsEmpty" class="empty" hidden>No agents configured.</p></section>
+    <section class="panel" id="messages" role="tabpanel" hidden aria-labelledby="tab-messages" tabindex="0"><div class="section-heading"><h2>Messages and notes</h2><span class="muted">Local owner actions</span></div>
+      <div class="compose-grid">
+        <form id="messageForm"><h3>Message an agent</h3><label for="lane">Agent</label><select id="lane"></select><label for="message">Message</label><textarea id="message" maxlength="12000" placeholder="Send a reply or queue it after the current run"></textarea><div class="actions"><button id="send" class="primary" type="submit">Send / queue</button><button id="stopSend" type="button">Stop and send</button></div><p class="hint">One queued message per running agent. Freeze pauses delivery.</p></form>
+        <form id="noteForm"><h3>Note to the judge</h3><label for="note">Owner note</label><textarea id="note" maxlength="12000" placeholder="A decision, question, or next step"></textarea><div class="actions"><button id="saveNote" type="submit">Save note</button></div><p class="hint">Notes stay here until the judge marks them read.</p></form>
+      </div><div id="notes" class="notes"></div><p id="notesEmpty" class="empty" hidden>No owner notes yet.</p>
+    </section>
+    <section class="panel" id="digest" role="tabpanel" hidden aria-labelledby="tab-digest" tabindex="0"><div class="section-heading"><h2>Owner digest</h2><span class="muted">From the judge</span></div><div id="oversight" class="prose"></div></section>
+    <section class="panel" id="runs" role="tabpanel" hidden aria-labelledby="tab-runs" tabindex="0"><div class="section-heading"><h2>Run history</h2><span class="muted">Latest 50 runs</span></div><label for="filter">Filter by goal or lane</label><input id="filter" type="search" placeholder="Search goal ID or lane" autocomplete="off"><div class="table-scroll"><table><thead><tr><th scope="col">Lane</th><th scope="col">Goal</th><th scope="col">State</th><th scope="col">Started</th><th scope="col">Duration</th></tr></thead><tbody id="history"></tbody></table></div><p id="historyEmpty" class="empty" hidden>No matching runs.</p></section>
+    <section class="panel" id="auditSection" role="tabpanel" hidden aria-labelledby="tab-auditSection" tabindex="0"><details><summary>Audit log <span class="muted">Bounded local record</span></summary><pre id="audit" class="log"></pre></details></section>
+    <footer>Loopback only <span aria-hidden="true">·</span> Nuntius keeps your normal agent permissions.</footer>
+  </main>
+</body>
+</html>
