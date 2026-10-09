@@ -12,7 +12,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -53,11 +52,10 @@ func (w *Web) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 		http.Error(out, "forbidden", http.StatusForbidden)
 		return
 	}
-	auth := r.Header.Get("X-Nuntius-Token")
-	if auth == "" && r.Method == http.MethodGet {
-		auth = r.URL.Query().Get("token")
-	}
-	if subtle.ConstantTimeCompare([]byte(auth), []byte(w.token)) != 1 {
+	// Only the static, data-free shell is public. Data and actions use headers
+	// exclusively, so a query credential never authenticates an API request.
+	shell := r.URL.Path == "/" || r.URL.Path == "/app.css" || r.URL.Path == "/app.js"
+	if !shell && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Nuntius-Token")), []byte(w.token)) != 1 {
 		http.Error(out, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -83,9 +81,7 @@ func (w *Web) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 	case "/":
 		out.Header().Set("Content-Type", "text/html; charset=utf-8")
 		page, _ := dashboardAssets.ReadFile("index.html")
-		// Only the authenticated start URL supplies the asset bootstrap credential.
-		// It is escaped and never inserted into script or style source.
-		_, _ = io.WriteString(out, strings.ReplaceAll(string(page), "__ASSET_TOKEN__", url.QueryEscape(r.URL.Query().Get("token"))))
+		_, _ = out.Write(page)
 	case "/app.css", "/app.js":
 		contentType := "text/css; charset=utf-8"
 		if r.URL.Path == "/app.js" {

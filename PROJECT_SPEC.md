@@ -184,21 +184,25 @@ strict Codex resume argv, and HTTP guards. All agents are offline fakes.
 ## Local dashboard
 
 Only 127.0.0.1 binds are accepted. A new random credential is printed in the
-start URL and required on every request. Host must be 127.0.0.1 or localhost
+start URL and required in the X-Nuntius-Token header on /data and /action.
+The static shell is public and contains no private data or credential.
+Host must be 127.0.0.1 or localhost
 with the listener port; POST Origin must equal the local HTTP origin. Actions
 accept only POST with the credential in a header. No CORS, external assets or
-access logs. The browser removes the credential from its address bar.
+access logs. The browser stores the start credential in sessionStorage for this
+tab, removes it from the address bar and reads storage on reload. Empty storage
+shows instructions to reopen the printed start link. Disabled storage permits
+the current start-link load only. Query credentials cannot authenticate APIs.
 
 The page is embedded as index.html, app.css and app.js. Asset GET requests pass
-the same credential and Host checks as the page and data. Script and style CSP
+the same Host, port, method and response-header checks as the page. Script and style CSP
 directives are 'self'; no inline script/style or external network asset is used.
-Authenticated start-page asset URLs bootstrap the browser credential without
-inserting it into JavaScript or CSS source. All existing response headers remain.
+Static asset URLs carry no credential. All existing response headers remain.
 
 The responsive light/dark dashboard keeps freeze controls, running/idle/ended
 counts and refresh time in a sticky header. Accessible tabs select Agents
 (default), Messages & notes, Digest, History or Audit. The URL hash restores
-the selected view when opening an authenticated start URL. Arrow keys and
+the selected view on start and reload. Arrow keys and
 Home/End move tab focus and selection; hidden panels defer updates until shown.
 Tab counts show running agents, unread notes and runs with open QUESTIONS.
 Compact two-column desktop cards include agent kind, state text/colour,
@@ -208,6 +212,9 @@ The initial cancel button hides until Keep running or the confirmation timeout.
 Every card's Message button selects that agent in the Messages composer.
 Phone history stacks lane/state, goal, then started/duration; badges, lanes and
 durations do not split words. The phone tab bar scrolls within its own bounds.
+The phone header has brand/freeze controls above counts/update age. Panel focus
+outlines require keyboard input and focus-visible. Initial and newly visible
+panels render even with a recent hold; panel element focus alone is not busy.
 Data adds kind, eta and activity only to web lanes, reusing the status helpers;
 CLI/MCP JSON is unchanged. Existing redaction and text limits apply.
 

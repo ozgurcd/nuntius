@@ -15,7 +15,9 @@ side effects; they do not enforce a click or identify who called the server.
 Use the Go version in `go.mod` (1.27.2), Staticcheck 2026.2.1 (0.8.1), and
 govulncheck v1.8.0. CI gets Go and the checksum-verified Staticcheck build from
 the pinned Lictor composite action used by Legattus. No Go library dependencies
-are required. macOS and Linux are supported; Windows is not a target.
+are required. Tests also need Node.js (CI pins 26.8.1) to run the dashboard
+JavaScript in an offline fake DOM; no browser or npm packages are needed.
+macOS and Linux are supported; Windows is not a target.
 
 ```sh
 make verify
@@ -202,18 +204,27 @@ nuntius web
 
 Open the private URL printed by that invocation. It contains a new random
 credential each start; do not share or log the URL. The page removes it from
-the address bar after loading. Binding is restricted to `127.0.0.1`; use
+the address bar after loading and stores it in `sessionStorage` for this tab
+only. Reload keeps sign-in and the selected tab; closing the browser tab clears
+the stored credential. If storage is disabled, the start link works for the
+current load, but reload needs that link again. Without a credential the page
+shows: "Open the link printed by `nuntius web` to sign in."
+Binding is restricted to `127.0.0.1`; use
 `nuntius web --bind 127.0.0.1:8124` for another port. No LAN/remote bind or CORS
-is enabled. Every request requires the credential, Host must match a loopback
-hostname and port, and POST Origin must match the request's local origin.
-Actions accept only POST and require the credential in a request header.
+is enabled. The static shell (`index.html`, `app.css`, `app.js`) is available
+without sign-in and contains no private data or credential. Every request still
+checks the loopback Host and port, method and security headers; POST Origin must
+match the request's local origin. `/data` and `/action` require the
+`X-Nuntius-Token` header; a query parameter cannot authenticate either API.
+Actions accept only POST.
 
 The dashboard adapts to laptop and phone-width windows and your system's light
 or dark mode. The sticky top bar shows dispatch/freeze controls, running, idle
 and ended counts, and refresh freshness on every tab. Agents opens by default;
 Messages & notes, Digest, History and Audit have their own panels. Arrow keys
-and Home/End navigate tabs. The URL hash selects the view when opening the
-authenticated start URL. The tab bar scrolls within phone-width windows.
+and Home/End navigate tabs. The URL hash selects the view on start and reload.
+The phone header uses two lines: brand and freeze controls, then counts and
+update age. The tab bar scrolls within phone-width windows.
 Compact agent cards show kind, state, goal, elapsed time, ETA, event age, activity and
 report presence. Open a card's tail to read its bounded output. Cancel uses
 an in-page confirmation before interrupting a running agent; Keep running or
@@ -231,7 +242,7 @@ Polling runs every two seconds; hidden panels update when shown. Stable cards an
 reading an open tail, report or audit log pauses its content updates. Sections
 pause briefly after interaction and while focused or selected. A visible banner
 reports refresh failures while retaining the last data. All assets are embedded,
-offline and authenticated; CSP permits only same-origin scripts/styles, with no
+offline; data and actions stay authenticated. CSP permits only same-origin scripts/styles, with no
 inline code. All report and note text is inserted as text. Output stays redacted;
 raw tool results, session IDs and stderr are not dashboard data.
 

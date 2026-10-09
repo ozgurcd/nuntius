@@ -1,7 +1,11 @@
 'use strict';
 
-// Bootstrap only from the authenticated same-origin script URL, then clear it.
-const token = new URL(document.currentScript.src).searchParams.get('token') || '';
+// The shell is public; only API requests carry the tab's credential.
+let token = new URL(location.href).searchParams.get('token') || '';
+try {
+  if (token) sessionStorage.setItem('nuntius.web.token', token);
+  else token = sessionStorage.getItem('nuntius.web.token') || '';
+} catch { /* Storage can be disabled; the start link still works this load. */ }
 history.replaceState(null, '', '/' + location.hash);
 const el = id => document.getElementById(id);
 const cards = new Map(), runs = new Map(), notes = new Map();
@@ -9,19 +13,22 @@ const historyTable = el('history').parentElement;
 let nextRunID = 0;
 let lastData, lastUpdate = 0, refreshing = false, acting = false;
 const holds = new WeakMap();
+const renderedPanels = new Set();
 const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
 
 function selectTab(id, focus = false) {
   const active = tabs.find(tab => tab.getAttribute('aria-controls') === id) || tabs[0];
+  let shown = '';
   for (const tab of tabs) {
     const selected = tab === active, panel = el(tab.getAttribute('aria-controls'));
+    if (selected && panel.hidden) shown = panel.id;
     tab.setAttribute('aria-selected', String(selected));
     tab.tabIndex = selected ? 0 : -1;
     panel.hidden = !selected;
   }
   history.replaceState(null, '', '/#' + active.getAttribute('aria-controls'));
   if (focus) active.focus();
-  if (lastData) renderPanels(lastData);
+  if (lastData) renderPanels(lastData, shown);
 }
 for (const tab of tabs) {
   tab.addEventListener('click', () => selectTab(tab.getAttribute('aria-controls')));
@@ -57,15 +64,17 @@ function button(text, className, onClick) {
   return b;
 }
 function hold(event) {
+  if (event.type === 'keydown') document.documentElement.classList.add('keyboard-focus');
+  if (event.type === 'pointerdown') document.documentElement.classList.remove('keyboard-focus');
   const section = event.target.closest('.agent-card, .panel');
-  if (section) holds.set(section, Date.now() + 5000);
+  if (section && event.target !== section) holds.set(section, Date.now() + 5000);
 }
 document.addEventListener('pointerdown', hold);
 document.addEventListener('keydown', hold);
 document.addEventListener('wheel', hold, {passive: true});
 function busy(n) {
   const selection = window.getSelection();
-  return n.contains(document.activeElement) ||
+  return (document.activeElement !== n && n.contains(document.activeElement)) ||
     (holds.get(n) || 0) > Date.now() ||
     (selection && !selection.isCollapsed && n.contains(selection.anchorNode));
 }
@@ -256,12 +265,16 @@ function render(d) {
   }).length);
   renderPanels(d);
 }
-function renderPanels(d) {
+function panelReady(id, shown) {
+  const panel = el(id);
+  return !panel.hidden && (id === shown || !renderedPanels.has(id) || !busy(panel));
+}
+function renderPanels(d, shown = '') {
   if (!el('agents').hidden) {
     reconcile(el('lanes'), d.lanes, cards, makeCard, updateCard, s => s.lane);
     el('agentsEmpty').hidden = d.lanes.length !== 0;
   }
-  if (!el('messages').hidden && !busy(el('messages'))) {
+  if (panelReady('messages', shown)) {
     const select = el('lane'), chosen = select.value;
     for (const option of Array.from(select.options)) if (!d.lanes.some(s => s.lane === option.value)) option.remove();
     for (const s of d.lanes) if (!Array.from(select.options).some(o => o.value === s.lane)) {
@@ -272,26 +285,37 @@ function renderPanels(d) {
       timeText(v.timestamp, n.time); setText(v.read, n.read ? 'Read' : 'Unread'); setText(v.text, n.text);
     }, n => n.id);
     el('notesEmpty').hidden = d.notes.length !== 0;
+    renderedPanels.add('messages');
   }
   const digest = el('oversight');
-  if (!el('digest').hidden && !busy(el('digest')) && digest.dataset.value !== d.oversight) {
+  if (panelReady('digest', shown) && digest.dataset.value !== d.oversight) {
     digest.dataset.value = d.oversight;
     const lines = (d.oversight || 'No owner digest yet.').split('\n');
     digest.replaceChildren(...lines.map(line => {
       const heading = line.match(/^(#{1,6}) (.*)$/);
       return node(heading ? 'h' + Math.min(4, heading[1].length + 2) : 'p', '', heading ? heading[2] : line);
     }));
+    renderedPanels.add('digest');
   }
   // History groups are sibling tbodies, following the fixed table head.
-  if (!el('runs').hidden && !busy(el('runs'))) {
+  if (panelReady('runs', shown)) {
     reconcile(historyTable, d.history, runs, makeRun, updateRun, r => r.run_id);
     filterRuns();
+    renderedPanels.add('runs');
   }
-  if (!el('auditSection').hidden && !busy(el('auditSection')) && !el('auditSection').querySelector('details').open) setText(el('audit'), d.audit || 'No audit events yet.');
+  if (panelReady('auditSection', shown) && (!renderedPanels.has('auditSection') || !el('auditSection').querySelector('details').open)) {
+    setText(el('audit'), d.audit || 'No audit events yet.');
+    renderedPanels.add('auditSection');
+  }
 }
 // The placeholder tbody is removed once; the table head is never reconciled.
 el('history').remove();
 async function refresh() {
+  if (!token) {
+    setText(el('error'), 'Open the link printed by `nuntius web` to sign in.');
+    el('error').hidden = false;
+    return;
+  }
   if (refreshing || acting || document.hidden) return;
   refreshing = true;
   try {
@@ -303,6 +327,7 @@ async function refresh() {
     setText(el('lastRefresh'), 'Last refresh ' + new Date(lastUpdate).toLocaleTimeString());
     el('lastRefresh').dateTime = new Date(lastUpdate).toISOString();
     el('lastRefresh').title = new Date(lastUpdate).toLocaleString();
+    el('updated').title = el('lastRefresh').title;
     el('error').hidden = true;
   } catch {
     setText(el('error'), 'Unable to refresh dashboard. Showing the last received data. Retrying every 2 seconds.');
@@ -310,6 +335,7 @@ async function refresh() {
   } finally { refreshing = false; }
 }
 async function action(name, lane = '', text = '', stop = false) {
+  if (!token) { await refresh(); return false; }
   if (acting) return false;
   acting = true;
   const buttons = Array.from(document.querySelectorAll('button'));
