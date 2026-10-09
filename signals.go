@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"syscall"
+	"strings"
 )
 
-var signalPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{1,129}\.(ended|stuck)$`)
+var signalPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{1,129}\.(ended|stuck|interrupted|resumed)$`)
 
 func (m *Manager) signalRoot() (*os.Root, error) {
 	dir := filepath.Join(m.store, "signals")
@@ -37,19 +37,17 @@ func (m *Manager) emitSignal(r Run, suffix string) error {
 	if !signalPattern.MatchString(name) {
 		return errors.New("invalid signal name")
 	}
-	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0600)
-	if errors.Is(err, os.ErrExist) {
-		st, e := root.Lstat(name)
-		if e == nil && st.Mode().IsRegular() && st.Size() == 0 && st.Mode().Perm() == 0600 {
-			return nil
+	st, err := root.Lstat(name)
+	if err == nil {
+		if !st.Mode().IsRegular() || st.Size() != 0 || st.Mode().Perm() != 0600 {
+			return errors.New("invalid existing signal")
 		}
-		return errors.New("invalid existing signal")
+		return syncDir(filepath.Join(m.store, "signals"))
 	}
-	if err != nil {
-		return errors.New("cannot create run signal")
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	defer f.Close()
-	return f.Sync()
+	return atomicPrivate(filepath.Join(m.store, "signals", name), nil)
 }
 
 func (m *Manager) Signals() ([]string, error) {
@@ -77,9 +75,19 @@ func (m *Manager) Signals() ([]string, error) {
 	}
 	names := []string{}
 	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".nuntius-") && entry.Type().IsRegular() {
+			continue
+		}
 		if !signalPattern.MatchString(entry.Name()) || !entry.Type().IsRegular() {
 			return nil, errors.New("invalid end signal")
 		}
+		st, err := root.Lstat(entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		if st.Size() != 0 {
+			continue
+		} // A torn signal is never delivered.
 		names = append(names, entry.Name())
 	}
 	sort.Strings(names)
@@ -118,5 +126,5 @@ func (m *Manager) AckSignals(names []string) error {
 			return errors.New("cannot acknowledge end signal")
 		}
 	}
-	return nil
+	return syncDir(filepath.Join(m.store, "signals"))
 }

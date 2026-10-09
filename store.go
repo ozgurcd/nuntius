@@ -2,13 +2,14 @@ package nuntius
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -79,68 +80,82 @@ func (m *Manager) save(r *Run) error {
 	return saveAt(dir, r)
 }
 func saveAt(dir string, r *Run) error {
-	f, e := os.CreateTemp(dir, ".meta-")
-	if e != nil {
-		return errors.New("cannot persist metadata")
-	}
-	name := f.Name()
-	defer os.Remove(name)
+	r.Integrity = ""
 	b, e := json.Marshal(r)
-	if e == nil {
-		_, e = f.Write(b)
-	}
-	if e == nil {
-		e = f.Sync()
-	}
-	ce := f.Close()
-	if e == nil {
-		e = ce
-	}
-	if e == nil {
-		e = os.Rename(name, filepath.Join(dir, "meta.json"))
-	}
 	if e != nil {
-		return errors.New("cannot persist metadata")
+		return e
 	}
-	return nil
+	sum := sha256.Sum256(b)
+	r.Integrity = hex.EncodeToString(sum[:])
+	b, e = json.Marshal(r)
+	if e != nil {
+		return e
+	}
+	return atomicPrivate(filepath.Join(dir, "meta.json"), b)
+}
+
+func syncDir(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
+func readBrief(f *os.File) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(f, 12001))
+	if err != nil || len(b) == 0 || len(b) > 12000 {
+		return nil, errors.New("original brief unavailable")
+	}
+	return b, nil
+}
+
+// A corrupt or torn record does not hide the intact goals beside it. Linked
+// paths and I/O failures remain errors; malformed bytes are ignored, not repaired.
+func loadRun(dir, id string) (*Run, error) {
+	f, err := privateFile(filepath.Join(dir, "meta.json"), os.O_RDONLY)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 131073))
+	_ = f.Close()
+	var r Run
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > 131072 || strictJSON(b, &r) != nil || r.ID != id || !namePattern.MatchString(r.Lane) || !goalPattern.MatchString(r.GoalID) || r.Started.IsZero() || (r.State != "running" && r.State != "ended" && r.State != "timed_out" && r.State != "interrupted") {
+		return nil, nil
+	}
+	if r.ResumeCount < 0 || r.ResumeCount > 2 || len(r.Brief) > 12000 || (r.ParentRunID != "" && !runPattern.MatchString(r.ParentRunID)) || (r.ContinueRunID != "" && !runPattern.MatchString(r.ContinueRunID)) {
+		return nil, nil
+	}
+	if r.Integrity != "" {
+		want := r.Integrity
+		r.Integrity = ""
+		canonical, _ := json.Marshal(r)
+		sum := sha256.Sum256(canonical)
+		r.Integrity = want
+		if want != hex.EncodeToString(sum[:]) {
+			return nil, nil
+		}
+	}
+	return &r, nil
 }
 func (m *Manager) latest(lane string) (*Run, error) {
-	entries, e := os.ReadDir(filepath.Join(m.store, "runs"))
-	if e != nil {
-		return nil, errors.New("cannot read run store")
+	runs, err := m.history()
+	if err != nil {
+		return nil, err
 	}
-	if len(entries) > 10000 {
-		return nil, errors.New("run store exceeds 10000 entries; archive ended runs")
-	}
-	var latest *Run
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".pending-") && runPattern.MatchString(strings.TrimPrefix(entry.Name(), ".pending-")) {
-			continue
-		}
-		if !runPattern.MatchString(entry.Name()) {
-			return nil, errors.New("invalid run store entry")
-		}
-		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
-			return nil, errors.New("run directory must not be linked")
-		}
-		f, e := privateFile(filepath.Join(m.store, "runs", entry.Name(), "meta.json"), os.O_RDONLY)
-		if e != nil {
-			return nil, e
-		}
-		b, e := io.ReadAll(io.LimitReader(f, 16385))
-		f.Close()
-		if e != nil || len(b) > 16384 {
-			return nil, errors.New("invalid run metadata")
-		}
-		var r Run
-		if strictJSON(b, &r) != nil || r.ID != entry.Name() || !namePattern.MatchString(r.Lane) || !goalPattern.MatchString(r.GoalID) || (r.State != "running" && r.State != "ended" && r.State != "timed_out") || r.Started.IsZero() {
-			return nil, errors.New("invalid run metadata")
-		}
-		if r.Lane == lane && (latest == nil || r.Started.After(latest.Started)) {
-			latest = &r
+	for _, r := range runs {
+		if r.Lane == lane {
+			return &r, nil
 		}
 	}
-	return latest, nil
+	return nil, nil
 }
 func processExists(pid int) bool {
 	if pid <= 1 {
@@ -156,7 +171,10 @@ func (m *Manager) recoverEnded(r *Run) error {
 	now := time.Now().UTC()
 	r.Ended = &now
 	if r.StopReason == "" {
-		r.StopReason = "unknown_exit"
+		r.StopReason = "ended_no_report"
+		if m.reportExists(r.GoalID) {
+			r.StopReason = "completed"
+		}
 	}
 	r.SessionID = m.session(r.ID)
 	return m.endRun(r)

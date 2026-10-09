@@ -109,7 +109,10 @@ func atomicPrivate(path string, b []byte) error {
 	if e != nil {
 		return e
 	}
-	return os.Rename(f.Name(), path)
+	if e = os.Rename(f.Name(), path); e != nil {
+		return e
+	}
+	return syncDir(filepath.Dir(path))
 }
 
 func (m *Manager) reload() error {

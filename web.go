@@ -198,7 +198,7 @@ func (w *Web) data() (any, error) {
 	views := []any{}
 	for _, r := range historyRuns {
 		report, _ := m.Report(r.GoalID)
-		views = append(views, map[string]any{"run_id": r.ID, "lane": r.Lane, "goal_id": r.GoalID, "started": r.Started, "ended": r.Ended, "state": r.State, "display_state": terminalDisplay(r, r.State), "exit": r.Exit, "goal": readDisplay(filepath.Join(m.store, "runs", r.ID, "goal.txt"), 12000), "report": report, "sections": reportSections(report)})
+		views = append(views, map[string]any{"run_id": r.ID, "lane": r.Lane, "goal_id": r.GoalID, "started": r.Started, "ended": r.Ended, "state": r.State, "display_state": terminalDisplay(r, r.State), "resume_count": r.ResumeCount, "parent_run_id": r.ParentRunID, "continue_run_id": r.ContinueRunID, "exit": r.Exit, "goal": readDisplay(filepath.Join(m.store, "runs", r.ID, "goal.txt"), 12000), "report": report, "sections": reportSections(report)})
 	}
 	tails := map[string][]string{}
 	lanes := []webLane{}

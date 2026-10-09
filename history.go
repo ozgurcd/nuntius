@@ -27,6 +27,10 @@ type HistoryEntry struct {
 	DurationSeconds int64     `json:"duration_seconds"`
 	ReportExists    bool      `json:"report_exists"`
 	Exit            *int      `json:"exit"`
+	ParentRunID     string    `json:"parent_run_id,omitempty"`
+	ContinueRunID   string    `json:"continue_run_id,omitempty"`
+	ResumeCount     int       `json:"resume_count,omitempty"`
+	DisplayState    string    `json:"display_state,omitempty"`
 }
 
 func (m *Manager) History(f HistoryFilter) ([]HistoryEntry, error) {
@@ -52,7 +56,7 @@ func (m *Manager) History(f HistoryFilter) ([]HistoryEntry, error) {
 		if r.State == "running" || r.Ended == nil || (f.Lane != "" && r.Lane != f.Lane) || (f.GoalID != "" && r.GoalID != f.GoalID) || r.Ended.Before(since) {
 			continue
 		}
-		rows = append(rows, HistoryEntry{RunID: r.ID, Lane: r.Lane, GoalID: r.GoalID, Ended: *r.Ended, Outcome: runOutcome(r), DurationSeconds: max(0, int64(r.Ended.Sub(r.Started).Seconds())), ReportExists: m.reportExists(r.GoalID), Exit: r.Exit})
+		rows = append(rows, HistoryEntry{RunID: r.ID, Lane: r.Lane, GoalID: r.GoalID, Ended: *r.Ended, Outcome: runOutcome(r), DurationSeconds: max(0, int64(r.Ended.Sub(r.Started).Seconds())), ReportExists: m.reportExists(r.GoalID), Exit: r.Exit, ParentRunID: r.ParentRunID, ContinueRunID: r.ContinueRunID, ResumeCount: r.ResumeCount, DisplayState: terminalDisplay(r, runOutcome(r))})
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Ended.Equal(rows[j].Ended) {
@@ -84,7 +88,7 @@ func runOutcome(r Run) string {
 
 func writeHistory(out io.Writer, rows []HistoryEntry) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "ENDED\tAGENT\tGOAL\tOUTCOME\tDURATION\tREPORT\tEXIT")
+	fmt.Fprintln(w, "ENDED\tAGENT\tGOAL\tOUTCOME\tDURATION\tREPORT\tEXIT\tPREVIOUS\tNEXT")
 	for _, r := range rows {
 		report, exit := "no", "-"
 		if r.ReportExists {
@@ -93,7 +97,18 @@ func writeHistory(out io.Writer, rows []HistoryEntry) error {
 		if r.Exit != nil {
 			exit = fmt.Sprint(*r.Exit)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Ended.Local().Format("2006-01-02 15:04:05 MST"), cell(r.Lane), cell(r.GoalID), cell(r.Outcome), shortDuration(time.Duration(r.DurationSeconds)*time.Second), report, exit)
+		state := r.Outcome
+		if r.DisplayState != "" {
+			state = r.DisplayState
+		}
+		previous, next := "-", "-"
+		if r.ParentRunID != "" {
+			previous = r.ParentRunID
+		}
+		if r.ContinueRunID != "" {
+			next = r.ContinueRunID
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Ended.Local().Format("2006-01-02 15:04:05 MST"), cell(r.Lane), cell(r.GoalID), cell(state), shortDuration(time.Duration(r.DurationSeconds)*time.Second), report, exit, cell(previous), cell(next))
 	}
 	return w.Flush()
 }
@@ -106,6 +121,19 @@ func displayState(s Status) string {
 }
 
 func terminalDisplay(r Run, fallback string) string {
+	if r.State == "interrupted" {
+		if r.WaitingToResume && r.ContinueRunID == "" && r.ResumeCount < 2 {
+			return "interrupted; waiting to resume"
+		}
+		return "interrupted"
+	}
+	if r.RecoveryRun {
+		label := fmt.Sprintf("resumed (%d/2)", r.ResumeCount)
+		if outcome := runOutcome(r); r.State != "running" && (outcome == "cancelled" || outcome == "timed_out") {
+			return outcome + "; " + label
+		}
+		return label
+	}
 	if r.State != "running" {
 		if outcome := runOutcome(r); outcome == "cancelled" || outcome == "timed_out" {
 			return outcome

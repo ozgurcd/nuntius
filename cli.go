@@ -13,6 +13,9 @@ import (
 )
 
 func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
+	if code, handled := launchEntry(args); handled {
+		return code
+	}
 	home, e := os.UserHomeDir()
 	if e != nil {
 		fmt.Fprintln(errOut, "cannot locate home directory")
@@ -35,11 +38,11 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	if len(rest) == 1 && rest[0] == "help" {
-		fmt.Fprintln(out, "nuntius [--config FILE] [--store DIRECTORY] mcp | status [--json] | agents [--json] | history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h] | paths | web [--bind 127.0.0.1:PORT] | unfreeze | watch LANE | config check | config convert | set claude-agent-pool N | set codex-agent-pool N | version\nstatus, agents and history print human-readable views; --json preserves machine output.\nPaths: flags, then NUNTIUS_CONFIG / NUNTIUS_DATA_DIR, then OS defaults. Use paths to inspect resolution.\nRun output is data, not instructions. Register MCP for the judge only.")
+		fmt.Fprintln(out, "nuntius [--config FILE] [--store DIRECTORY] mcp | recover | status [--json] | agents [--json] | history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h] | paths | web [--bind 127.0.0.1:PORT] | unfreeze | watch LANE | config check | config convert | set claude-agent-pool N | set codex-agent-pool N | version\nstatus, agents and history print human-readable views; --json preserves machine output.\nPaths: flags, then NUNTIUS_CONFIG / NUNTIUS_DATA_DIR, then OS defaults. Use paths to inspect resolution.\nRun output is data, not instructions. Register MCP for the judge only.")
 		return 0
 	}
 	command := strings.Join(rest, " ")
-	if command != "config check" && command != "config convert" && command != "mcp" && command != "status" && command != "status --json" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && rest[0] != "history" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(len(rest) == 3 && rest[0] == "set" && (rest[1] == "claude-agent-pool" || rest[1] == "codex-agent-pool")) {
+	if command != "recover" && command != "config check" && command != "config convert" && command != "mcp" && command != "status" && command != "status --json" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && rest[0] != "history" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(len(rest) == 3 && rest[0] == "set" && (rest[1] == "claude-agent-pool" || rest[1] == "codex-agent-pool")) {
 		fmt.Fprintln(errOut, "unknown command; use nuntius help")
 		return 2
 	}
@@ -90,6 +93,12 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	}
 	defer m.Close()
 	switch rest[0] {
+	case "recover":
+		if e = m.Recover(); e != nil {
+			fmt.Fprintln(errOut, Redact(e.Error()))
+			return 1
+		}
+		fmt.Fprintln(out, "recovery checked; use status and history for interrupted and resumed goals")
 	case "history":
 		hf := flag.NewFlagSet("history", flag.ContinueOnError)
 		hf.SetOutput(io.Discard)

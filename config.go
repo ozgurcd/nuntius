@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const Version = "v0.2.2"
+const Version = "v0.2.3"
 
 type Lane struct {
 	Name         string   `json:"name"`
@@ -32,6 +32,7 @@ type Config struct {
 	MaxRuntime    string               `json:"max_runtime"`
 	ReportsDir    string               `json:"reports_dir"`
 	Notifications *bool                `json:"notifications,omitempty"`
+	AutoResume    *bool                `json:"auto_resume,omitempty"`
 }
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$`)

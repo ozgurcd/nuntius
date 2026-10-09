@@ -122,8 +122,8 @@ func TestCodexResumeArgvScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := waitState(t, next, "codex", "ended")
-	if s.Exit == nil || *s.Exit != 0 {
-		t.Fatal("strict fake rejected resume")
+	if s.Exit != nil || next.session(s.RunID) == "" {
+		t.Fatal("strict fake rejected resume or invented exit custody")
 	}
 }
 

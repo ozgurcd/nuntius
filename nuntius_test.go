@@ -12,13 +12,18 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
 
 var fakeBinary string
+var cliBinary string
 
 func TestMain(m *testing.M) {
+	if code, handled := launchEntry(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	dir, err := os.MkdirTemp("", "nuntius-fixture-")
 	if err != nil {
 		os.Exit(1)
@@ -26,6 +31,12 @@ func TestMain(m *testing.M) {
 	fakeBinary = filepath.Join(dir, "fake-agent")
 	cmd := exec.Command("go", "build", "-o", fakeBinary, "./internal/testagent")
 	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Println(string(out))
+		_ = os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	cliBinary = filepath.Join(dir, "nuntius")
+	if out, err := exec.Command("go", "build", "-o", cliBinary, "./cmd/nuntius").CombinedOutput(); err != nil {
 		fmt.Println(string(out))
 		_ = os.RemoveAll(dir)
 		os.Exit(1)
@@ -39,7 +50,18 @@ func fixture(t *testing.T) (Config, string) {
 	t.Helper()
 	d := t.TempDir()
 	off := false
-	return Config{Lanes: []Lane{{Name: "claude", Kind: "claude", Workdir: d, Binary: fakeBinary}, {Name: "codex", Kind: "codex", Workdir: d, Binary: fakeBinary}}, MaxRuntime: "10s", ReportsDir: d, Notifications: &off}, filepath.Join(d, "store")
+	store := filepath.Join(d, "store")
+	t.Cleanup(func() {
+		// This directory was created by this test. Never scan the owner's store.
+		m := &Manager{store: store}
+		runs, _ := m.history()
+		for _, r := range runs {
+			if sameProcess(r) {
+				_ = signalRun(r, syscall.SIGKILL)
+			}
+		}
+	})
+	return Config{Lanes: []Lane{{Name: "claude", Kind: "claude", Workdir: d, Binary: fakeBinary}, {Name: "codex", Kind: "codex", Workdir: d, Binary: fakeBinary}}, MaxRuntime: "10s", ReportsDir: d, Notifications: &off}, store
 }
 func manager(t *testing.T) (*Manager, Config, string) {
 	t.Helper()
@@ -220,8 +242,8 @@ func TestDispatchReplyArgvAndStore(t *testing.T) {
 			t.Fatal(e)
 		}
 		s := waitState(t, m, lane, "ended")
-		if s.Exit == nil || *s.Exit != 0 {
-			t.Fatal("exit missing")
+		if s.Exit != nil || s.Outcome != "completed" {
+			t.Fatal("detached outcome must come from report; exit is unknown")
 		}
 		dir := filepath.Join(store, "runs", id)
 		for _, name := range []string{"goal.txt", "events.jsonl", "stderr.log", "meta.json"} {
@@ -333,7 +355,7 @@ func TestTimeoutKill(t *testing.T) {
 		t.Fatal(e)
 	}
 	s := waitState(t, m, "claude", "ended")
-	if s.Outcome != "timed_out" || s.Exit == nil || *s.Exit == 0 {
+	if s.Outcome != "timed_out" || s.Exit != nil {
 		t.Fatal("timeout was not forced")
 	}
 }
@@ -355,8 +377,8 @@ func TestRestartRecovery(t *testing.T) {
 	r.Exit = nil
 	r.Ended = nil
 	r.PID = 99999999
-	b, _ = json.Marshal(r)
-	if e := os.WriteFile(p, b, 0600); e != nil {
+	r.StopReason = ""
+	if e := m.save(&r); e != nil {
 		t.Fatal(e)
 	}
 	next, e := NewManager(c, store)
@@ -365,7 +387,7 @@ func TestRestartRecovery(t *testing.T) {
 	}
 	defer next.Close()
 	s := waitState(t, next, "claude", "ended")
-	if s.Exit != nil || s.Outcome != "unknown_exit" {
+	if s.Exit != nil || s.Outcome != "ended_no_report" {
 		t.Fatal("recovered exit invented")
 	}
 	if _, e := next.Reply("claude", "hello"); e != nil {
@@ -649,6 +671,7 @@ func TestRecoveredLivePIDNotSignalled(t *testing.T) {
 	r.Ended = nil
 	r.Exit = nil
 	r.Started = time.Now().Add(-time.Hour)
+	r.Integrity = "" // Deliberately synthesize a legacy v1 record.
 	b, _ = json.Marshal(r)
 	if e := os.WriteFile(p, b, 0600); e != nil {
 		t.Fatal(e)

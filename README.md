@@ -1,6 +1,6 @@
 # nuntius
 
-Nuntius v0.2.2 is a small local Go MCP server for a judge using Claude Desktop.
+Nuntius v0.2.3 is a small local Go MCP server for a judge using Claude Desktop.
 It starts and follows configured Claude Code and Codex agent pools on macOS or Linux.
 It contains no LLM and makes no network requests of its own. Agent programs may
 use the network under their existing settings.
@@ -56,6 +56,8 @@ paths from your machine. The following paths are placeholders, not defaults:
 to `goal_then_continue` for Claude and `as_is` for Codex. `continue_text`
 defaults to `continue`. Set Claude to `as_is` to disable automatic continuation.
 Codex supports `as_is` only. The text and start mode cannot be supplied by MCP.
+`auto_resume` is optional and defaults to true. Set it to false to keep
+interrupted goals visible without automatically starting another agent.
 
 Each kind has one template and a size from 0 to 8. Agents are named
 `claude-1` through `claude-N` and `codex-1` through `codex-N`. A disabled
@@ -196,10 +198,59 @@ Use the Claude mobile app to tell the judge to check status, answer questions,
 freeze work, or send a reply. The Mac runs nuntius; mobile reaches it through
 the judge and Claude Desktop, not through a public dashboard port.
 
-Keep the Mac on power and awake. Enable Battery's “Prevent automatic sleeping
-when the display is off” setting, or run `caffeinate -s`. Keep Claude Desktop
-open so the judge can reach MCP. Runs survive a Desktop/server restart, but
-timeout supervision resumes when a server opens the store again.
+The Mac's own energy settings decide sleep. Nuntius installs no service, login
+item or energy helper. Claude Desktop must be open for the judge to reach MCP.
+
+## Crash and restart safety
+
+Every accepted goal is published durably before an agent starts. Its private
+record contains the lane, goal ID, original brief, session ID once detected,
+resume count and links to earlier/later runs. A short double-fork bootstrap
+creates a new session, waits for reparenting to the OS, then becomes the agent.
+The bootstrap exits; no nuntius wrapper or watchdog remains. Standard input,
+output and error use files, with no controlling terminal.
+
+- App restart or MCP crash: the agent has no app/MCP parent and keeps running.
+  A live nuntius process polls its recorded PID and kernel start identity.
+- Nuntius upgrade: replacing/removing the nuntius executable does not affect
+  an already running agent. Nuntius does not reinstall or restart owner apps.
+- Reboot, power loss or agent crash: the process can end, but the durable goal
+  remains. Recovery runs when the app next starts its MCP server, or explicitly:
+
+```sh
+nuntius recover
+```
+
+Recovery marks an unreported, unstopped end `interrupted` and emits
+`<lane>.<goal>.interrupted`. With `auto_resume` enabled, it resumes the agent's
+own recorded session, or starts the same brief fresh if no session ID is known.
+It prepends a restart note requiring the agent to re-measure previous work.
+Repeating part of the work is acceptable; no periodic work journal is required.
+Each goal chain permits at most two automatic recovery attempts. Each attempt
+emits `<lane>.<goal>.resumed`; interrupted goals beyond the limit stay visible
+for the owner. History links the chain and displays `resumed (n/2)`.
+
+A busy lane leaves the interrupted goal `waiting to resume`. The running MCP
+server retries when the lane frees. Freeze prevents launching; cancellation
+and timeout never trigger recovery. Disabled or removed lanes retain their
+interrupted records. `status`, `agents`, `history` and web views only display
+and observe; they never launch recovery. Without MCP, run `recover` again after
+a busy lane frees. Recovery is a local action explicitly enabled by the config.
+
+End detection derives `completed` from a regular report, otherwise
+`ended_no_report`. Exit codes are unknown because no parent waits for the agent.
+No process is signalled unless its PID, start time and process group match.
+When no nuntius process runs, only the agents run; end detection, timeout and
+recovery wait until a nuntius process next checks the store.
+
+Metadata, config and signals use temporary files, file fsync, atomic rename
+and directory fsync. Run records carry an integrity hash. Torn/malformed records
+and incomplete temporary files are ignored while intact records remain usable;
+linked files and I/O failures still refuse unsafe access. Invalid configuration
+leaves MCP non-serving. This cannot repair damaged storage or stop an external
+program from explicitly killing an agent. Offline proofs cover parent loss,
+MCP death, binary replacement, recovery policy, waiting and torn files; real
+Claude-app restarts and reboots still need the owner's pilot.
 
 Tool approvals in Claude Desktop:
 
@@ -300,8 +351,8 @@ session ID disables reply; it is not guessed. Session detection reads the first
 For a successful first Claude run in `goal_then_continue` mode, nuntius scans
 the complete event stream for work. An assistant acknowledgement with no tool
 calls starts exactly one resume. Tool calls, a missing ID, malformed or oversized
-events, unfamiliar event types, cancellation, timeout or a nonzero exit suppress
-the automatic resume. Each run's metadata links the other run. The lane lock
+events, unfamiliar event types, cancellation, timeout or an error result suppress
+the automatic resume. A complete result event is required. Each run's metadata links the other run. The lane lock
 stays held between them. A manual reply never triggers another automatic reply.
 
 ## MCP interface and storage
@@ -344,13 +395,16 @@ Stuck detection creates the same private empty signal form as
 `signals/<agent>.<goal_id>.stuck`. A per-run persisted flag prevents delivery
 again after acknowledgement or restart, even if the run remains stuck.
 Repeated lane/goal names coalesce while pending. Listing and acknowledgements
-accept both `.ended` and `.stuck`, with the same bounds and path protections.
+accept `.ended`, `.stuck`, `.interrupted` and `.resumed`, with the same bounds
+and path protections. Recovery delivery flags survive acknowledgements.
 
 Timeout sends SIGINT to the run's process group, then SIGKILL after 30 seconds.
 Cancel follows the same escalation. Each run starts in its own session with
-stdout/stderr directed straight to private files. Shutdown detaches supervision
-and leaves the agents running. On restart, dead runs become ended with unknown
-exit; verified surviving runs regain timeout/cancel supervision. The recorded
+stdin/stdout/stderr directed straight to private files. Short-lived launch stages
+exit before the agent executes under the OS parent. Shutdown leaves agents running.
+Verified surviving runs regain timeout/cancel checks inside a live nuntius process.
+Dead runs get unknown exit codes and file-derived outcomes, followed by the
+recovery policy above when enabled. The recorded
 PID and kernel process start time must match before every signal. Darwin uses
 microsecond kernel start times, Linux boot ID plus process start ticks. A run
 with a mismatched identity is ended with unknown exit, never signalled. Legacy

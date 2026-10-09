@@ -108,6 +108,9 @@ func (m *Manager) Unfreeze() error {
 	if e = os.Remove(filepath.Join(m.store, "freeze.json")); e != nil && !os.IsNotExist(e) {
 		return errors.New("cannot remove freeze marker")
 	}
+	if e = syncDir(m.store); e != nil {
+		return e
+	}
 	return m.audit("nuntius_unfreeze", "", "", "", "unfrozen")
 }
 
@@ -261,17 +264,13 @@ func (m *Manager) history() ([]Run, error) {
 		if !runPattern.MatchString(entry.Name()) || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			return nil, errors.New("invalid run directory")
 		}
-		f, e := privateFile(filepath.Join(m.store, "runs", entry.Name(), "meta.json"), os.O_RDONLY)
+		r, e := loadRun(filepath.Join(m.store, "runs", entry.Name()), entry.Name())
 		if e != nil {
 			return nil, e
 		}
-		b, e := io.ReadAll(io.LimitReader(f, 16385))
-		_ = f.Close()
-		var r Run
-		if e != nil || len(b) > 16384 || strictJSON(b, &r) != nil || r.ID != entry.Name() || !namePattern.MatchString(r.Lane) || !goalPattern.MatchString(r.GoalID) || r.Started.IsZero() || (r.State != "running" && r.State != "ended" && r.State != "timed_out") {
-			return nil, errors.New("invalid run metadata")
+		if r != nil {
+			out = append(out, *r)
 		}
-		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Started.After(out[j].Started) })
 	return out, nil

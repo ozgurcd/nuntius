@@ -205,15 +205,21 @@ function makeRun(r) {
     box.append(node('h3', '', name.charAt(0) + name.slice(1).toLowerCase()), pre);
     content.append(box); sections[name] = pre;
   }
+  const chain = node('p', 'muted'); content.append(chain);
   const goalText = node('pre', 'report-text'), report = node('pre', 'report-text');
   for (const [name, pre] of [['Goal', goalText], ['Report', report]]) {
     const block = node('div', 'report-block'); block.append(node('h3', '', name), pre); content.append(block);
   }
   detail.append(content); detail.hidden = true; root.append(row, detail);
-  const view = {root, lane, toggle, badge, timestamp, elapsed, detail, sections, goalText, report, data: r};
+  const view = {root, lane, toggle, badge, timestamp, elapsed, detail, sections, chain, goalText, report, data: r};
   return view;
 }
 function updateRunContent(v, r) {
+  const links = [];
+  if (r.parent_run_id) links.push('Previous run: ' + r.parent_run_id);
+  if (r.continue_run_id) links.push('Next run: ' + r.continue_run_id);
+  if (r.resume_count) links.push('Recovery: ' + r.resume_count + '/2');
+  setText(v.chain, links.join(' · ')); v.chain.hidden = links.length === 0;
   for (const name of ['QUESTIONS', 'DECISIONS']) setText(v.sections[name], r.sections[name] || 'None recorded.');
   setText(v.goalText, r.goal || 'No goal text available.');
   setText(v.report, r.report || 'No report available.');

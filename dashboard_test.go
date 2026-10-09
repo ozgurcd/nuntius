@@ -210,6 +210,10 @@ function rendered(h, id) {
   check(fresh.ids.runs.textContent.includes('Cancelled'), 'history cancellation badge');
   vm.runInContext("lastData.history[0].display_state = 'timed_out'; render(lastData)", fresh.context);
   check(fresh.ids.runs.textContent.includes('Timed out'), 'history timeout badge');
+  vm.runInContext("selectTab('agents'); lastData.lanes[0].display_state = 'interrupted; waiting to resume'; lastData.lanes[1].display_state = 'resumed (1/2)'; render(lastData)", fresh.context);
+  check(fresh.ids.lanes.textContent.includes('waiting to resume') && fresh.ids.lanes.textContent.includes('Resumed (1/2)'), 'cards expose interrupted waiting and recovery count');
+  vm.runInContext("lastData.history[0].display_state = 'resumed (1/2)'; lastData.history[0].resume_count = 1; lastData.history[0].parent_run_id = 'previous-fixture-run'; lastData.history[0].continue_run_id = 'next-fixture-run'; selectTab('runs')", fresh.context);
+  check(fresh.ids.runs.textContent.includes('Resumed (1/2)') && fresh.ids.runs.textContent.includes('Previous run: previous-fixture-run') && fresh.ids.runs.textContent.includes('Next run: next-fixture-run') && fresh.ids.runs.textContent.includes('Recovery: 1/2'), 'history exposes the recovery chain');
   vm.runInContext("render(lastData)", fresh.context);
   check(fresh.ids.freeze.textContent.includes('Enabled') && fresh.ids.freeze.title === 'Dispatch enabled' && fresh.ids.freeze.getAttribute('aria-label') === 'Dispatch enabled', 'short enabled label has full accessible text');
   vm.runInContext("lastData.freeze = {since: '2026-10-09T10:00:00Z', reason: 'Owner pause'}; render(lastData)", fresh.context);
@@ -229,17 +233,20 @@ function rendered(h, id) {
 // the existing history, notes and freeze JSON shape, including optional fields.
 func TestDashboardFixtureMatchesData(t *testing.T) {
 	type historyView struct {
-		RunID        string            `json:"run_id"`
-		Lane         string            `json:"lane"`
-		GoalID       string            `json:"goal_id"`
-		Started      time.Time         `json:"started"`
-		Ended        *time.Time        `json:"ended"`
-		State        string            `json:"state"`
-		DisplayState string            `json:"display_state"`
-		Exit         *int              `json:"exit"`
-		Goal         string            `json:"goal"`
-		Report       string            `json:"report"`
-		Sections     map[string]string `json:"sections"`
+		RunID         string            `json:"run_id"`
+		Lane          string            `json:"lane"`
+		GoalID        string            `json:"goal_id"`
+		Started       time.Time         `json:"started"`
+		Ended         *time.Time        `json:"ended"`
+		State         string            `json:"state"`
+		DisplayState  string            `json:"display_state"`
+		Exit          *int              `json:"exit"`
+		Goal          string            `json:"goal"`
+		Report        string            `json:"report"`
+		Sections      map[string]string `json:"sections"`
+		ResumeCount   int               `json:"resume_count"`
+		ParentRunID   string            `json:"parent_run_id"`
+		ContinueRunID string            `json:"continue_run_id"`
 	}
 	type dashboard struct {
 		Freeze    *FreezeState        `json:"freeze"`

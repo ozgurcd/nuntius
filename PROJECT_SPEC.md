@@ -1,11 +1,11 @@
-# Nuntius v0.2.2 — specification as built
+# Nuntius v0.2.3 — specification as built
 
 ## Boundary
 
 Nuntius is a Go, standard-library-only stdio MCP server for an owner-approved
 judge on macOS or Linux. Linux CI tests the same process and file contracts. The module
 is `github.com/ozgurcd/nuntius`. It has no network client, LLM or shell runner.
-Version v0.2.2 is compiled in; publication is a separate release workflow.
+Version v0.2.3 is compiled in; publication is a separate release workflow.
 
 Do not register it for coding agents. The MCP host owns approval. The server
 cannot verify that a caller is the judge or force a host to display a click.
@@ -44,7 +44,9 @@ Codex permits the valueless --skip-git-repo-check and --sandbox with read-only
 or workspace-write. Value-taking flags accept split and equals forms.
 All other permission, hook, sandbox, trust, cwd, output and session overrides
 are refused, including bypassPermissions, dontAsk and danger-full-access.
-No child environment values are injected; normal owner CLI settings apply.
+No agent settings are injected; normal owner CLI settings apply. The configured
+workdir uses exec.Command's standard PWD behavior through the launch stages.
+auto_resume defaults to true; false disables automatic crash-recovery launches.
 
 ## Runs
 
@@ -65,8 +67,10 @@ an explicit data directory. It holds runs, audit, notes, freeze, signals and
 locks and belongs outside repositories. Run directories are 0700;
 goal.txt, events.jsonl, stderr.log, meta.json and audit.jsonl are 0600.
 Stdout/stderr go straight to files. Metadata is atomically replaced and includes
-run ID, lane, goal ID, prompt SHA-256, start/end, exit, PID, process start time, state, session ID
-and continuation links. Completed folders are published atomically. Run files
+run ID, lane, goal ID, original brief, prompt SHA-256, start/end, exit, PID,
+process start time, state, session ID, recovery count and continuation links.
+An integrity hash detects damaged records. Files use temp+fsync+rename+directory
+fsync. Run folders are published and directory-synced before agent launch. Run files
 and report files refuse symlink leaves; report reads are rooted to reports_dir.
 The append-only audit has time, tool, lane, goal ID, prompt hash and result.
 Raw private storage is not redacted; all returned text is.
@@ -75,8 +79,11 @@ Normal completion is ended. Timeout metadata uses timed_out; status keeps the
 legacy ended/ended_no_report state and adds display_state timed_out. Cancelled
 runs also retain their legacy state and add display_state cancelled.
 SIGINT escalates to SIGKILL after 30 seconds.
-Cancel uses the same escalation. Runs start with setsid and direct file output.
-Server shutdown detaches and leaves runs alive. Every signal requires a live
+Cancel uses the same escalation. A short bootstrap forks twice, creates sessions,
+waits for the grandchild's OS parent, records its identity and execs the agent.
+All standard descriptors are files; there is no controlling terminal. No
+bootstrap, wrapper, watchdog, daemon, service or login item remains while the
+agent runs. Server shutdown leaves runs alive. Every signal requires a live
 group leader with the recorded PID and kernel start time. macOS end notifications use fixed
 AppleScript with data passed as argv; notification failure is ignored.
 Notifications are skipped outside macOS and for an unknown exit code.
@@ -94,12 +101,30 @@ signals/<lane>.<goal_id>.stuck using the existing signal mechanism. Metadata
 persists stuck_signalled per run, so acknowledgement and restart do not repeat
 delivery. Reused lane/goal pending names coalesce as with end signals.
 
-Restart reads persisted metadata. A dead run becomes ended with unknown exit.
-Verified survivors regain supervision under an exclusive per-run supervisor lock.
+Any live manager observes recorded processes on normal polls. A dead run becomes
+ended with unknown exit and report-derived completed/ended_no_report outcome.
+Verified survivors regain in-process checks under an exclusive per-run lock.
 Darwin uses the kernel's microsecond start time; Linux uses boot ID plus start
 ticks. Mismatched identities are never signalled and become ended with unknown
 exit. Legacy records with a live PID but no identity remain busy and unsignalable.
 Never infer an exit code. While all servers are down timeout supervision is absent.
+
+MCP startup and the explicit recover command enable crash recovery. Display
+commands never launch. An unreported end without cancellation/timeout becomes
+interrupted and raises lane.goal.interrupted. A frozen marker blocks dispatch
+but leaves interrupted goals visible. With auto_resume true, fewer than two
+recovery attempts, a configured free lane and no freeze, recovery uses the
+recorded agent session or starts the original brief fresh. The prescribed
+restart note precedes the brief. A busy lane keeps its goal waiting; MCP polls
+retry when it frees. Child and parent links repair a crash between their writes.
+Signals raise lane.goal.resumed and persist acknowledgement-safe delivery flags.
+Status, agents, history and web show interrupted, waiting to resume and resumed
+(n/2). History exposes chain IDs and count, never the private session ID.
+Interrupted records beyond the limit stay visible for owner action. Nothing of
+nuntius runs while all nuntius processes are stopped. The Mac decides sleep;
+reboot/power loss recovery occurs at the next MCP startup or recover command.
+Malformed/integrity-failed records and partial temporary files are ignored;
+unsafe links and I/O failures remain errors, invalid config remains non-serving.
 
 ## Goal start amendment
 
@@ -175,7 +200,7 @@ shapes and Desktop permission interaction remain owner-pilot questions.
 Commands: mcp, status [--json], agents [--json],
 history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h],
 paths, web [--bind 127.0.0.1:PORT], unfreeze,
-watch LANE, config check, config convert, set KIND-agent-pool N, version and help. Global config
+recover, watch LANE, config check, config convert, set KIND-agent-pool N, version and help. Global config
 and store flags precede the command. Status and agents default to human views;
 --json preserves their machine shapes. MCP output stays JSON. Status columns
 use optional display_state for cancelled, timed_out and stuck?, while retaining

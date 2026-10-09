@@ -30,6 +30,7 @@ func main() {
 	if strings.Contains(mode, "ack-goal") {
 		fmt.Println(`{"type":"system","session_id":"fixture-session"}`)
 		fmt.Println(`{"type":"assistant","message":{"content":[{"type":"text","text":"Goal accepted"}]}}`)
+		fmt.Println(`{"type":"result","is_error":false}`)
 		return
 	}
 	args, _ := json.Marshal(os.Args[1:])
@@ -47,9 +48,26 @@ func main() {
 	}
 	emit("args=" + string(args))
 	emit("cwd=" + cwd)
+	emit(fmt.Sprintf("ppid=%d", os.Getppid()))
 	fmt.Println(`{"type":"item.completed","item":{"type":"agent_message","text":"codex answer"}}`)
 	fmt.Println(`{"type":"item.completed","item":{"type":"command_execution","command":"must-not-return","aggregated_output":"must-not-return"}}`)
 	emit("done")
+	if strings.Contains(mode, "orphan-detect") {
+		parent := os.Getppid()
+		emit("ready")
+		for os.Getppid() == parent {
+			time.Sleep(10 * time.Millisecond)
+		}
+		os.Exit(23)
+	}
+	if strings.Contains(mode, "slow-finish") {
+		emit("ready")
+		time.Sleep(750 * time.Millisecond)
+		emit("finished after client exit")
+	}
+	if strings.HasPrefix(mode, "You were interrupted by a restart or crash at ") {
+		emit("recovery-message=" + mode)
+	}
 	if strings.Contains(mode, "ignore-int") {
 		signal.Ignore(os.Interrupt)
 		fmt.Println(`{"type":"assistant","message":{"content":[{"type":"text","text":"ready"}]}}`)

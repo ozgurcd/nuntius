@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.3 — 2026-10-10
+
+- Launch agents through short-lived double-fork stages, with their own session,
+  file-backed standard streams, OS parent and no persistent helper or service.
+- Record every goal before launch; recover on MCP startup or `nuntius recover`.
+  Resume the recorded session or resend the same brief with a restart note.
+- Default auto_resume on, bound each chain to two recovery attempts, preserve
+  busy-lane waiting and exclude cancelled/timed-out runs and frozen dispatch.
+- Show interrupted, resumed counts and waiting in CLI/MCP/web and link history.
+- Derive detached outcomes from reports; keep uncollectable exit codes unknown.
+- Fsync directories after atomic private writes and add run integrity checks;
+  ignore torn records and signals without hiding intact goals.
+- Prove parent loss, MCP kill, executable replacement, session/fresh recovery,
+  exclusions, waiting and corruption using offline fake agents only.
+
 ## v0.2.2 — 2026-10-09
 
 - Add bounded `history` CLI and read-only `nuntius_history` MCP filters for

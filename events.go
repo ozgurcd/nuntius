@@ -136,6 +136,7 @@ func (m *Manager) noWork(id string) bool {
 	s := bufio.NewScanner(f)
 	s.Buffer(make([]byte, 4096), 1<<20)
 	seen := false
+	finished := false
 	for s.Scan() {
 		var v event
 		if json.Unmarshal(s.Bytes(), &v) != nil {
@@ -145,7 +146,9 @@ func (m *Manager) noWork(id string) bool {
 			return false
 		}
 		switch v.Type {
-		case "system", "result":
+		case "system":
+		case "result":
+			finished = true
 		case "assistant":
 			seen = true
 			for _, c := range v.Message.Content {
@@ -157,7 +160,7 @@ func (m *Manager) noWork(id string) bool {
 			return false
 		}
 	}
-	return seen && s.Err() == nil
+	return seen && finished && s.Err() == nil
 }
 
 // Question attempts are diagnostic, never instructions to the server.

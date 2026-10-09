@@ -198,6 +198,15 @@ func safeJSON(v any) []byte {
 }
 
 func Serve(ctx context.Context, m *Manager, in io.Reader, out io.Writer) error {
+	var startupErr error
+	if m != nil {
+		startupErr = m.Recover()
+		if startupErr == nil {
+			m.mu.Lock()
+			m.recovery = true
+			m.mu.Unlock()
+		}
+	}
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 4096), 131072)
 	enc := json.NewEncoder(out)
@@ -292,6 +301,9 @@ func Serve(ctx context.Context, m *Manager, in io.Reader, out io.Writer) error {
 				Arguments json.RawMessage `json:"arguments"`
 			}
 			e := strictJSON(req.Params, &p)
+			if e == nil && startupErr != nil {
+				e = startupErr
+			}
 			var value any
 			if e == nil {
 				value, e = call(m, p.Name, p.Arguments)
