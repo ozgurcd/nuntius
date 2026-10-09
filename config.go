@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const Version = "v0.1.0"
+const Version = "v0.1.1"
 
 type Lane struct {
 	Name         string   `json:"name"`
@@ -99,7 +99,10 @@ func (c Config) Validate() (time.Duration, error) {
 		}
 		for i := 0; i < len(l.ExtraArgs); i++ {
 			key, val, eq := strings.Cut(l.ExtraArgs[i], "=")
-			if key != "--model" && key != "-m" && !(l.Kind == "claude" && (key == "--effort" || key == "--max-budget-usd")) {
+			if l.Kind == "codex" && key == "--skip-git-repo-check" && !eq {
+				continue
+			}
+			if key != "--model" && key != "-m" && !(l.Kind == "claude" && (key == "--effort" || key == "--max-budget-usd" || key == "--permission-mode")) && !(l.Kind == "codex" && key == "--sandbox") {
 				return fail()
 			}
 			if !eq {
@@ -108,6 +111,12 @@ func (c Config) Validate() (time.Duration, error) {
 					return fail()
 				}
 				val = l.ExtraArgs[i]
+			}
+			if key == "--permission-mode" && val != "auto" && val != "acceptEdits" && val != "plan" && val != "manual" {
+				return fail()
+			}
+			if key == "--sandbox" && val != "read-only" && val != "workspace-write" {
+				return fail()
 			}
 			if val == "" || len(val) > 128 || strings.HasPrefix(val, "-") || strings.ContainsAny(val, "\x00\r\n") || strings.Contains(strings.ToLower(val), "bypass") || strings.Contains(val, "danger-full-access") {
 				return fail()

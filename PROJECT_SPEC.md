@@ -1,11 +1,11 @@
-# Nuntius v0.1.0 — specification as built
+# Nuntius v0.1.1 — specification as built
 
 ## Boundary
 
 Nuntius is a Go, standard-library-only stdio MCP server for an owner-approved
 judge on macOS. Linux CI tests the same process and file contracts. The module
 is `github.com/ozgurcd/nuntius`. It has no network client, LLM or shell runner.
-Version v0.1.0 is compiled in; no release tag is implied.
+Version v0.1.1 is compiled in; no release tag is implied.
 
 Do not register it for coding agents. The MCP host owns approval. The server
 cannot verify that a caller is the judge or force a host to display a click.
@@ -23,8 +23,12 @@ The report directory is absolute and may be created later by the owner.
 Config defaults to `~/.config/nuntius/lanes.json`; only a CLI flag changes it.
 The maximum config size is 64 KiB. Duration is required, positive and at most
 seven days. Notifications default on and can be disabled in config.
-Only model selection and Claude effort/budget arguments are permitted.
-Permission, hook, sandbox, trust, cwd, output and session overrides are refused.
+Model selection and Claude effort/budget arguments are permitted.
+Claude also permits --permission-mode with auto, acceptEdits, plan or manual.
+Codex permits the valueless --skip-git-repo-check and --sandbox with read-only
+or workspace-write. Value-taking flags accept split and equals forms.
+All other permission, hook, sandbox, trust, cwd, output and session overrides
+are refused, including bypassPermissions, dontAsk and danger-full-access.
 No child environment values are injected; normal owner CLI settings apply.
 
 ## Runs

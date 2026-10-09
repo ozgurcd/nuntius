@@ -82,6 +82,67 @@ func waitReady(t *testing.T, m *Manager, lane string) {
 }
 
 func TestConfigAndBypassRefusal(t *testing.T) {
+	for _, kind := range []string{"claude", "codex"} {
+		cases := []struct {
+			name        string
+			args        []string
+			allowedKind string
+		}{{"skip-git-repo-check", []string{"--skip-git-repo-check"}, "codex"}}
+		for _, mode := range []string{"auto", "acceptEdits", "plan", "manual", "bypassPermissions", "dontAsk", "unknown", ""} {
+			allowed := ""
+			if mode == "auto" || mode == "acceptEdits" || mode == "plan" || mode == "manual" {
+				allowed = "claude"
+			}
+			cases = append(cases, struct {
+				name        string
+				args        []string
+				allowedKind string
+			}{"permission-" + mode, []string{"--permission-mode", mode}, allowed})
+		}
+		for _, mode := range []string{"read-only", "workspace-write", "danger-full-access", "unknown", ""} {
+			allowed := ""
+			if mode == "read-only" || mode == "workspace-write" {
+				allowed = "codex"
+			}
+			cases = append(cases, struct {
+				name        string
+				args        []string
+				allowedKind string
+			}{"sandbox-" + mode, []string{"--sandbox", mode}, allowed})
+		}
+		cases = append(cases, struct {
+			name        string
+			args        []string
+			allowedKind string
+		}{"skip-value", []string{"--skip-git-repo-check", "true"}, ""})
+		for _, tc := range cases {
+			forms := [][]string{tc.args}
+			if len(tc.args) == 2 {
+				forms = append(forms, []string{tc.args[0] + "=" + tc.args[1]})
+			}
+			for form, args := range forms {
+				t.Run(fmt.Sprintf("%s/%s/%d", kind, tc.name, form), func(t *testing.T) {
+					c, _ := fixture(t)
+					c.Lanes[0].Kind = kind
+					c.Lanes[0].ExtraArgs = args
+					_, err := c.Validate()
+					if (err == nil) != (tc.allowedKind == kind) {
+						t.Fatalf("acceptance mismatch: error=%v", err)
+					}
+				})
+			}
+		}
+		for _, flag := range []string{"--permission-mode", "--sandbox"} {
+			t.Run(kind+"/missing/"+flag, func(t *testing.T) {
+				c, _ := fixture(t)
+				c.Lanes[0].Kind = kind
+				c.Lanes[0].ExtraArgs = []string{flag}
+				if _, err := c.Validate(); err == nil {
+					t.Fatal("missing value accepted")
+				}
+			})
+		}
+	}
 	bad := [][]string{{"--dangerously-skip-permissions"}, {"--permission-mode", "bypassPermissions"}, {"--permission-mode=bypassPermissions"}, {"--dangerously-bypass-approvals-and-sandbox"}, {"--yolo"}, {"--sandbox", "danger-full-access"}, {"--allow-dangerously-skip-permissions"}, {"--dangerously-bypass-hook-trust"}, {"--bare"}, {"--safe-mode"}, {"--ignore-rules"}, {"-c", "sandbox_mode=\"danger-full-access\""}, {"--settings", "{}"}, {"--cd", "/tmp"}, {"--output-format", "text"}}
 	for i, args := range bad {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {

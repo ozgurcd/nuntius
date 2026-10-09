@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.1 — 2026-10-09 (not tagged)
+
+- Permit Claude permission modes auto, acceptEdits, plan and manual.
+- Permit Codex --skip-git-repo-check and read-only/workspace-write sandbox modes.
+- Keep all other argument restrictions, including agent-specific flag checks.
+- Test accepted forms, forbidden modes, unknown/missing values and wrong agents.
+
 ## v0.1.0 — 2026-10-09 (not tagged)
 
 - Add a local MCP server for the judge to start, follow, resume and cancel

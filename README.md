@@ -1,6 +1,6 @@
 # nuntius
 
-Nuntius v0.1.0 is a small local Go MCP server for a judge using Claude Desktop.
+Nuntius v0.1.1 is a small local Go MCP server for a judge using Claude Desktop.
 It starts and follows configured Claude Code and Codex lanes on the owner's Mac.
 It contains no LLM and makes no network requests of its own. Agent programs may
 use the network under their existing settings.
@@ -57,7 +57,11 @@ must be positive and no longer than seven days. Configuration is limited to
 64 KiB. No setting is read from agent configuration files by nuntius.
 
 `extra_args` supports `--model`/`-m` for both kinds, and `--effort` and
-`--max-budget-usd` for Claude. Split and `--name=value` forms work. Other options
+`--max-budget-usd` for Claude. Claude also permits `--permission-mode` with
+exactly `auto`, `acceptEdits`, `plan` or `manual`. Codex permits
+`--skip-git-repo-check` without a value and `--sandbox` with exactly `read-only`
+or `workspace-write`. Value-taking options support split and `--name=value`
+forms. These options are agent-specific. Other options
 are refused, including permission/sandbox bypasses, hook or settings overrides,
 working-directory changes, session selection and output-format overrides.
 This also closes indirect bypasses through Codex `-c` and Claude `--settings`.
