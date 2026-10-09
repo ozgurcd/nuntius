@@ -1,6 +1,6 @@
 # nuntius
 
-Nuntius v0.1.1 is a small local Go MCP server for a judge using Claude Desktop.
+Nuntius v0.1.2 is a small local Go MCP server for a judge using Claude Desktop.
 It starts and follows configured Claude Code and Codex lanes on the owner's Mac.
 It contains no LLM and makes no network requests of its own. Agent programs may
 use the network under their existing settings.
@@ -19,8 +19,14 @@ are required. macOS and Linux are supported; Windows is not a target.
 
 ```sh
 make verify
-make install
-"$(go env GOPATH)/bin/nuntius" version
+```
+
+Install the published release through the owner's Homebrew tap. Never install
+nuntius into `~/go/bin`.
+
+```sh
+brew install --cask ozgurcd/tap/nuntius
+nuntius version
 ```
 
 The tests compile an offline Go fake. They never execute the real agents,
@@ -82,12 +88,13 @@ lane ends; it is not a raw transcript. Ctrl-C stops watching.
 ## Claude Desktop entry
 
 Add a `nuntius` entry inside the existing `mcpServers` object of Claude
-Desktop's configuration. Resolve the executable path with `go env GOPATH`.
+Desktop's configuration. Resolve the executable path with `brew --prefix`;
+the cask links `nuntius` into that prefix's `bin` directory.
 Do not overwrite other entries. This repository does not edit app settings.
 
 ```json
 "nuntius": {
-  "command": "/absolute/go/bin/nuntius",
+  "command": "/absolute/homebrew/prefix/bin/nuntius",
   "args": ["mcp"]
 }
 ```
@@ -162,5 +169,4 @@ Do not delete live records or start a second server to take over such a run.
 Malformed configuration or an unavailable store leaves MCP in a non-serving
 state: initialize/list still work; tool calls report the fault. Run `config
 check`, correct the owner configuration, then restart the server. No dashboard,
-freeze controls, agent settings editor, HTTP listener or release automation is
-included in v1.
+freeze controls, agent settings editor or HTTP listener is included in v1.

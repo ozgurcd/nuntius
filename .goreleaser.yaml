@@ -1,0 +1,63 @@
+version: 2
+project_name: nuntius
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/nuntius
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    # The binary uses the source-controlled nuntius.Version constant.
+    ldflags:
+      - -s -w
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+release:
+  replace_existing_artifacts: false
+
+homebrew_casks:
+  - name: nuntius
+    skip_upload: true
+    repository:
+      owner: ozgurcd
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/ozgurcd/nuntius"
+    description: "Local MCP run manager for the judge in Claude Desktop"
+    binaries:
+      - nuntius
+    url:
+      template: "https://github.com/ozgurcd/nuntius/releases/download/v#{version}/{{ .ArtifactName }}"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/nuntius"]
+          end

@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions: {}
+
+env:
+  GORELEASER_VERSION: 'v2.17.0'
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04
+      - name: Validate tag and source version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git cat-file -t "$tag")" = tag
+          test "$(git rev-parse "${tag}^{}")" = "$(git rev-parse HEAD)"
+          test "$(go run ./cmd/nuntius version)" = "nuntius $tag"
+      - name: Install pinned verification tools
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+      - name: Verify
+        run: make verify
+      - name: Check pinned release configuration
+        run: make release-check
+      - name: Select version release notes
+        run: make release-notes-check RELEASE_NOTES_OUTPUT="$RUNNER_TEMP/release-notes.md"
+      - name: Validate release artifacts
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          distribution: goreleaser
+          version: ${{ env.GORELEASER_VERSION }}
+          args: release --snapshot --clean --skip=publish --release-notes=${{ runner.temp }}/release-notes.md
+
+  release:
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04
+      - name: Verify Homebrew tap credential
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          test "$(gh api repos/ozgurcd/homebrew-tap --jq '.permissions.push')" = true
+      - name: Select version release notes
+        run: make release-notes-check RELEASE_NOTES_OUTPUT="$RUNNER_TEMP/release-notes.md"
+      - name: Publish public GitHub release
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          distribution: goreleaser
+          version: ${{ env.GORELEASER_VERSION }}
+          args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish and verify Homebrew cask
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cask_path="dist/homebrew/Casks/nuntius.rb"
+          test -s "$cask_path"
+          desired_version="${GITHUB_REF_NAME#v}"
+          grep -Fq "version \"$desired_version\"" "$cask_path"
+          # Match Achta's public-download checks and structured Homebrew postflight.
+          python3 - "$cask_path" <<'PY'
+          import pathlib, sys
+          p = pathlib.Path(sys.argv[1])
+          text = p.read_text()
+          forbidden = ('authorization', 'accept:', 'api.github.com', 'homebrew_github_api_token', 'headers:')
+          assert not any(marker in text.lower() for marker in forbidden), 'unexpected authenticated download'
+          assets = ('nuntius_Darwin_arm64.tar.gz', 'nuntius_Darwin_x86_64.tar.gz', 'nuntius_Linux_arm64.tar.gz', 'nuntius_Linux_x86_64.tar.gz')
+          urls = [line.strip() for line in text.splitlines() if line.strip().startswith('url ')]
+          expected = ['url "https://github.com/ozgurcd/nuntius/releases/download/v#{version}/' + asset + '"' for asset in assets]
+          assert sorted(urls) == sorted(expected), 'unexpected or duplicate download URL'
+          legacy = '  postflight do\n    if OS.mac?\n      system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/nuntius"]\n    end\n  end'
+          structured = '  postflight_steps do\n    on_macos do\n      run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{staged_path}}/nuntius"]\n    end\n  end'
+          counts = (text.count(legacy), text.count(structured))
+          assert counts in ((1, 0), (0, 1)), 'unexpected postflight form'
+          p.write_text(text.replace(legacy, structured))
+          PY
+          for asset in \
+            nuntius_Darwin_arm64.tar.gz \
+            nuntius_Darwin_x86_64.tar.gz \
+            nuntius_Linux_arm64.tar.gz \
+            nuntius_Linux_x86_64.tar.gz; do
+            expected_hash="$(awk -v name="$asset" '$2 == name { print $1 }' dist/checksums.txt)"
+            test -n "$expected_hash"
+            test "$(grep -Fc "sha256 \"$expected_hash\"" "$cask_path")" = 1
+            test "$(grep -Fc "https://github.com/ozgurcd/nuntius/releases/download/v#{version}/$asset" "$cask_path")" = 1
+          done
+          tap_dir="$RUNNER_TEMP/homebrew-tap"
+          gh auth setup-git
+          gh repo clone ozgurcd/homebrew-tap "$tap_dir"
+          existing="$tap_dir/Casks/nuntius.rb"
+          if [[ -f "$existing" ]]; then
+            published_version="$(sed -n 's/^  version "\([^"]*\)"/\1/p' "$existing")"
+            if [[ -z "$published_version" ]]; then
+              echo "existing Homebrew cask has no parseable version" >&2
+              exit 1
+            fi
+            if [[ "$published_version" != "$desired_version" ]]; then
+              newest="$(printf '%s\n' "$desired_version" "$published_version" | sort -V | tail -n 1)"
+              if [[ "$newest" == "$published_version" ]]; then
+                echo "refusing to downgrade Homebrew from $published_version to $desired_version" >&2
+                exit 1
+              fi
+            fi
+          fi
+          mkdir -p "$tap_dir/Casks"
+          cp "$cask_path" "$existing"
+          git -C "$tap_dir" add Casks/nuntius.rb
+          if ! git -C "$tap_dir" diff --cached --quiet; then
+            git -C "$tap_dir" config user.name github-actions
+            git -C "$tap_dir" config user.email github-actions@github.com
+            git -C "$tap_dir" commit -m "chore: update nuntius cask to $desired_version"
+            git -C "$tap_dir" push origin HEAD:main
+          else
+            echo "Homebrew cask already matches"
+          fi
+          remote_path="$RUNNER_TEMP/nuntius.rb"
+          gh api -H 'Accept: application/vnd.github.raw+json' \
+            repos/ozgurcd/homebrew-tap/contents/Casks/nuntius.rb > "$remote_path"
+          cmp "$cask_path" "$remote_path"

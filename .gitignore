@@ -1,3 +1,4 @@
 .gograph/
 /bin/
 /coverage.out
+/dist/

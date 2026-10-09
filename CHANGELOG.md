@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.2 — 2026-10-09
+
+- Publish macOS and Linux archives for amd64 and arm64 with release checksums.
+- Publish the Homebrew cask to ozgurcd/homebrew-tap after checking its credential.
+- Use Homebrew for installation; never install nuntius into ~/go/bin.
+- Keep the v0.1.1 runtime behavior unchanged.
+
 ## v0.1.1 — 2026-10-09 (not tagged)
 
 - Permit Claude permission modes auto, acceptEdits, plan and manual.
