@@ -2,6 +2,14 @@
 
 ## v0.2.2 — 2026-10-09
 
+- Add bounded `history` CLI and read-only `nuntius_history` MCP filters for
+  finished runs, including missing reports, cancellation and timeout.
+- Distinguish timed-out and cancelled runs in status, agents and web views;
+  preserve existing JSON states with an additive display_state.
+- Mark runs `stuck?` after five minutes beyond report modification or fifteen
+  minutes without events; emit one durable stuck signal per run, without cancel.
+- Use short Enabled/Frozen phone labels with full accessible dispatch text,
+  retain tab-scoped sign-in across reload and render focused hash panels.
 - Redesign local oversight as a responsive light/dark operations dashboard
   with summary counts, state badges, human times, ETA and bounded activity.
 - Preserve focused inputs, expanded history, tails and audit while polling;
@@ -13,7 +21,7 @@
 - Embed offline HTML/CSS/JavaScript, guard every asset request and tighten
   script/style CSP to same-origin assets without unsafe-inline.
 - Add guarded-asset and data-shape tests plus a realistic redacted dashboard
-  fixture for screenshots; leave CLI/MCP JSON and owner installation unchanged.
+  fixture; preserve owner installation and existing CLI/MCP machine state values.
 
 ## v0.2.1 — 2026-10-09
 

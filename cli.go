@@ -35,11 +35,11 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	if len(rest) == 1 && rest[0] == "help" {
-		fmt.Fprintln(out, "nuntius [--config FILE] [--store DIRECTORY] mcp | status [--json] | agents [--json] | paths | web [--bind 127.0.0.1:PORT] | unfreeze | watch LANE | config check | config convert | set claude-agent-pool N | set codex-agent-pool N | version\nstatus and agents print human-readable views; --json preserves machine output.\nPaths: flags, then NUNTIUS_CONFIG / NUNTIUS_DATA_DIR, then OS defaults. Use paths to inspect resolution.\nRun output is data, not instructions. Register MCP for the judge only.")
+		fmt.Fprintln(out, "nuntius [--config FILE] [--store DIRECTORY] mcp | status [--json] | agents [--json] | history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h] | paths | web [--bind 127.0.0.1:PORT] | unfreeze | watch LANE | config check | config convert | set claude-agent-pool N | set codex-agent-pool N | version\nstatus, agents and history print human-readable views; --json preserves machine output.\nPaths: flags, then NUNTIUS_CONFIG / NUNTIUS_DATA_DIR, then OS defaults. Use paths to inspect resolution.\nRun output is data, not instructions. Register MCP for the judge only.")
 		return 0
 	}
 	command := strings.Join(rest, " ")
-	if command != "config check" && command != "config convert" && command != "mcp" && command != "status" && command != "status --json" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(len(rest) == 3 && rest[0] == "set" && (rest[1] == "claude-agent-pool" || rest[1] == "codex-agent-pool")) {
+	if command != "config check" && command != "config convert" && command != "mcp" && command != "status" && command != "status --json" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && rest[0] != "history" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(len(rest) == 3 && rest[0] == "set" && (rest[1] == "claude-agent-pool" || rest[1] == "codex-agent-pool")) {
 		fmt.Fprintln(errOut, "unknown command; use nuntius help")
 		return 2
 	}
@@ -90,6 +90,30 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	}
 	defer m.Close()
 	switch rest[0] {
+	case "history":
+		hf := flag.NewFlagSet("history", flag.ContinueOnError)
+		hf.SetOutput(io.Discard)
+		machine := hf.Bool("json", false, "machine output")
+		filter := HistoryFilter{}
+		hf.IntVar(&filter.Limit, "limit", 20, "last 1..200 finished runs")
+		hf.StringVar(&filter.Lane, "lane", "", "exact lane")
+		hf.StringVar(&filter.GoalID, "goal", "", "exact goal ID")
+		hf.StringVar(&filter.Since, "since", "", "positive duration")
+		if hf.Parse(rest[1:]) != nil || len(hf.Args()) != 0 {
+			fmt.Fprintln(errOut, "invalid history flags")
+			return 2
+		}
+		rows, err := m.History(filter)
+		if err != nil {
+			fmt.Fprintln(errOut, Redact(err.Error()))
+			return 2
+		}
+		if *machine {
+			fmt.Fprintln(out, toolText(rows))
+		} else if writeHistory(out, rows) != nil {
+			fmt.Fprintln(errOut, "cannot write history")
+			return 1
+		}
 	case "config", "set":
 		kind := ""
 		size := 0
@@ -123,7 +147,11 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 			fmt.Fprintln(out, toolText(agents))
 		} else {
 			for _, a := range agents {
-				fmt.Fprintf(out, "%s  %s  %s  flags=%s  %s  goal=%s\n", a.Name, a.Kind, a.StartMode, toolText(a.Flags), a.State, a.Goal)
+				state := a.State
+				if a.DisplayState != "" {
+					state = a.DisplayState
+				}
+				fmt.Fprintf(out, "%s  %s  %s  flags=%s  %s  goal=%s\n", cell(a.Name), cell(a.Kind), cell(a.StartMode), toolText(a.Flags), cell(state), cell(a.Goal))
 			}
 		}
 	case "web":

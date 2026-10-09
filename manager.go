@@ -16,22 +16,23 @@ import (
 )
 
 type Run struct {
-	ID            string     `json:"run_id"`
-	Lane          string     `json:"lane"`
-	GoalID        string     `json:"goal_id"`
-	SHA256        string     `json:"sha256"`
-	Started       time.Time  `json:"started"`
-	Ended         *time.Time `json:"ended,omitempty"`
-	Exit          *int       `json:"exit,omitempty"`
-	State         string     `json:"state"`
-	SessionID     string     `json:"session_id,omitempty"`
-	PID           int        `json:"pid"`
-	ProcessStart  string     `json:"process_start,omitempty"`
-	StopReason    string     `json:"stop_reason,omitempty"`
-	StopAt        *time.Time `json:"stop_at,omitempty"`
-	Resumed       bool       `json:"resumed"`
-	ParentRunID   string     `json:"parent_run_id,omitempty"`
-	ContinueRunID string     `json:"continue_run_id,omitempty"`
+	ID             string     `json:"run_id"`
+	Lane           string     `json:"lane"`
+	GoalID         string     `json:"goal_id"`
+	SHA256         string     `json:"sha256"`
+	Started        time.Time  `json:"started"`
+	Ended          *time.Time `json:"ended,omitempty"`
+	Exit           *int       `json:"exit,omitempty"`
+	State          string     `json:"state"`
+	SessionID      string     `json:"session_id,omitempty"`
+	PID            int        `json:"pid"`
+	ProcessStart   string     `json:"process_start,omitempty"`
+	StopReason     string     `json:"stop_reason,omitempty"`
+	StopAt         *time.Time `json:"stop_at,omitempty"`
+	Resumed        bool       `json:"resumed"`
+	ParentRunID    string     `json:"parent_run_id,omitempty"`
+	ContinueRunID  string     `json:"continue_run_id,omitempty"`
+	StuckSignalled bool       `json:"stuck_signalled,omitempty"`
 }
 type Status struct {
 	Freeze              *FreezeState `json:"freeze,omitempty"`
@@ -47,6 +48,7 @@ type Status struct {
 	ReportExists        bool         `json:"report_exists"`
 	AskedInteractively  bool         `json:"asked_interactively"`
 	Outcome             string       `json:"outcome,omitempty"`
+	DisplayState        string       `json:"display_state,omitempty"`
 }
 type activeRun struct {
 	done chan struct{}
@@ -305,6 +307,7 @@ func (m *Manager) follow(r Run, cmd *exec.Cmd, lock, supervisor *os.File, a *act
 	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
 	finished := false
+	var lastStuckCheck time.Time
 	for !finished {
 		select {
 		case <-m.closing:
@@ -325,6 +328,7 @@ func (m *Manager) follow(r Run, cmd *exec.Cmd, lock, supervisor *os.File, a *act
 				if err == nil && current != nil && current.ID == r.ID {
 					r.StopReason = current.StopReason
 					r.StopAt = current.StopAt
+					r.StuckSignalled = current.StuckSignalled
 					if current.ProcessStart != r.ProcessStart {
 						e = errors.New("process identity changed")
 					}
@@ -336,6 +340,12 @@ func (m *Manager) follow(r Run, cmd *exec.Cmd, lock, supervisor *os.File, a *act
 						finished = true
 					}
 					if sameProcess(r) {
+						if now := time.Now(); now.Sub(lastStuckCheck) >= time.Second {
+							lastStuckCheck = now
+							if _, err := m.checkStuck(&r, now); err != nil {
+								_ = m.audit("run_stuck_signal", r.Lane, r.GoalID, r.SHA256, "persistence_failed")
+							}
+						}
 						if r.StopAt == nil && (time.Since(r.Started) >= m.runtime || m.checkFrozen() != nil) {
 							reason := "timed_out"
 							if time.Since(r.Started) < m.runtime {
@@ -368,6 +378,7 @@ func (m *Manager) follow(r Run, cmd *exec.Cmd, lock, supervisor *os.File, a *act
 	if current, err := m.latest(r.Lane); err == nil && current != nil && current.ID == r.ID {
 		r.StopReason = current.StopReason
 		r.StopAt = current.StopAt
+		r.StuckSignalled = current.StuckSignalled
 	}
 	now := time.Now().UTC()
 	r.Ended = &now
@@ -505,6 +516,15 @@ func (m *Manager) Status() ([]Status, error) {
 			s.ReportExists = m.reportExists(r.GoalID)
 			if s.State == "ended" && !s.ReportExists {
 				s.State = "ended_no_report"
+			}
+			s.DisplayState = terminalDisplay(*r, s.State)
+			if stuck, err := m.checkStuck(r, time.Now()); err != nil {
+				return nil, err
+			} else if stuck {
+				s.DisplayState = "stuck?"
+			}
+			if s.DisplayState == s.State {
+				s.DisplayState = ""
 			}
 			if b, err := readWindow(filepath.Join(m.store, "runs", r.ID, "events.jsonl"), true); err == nil {
 				_, s.AskedInteractively = questionSummary(b)

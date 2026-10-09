@@ -10,7 +10,7 @@ import (
 	"syscall"
 )
 
-var signalPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{1,129}\.ended$`)
+var signalPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{1,129}\.(ended|stuck)$`)
 
 func (m *Manager) signalRoot() (*os.Root, error) {
 	dir := filepath.Join(m.store, "signals")
@@ -24,12 +24,16 @@ func (m *Manager) endRun(r *Run) error {
 	if err := m.save(r); err != nil {
 		return err
 	}
+	return m.emitSignal(*r, "ended")
+}
+
+func (m *Manager) emitSignal(r Run, suffix string) error {
 	root, err := m.signalRoot()
 	if err != nil {
 		return err
 	}
 	defer root.Close()
-	name := r.Lane + "." + r.GoalID + ".ended"
+	name := r.Lane + "." + r.GoalID + "." + suffix
 	if !signalPattern.MatchString(name) {
 		return errors.New("invalid signal name")
 	}
@@ -42,13 +46,16 @@ func (m *Manager) endRun(r *Run) error {
 		return errors.New("invalid existing signal")
 	}
 	if err != nil {
-		return errors.New("cannot create end signal")
+		return errors.New("cannot create run signal")
 	}
 	defer f.Close()
 	return f.Sync()
 }
 
 func (m *Manager) Signals() ([]string, error) {
+	if _, err := m.Status(); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	root, err := m.signalRoot()

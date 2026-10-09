@@ -102,6 +102,8 @@ Desktop with the intended normal environment and agent settings.
 nuntius config check
 nuntius status
 nuntius status --json
+nuntius history
+nuntius history --json --limit 50 --lane codex-1 --since 24h
 nuntius paths
 nuntius watch claude-1
 ```
@@ -120,6 +122,25 @@ history it shows `-`; otherwise it shows `~12m left (n=5)` or
 `over usual (+8m)`. It is an estimate, never a dispatch or waiting rule.
 Activity shows fixed kinds such as `editing files`, `running tests` and
 `git push`, never tool arguments or command text. Unknown kinds use a generic label.
+
+`history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h]` shows
+finished runs, including cancelled, timed-out and no-report runs. It defaults
+to the last 20, newest completion first; `--limit` accepts 1..200. Lane and
+goal filters are exact and can be combined. `--since` is a positive Go duration
+measured from now against completion time. The human table shows ENDED in local
+time, AGENT, GOAL, OUTCOME, DURATION, REPORT (yes/no), and EXIT (`-` if unknown).
+JSON retains timestamps, numeric seconds/exit codes, booleans and null unknown
+exits; it excludes session IDs, process identity, prompts and report text.
+
+Human status, agents and the dashboard distinguish `timed_out` and `cancelled`.
+Existing status/agents JSON `state` values remain compatible; an optional
+`display_state` supplies those labels and `stuck?`. A running run is `stuck?`
+when its regular report file's modification time is over five minutes old,
+or its last event is over fifteen minutes old. With no event file, age starts
+at run start. Checks use strict thresholds and never automatically cancel.
+Supervision checks once a second; status and signals also check immediately.
+Only runs that are still running qualify. Reused goal IDs can refer to older
+reports, so use distinct goal IDs as with report-presence checks.
 
 Global `--config FILE` and `--store DIRECTORY` flags precede the command.
 One private data directory holds `runs/`, `audit.jsonl`, `notes.jsonl`,
@@ -183,7 +204,7 @@ timeout supervision resumes when a server opens the store again.
 Tool approvals in Claude Desktop:
 
 - **Ask**: `nuntius_dispatch`, `nuntius_reply`, `nuntius_cancel`, `nuntius_unfreeze`.
-- **Allow**: `nuntius_status`, `nuntius_tail`, `nuntius_report`,
+- **Allow**: `nuntius_status`, `nuntius_history`, `nuntius_tail`, `nuntius_report`,
   `nuntius_owner_notes`, `nuntius_owner_notes_ack`, `nuntius_freeze`.
   `nuntius_signals` and `nuntius_signals_ack` read and acknowledge end signals.
 
@@ -224,7 +245,9 @@ and ended counts, and refresh freshness on every tab. Agents opens by default;
 Messages & notes, Digest, History and Audit have their own panels. Arrow keys
 and Home/End navigate tabs. The URL hash selects the view on start and reload.
 The phone header uses two lines: brand and freeze controls, then counts and
-update age. The tab bar scrolls within phone-width windows.
+update age. Its pill shows `Enabled` / `Frozen` at narrow widths, with full
+dispatch/freeze text in its title and accessible label. The tab bar scrolls
+within phone-width windows.
 Compact agent cards show kind, state, goal, elapsed time, ETA, event age, activity and
 report presence. Open a card's tail to read its bounded output. Cancel uses
 an in-page confirmation before interrupting a running agent; Keep running or
@@ -283,7 +306,7 @@ stays held between them. A manual reply never triggers another automatic reply.
 
 ## MCP interface and storage
 
-The tools are `nuntius_status`, `nuntius_dispatch`, `nuntius_reply`,
+The tools are `nuntius_status`, `nuntius_history`, `nuntius_dispatch`, `nuntius_reply`,
 `nuntius_tail`, `nuntius_report`, `nuntius_cancel`, `nuntius_freeze`,
 `nuntius_unfreeze`, `nuntius_owner_notes`, `nuntius_owner_notes_ack`,
 `nuntius_signals` and `nuntius_signals_ack`. See `PROJECT_SPEC.md` for
@@ -316,6 +339,12 @@ atomically creates an empty private `signals/<agent>.<goal_id>.ended` file.
 linked files are refused. Duplicate agent/goal signals coalesce until acknowledged;
 use distinct goal IDs when each run needs a separate signal. Acknowledgements
 are idempotent. A failed signal write is recorded in the audit log.
+
+Stuck detection creates the same private empty signal form as
+`signals/<agent>.<goal_id>.stuck`. A per-run persisted flag prevents delivery
+again after acknowledgement or restart, even if the run remains stuck.
+Repeated lane/goal names coalesce while pending. Listing and acknowledgements
+accept both `.ended` and `.stuck`, with the same bounds and path protections.
 
 Timeout sends SIGINT to the run's process group, then SIGKILL after 30 seconds.
 Cancel follows the same escalation. Each run starts in its own session with

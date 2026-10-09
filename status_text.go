@@ -178,7 +178,7 @@ func (m *Manager) writeStatus(out io.Writer, view any) error {
 	defer m.mu.Unlock()
 	runs, _ := m.history()
 	for _, s := range rows {
-		state, goal, elapsed, eta, age, current, report := s.State, "-", "-", "-", "-", "-", "no"
+		state, goal, elapsed, eta, age, current, report := displayState(s), "-", "-", "-", "-", "-", "no"
 		if frozen && s.State == "idle" {
 			state = "frozen"
 		}

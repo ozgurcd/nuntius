@@ -204,6 +204,16 @@ function rendered(h, id) {
   check(noStorage.calls.length === 0 && !noStorage.ids.error.hidden, 'storage failure without bootstrap remains signed out');
   const replaced = new Map([['nuntius.web.token', 'stale-fixture-auth']]);
   const fresh = start('#runs', replaced, '?token=fixture-auth'); await settle();
+  vm.runInContext("selectTab('agents'); lastData = JSON.parse(JSON.stringify(lastData)); lastData.lanes[0].display_state = 'timed_out'; lastData.lanes[1].display_state = 'cancelled'; lastData.lanes[2].display_state = 'stuck?'; render(lastData)", fresh.context);
+  check(fresh.ids.lanes.textContent.includes('Timed out') && fresh.ids.lanes.textContent.includes('Cancelled') && fresh.ids.lanes.textContent.includes('Stuck?'), 'distinct terminal and stuck card states');
+  vm.runInContext("lastData.history[0].display_state = 'cancelled'; selectTab('runs')", fresh.context);
+  check(fresh.ids.runs.textContent.includes('Cancelled'), 'history cancellation badge');
+  vm.runInContext("lastData.history[0].display_state = 'timed_out'; render(lastData)", fresh.context);
+  check(fresh.ids.runs.textContent.includes('Timed out'), 'history timeout badge');
+  vm.runInContext("render(lastData)", fresh.context);
+  check(fresh.ids.freeze.textContent.includes('Enabled') && fresh.ids.freeze.title === 'Dispatch enabled' && fresh.ids.freeze.getAttribute('aria-label') === 'Dispatch enabled', 'short enabled label has full accessible text');
+  vm.runInContext("lastData.freeze = {since: '2026-10-09T10:00:00Z', reason: 'Owner pause'}; render(lastData)", fresh.context);
+  check(fresh.ids.freeze.textContent.includes('Frozen') && fresh.ids.freeze.title.includes('Owner pause') && fresh.ids.freeze.getAttribute('aria-label') === fresh.ids.freeze.title, 'short frozen label has full accessible text');
   check(replaced.get('nuntius.web.token') === 'fixture-auth', 'new start link replaces stale tab credential');
   await vm.runInContext("action('unfreeze')", fresh.context);
   check(fresh.calls.some(c => c.path === '/action' && c.options.method === 'POST' && c.options.headers['X-Nuntius-Token'] === fresh.calls[0].options.headers['X-Nuntius-Token']), 'actions use the same tab credential header');
@@ -219,16 +229,17 @@ function rendered(h, id) {
 // the existing history, notes and freeze JSON shape, including optional fields.
 func TestDashboardFixtureMatchesData(t *testing.T) {
 	type historyView struct {
-		RunID    string            `json:"run_id"`
-		Lane     string            `json:"lane"`
-		GoalID   string            `json:"goal_id"`
-		Started  time.Time         `json:"started"`
-		Ended    *time.Time        `json:"ended"`
-		State    string            `json:"state"`
-		Exit     *int              `json:"exit"`
-		Goal     string            `json:"goal"`
-		Report   string            `json:"report"`
-		Sections map[string]string `json:"sections"`
+		RunID        string            `json:"run_id"`
+		Lane         string            `json:"lane"`
+		GoalID       string            `json:"goal_id"`
+		Started      time.Time         `json:"started"`
+		Ended        *time.Time        `json:"ended"`
+		State        string            `json:"state"`
+		DisplayState string            `json:"display_state"`
+		Exit         *int              `json:"exit"`
+		Goal         string            `json:"goal"`
+		Report       string            `json:"report"`
+		Sections     map[string]string `json:"sections"`
 	}
 	type dashboard struct {
 		Freeze    *FreezeState        `json:"freeze"`

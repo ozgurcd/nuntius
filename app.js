@@ -99,10 +99,10 @@ function timeText(n, value, prefix = '') {
   if (n.tagName === 'TIME' && value) n.dateTime = value;
 }
 function stateBadge(n, state) {
-  const known = ['running', 'idle', 'ended', 'ended_no_report', 'cancelled', 'failed', 'frozen', 'enabled'];
+  const known = ['running', 'idle', 'ended', 'ended_no_report', 'cancelled', 'timed_out', 'stuck?', 'failed', 'frozen', 'enabled'];
   n.className = 'badge ' + (known.includes(state) ? state : '');
   setText(n, state === 'ended_no_report' ? 'Ended · no report' :
-    state === 'idle' ? 'Idle' : state.charAt(0).toUpperCase() + state.slice(1));
+    state === 'timed_out' ? 'Timed out' : state.charAt(0).toUpperCase() + state.slice(1));
 }
 // Insert/move only where the order actually changed; stable nodes retain focus.
 function reconcile(parent, entries, cache, make, update, key) {
@@ -166,7 +166,7 @@ function makeCard(s) {
 function updateCard(v, s) {
   if (busy(v.root)) return;
   setText(v.kind, s.kind || 'Agent');
-  stateBadge(v.badge, s.state);
+  stateBadge(v.badge, s.display_state || s.state);
   v.goal.className = s.goal_id ? 'goal' : 'goal goal-placeholder';
   setText(v.goal, s.goal_id || 'Ready for the next goal');
   setText(v.fields.Elapsed, s.goal_id ? duration(s.elapsed_seconds) : '—');
@@ -222,7 +222,8 @@ function updateRun(v, r) {
   v.data = r;
   setText(v.lane, r.lane);
   setText(v.toggle, (v.detail.hidden ? '▸ ' : '▾ ') + r.goal_id);
-  stateBadge(v.badge, r.state === 'ended' && r.exit != null && r.exit !== 0 ? 'failed' : r.state);
+  const state = r.display_state || r.state;
+  stateBadge(v.badge, state === 'ended' && r.exit != null && r.exit !== 0 ? 'failed' : state);
   timeText(v.timestamp, r.started);
   const end = r.ended ? Date.parse(r.ended) : Date.now();
   setText(v.elapsed, duration((end - Date.parse(r.started)) / 1000));
@@ -253,6 +254,13 @@ function render(d) {
     timeText(el('freeze'), d.freeze.since, 'Frozen since ');
     setText(el('freeze'), el('freeze').textContent + ' — ' + d.freeze.reason);
   } else setText(el('freeze'), 'Dispatch enabled');
+  const fullFreezeText = el('freeze').textContent;
+  el('freeze').title = fullFreezeText;
+  el('freeze').setAttribute('aria-label', fullFreezeText);
+  const full = node('span', 'freeze-full', fullFreezeText);
+  const short = node('span', 'freeze-short', frozen ? 'Frozen' : 'Enabled');
+  full.setAttribute('aria-hidden', 'true'); short.setAttribute('aria-hidden', 'true');
+  el('freeze').replaceChildren(full, short);
   el('freezeButton').hidden = frozen; el('unfreezeButton').hidden = !frozen;
   setText(el('runningCount'), d.lanes.filter(s => s.state === 'running').length);
   setText(el('idleCount'), d.lanes.filter(s => s.state === 'idle').length);

@@ -71,8 +71,10 @@ and report files refuse symlink leaves; report reads are rooted to reports_dir.
 The append-only audit has time, tool, lane, goal ID, prompt hash and result.
 Raw private storage is not redacted; all returned text is.
 
-Normal completion is ended. Timeout metadata uses timed_out; status presents
-ended with outcome timed_out. SIGINT escalates to SIGKILL after 30 seconds.
+Normal completion is ended. Timeout metadata uses timed_out; status keeps the
+legacy ended/ended_no_report state and adds display_state timed_out. Cancelled
+runs also retain their legacy state and add display_state cancelled.
+SIGINT escalates to SIGKILL after 30 seconds.
 Cancel uses the same escalation. Runs start with setsid and direct file output.
 Server shutdown detaches and leaves runs alive. Every signal requires a live
 group leader with the recorded PID and kernel start time. macOS end notifications use fixed
@@ -81,6 +83,16 @@ Notifications are skipped outside macOS and for an unknown exit code.
 Every terminal outcome writes an empty private signals/<agent>.<goal_id>.ended
 file through atomic exclusive creation; duplicate names coalesce. Recovery
 also writes a signal. A normal completion's signal persistence failure is audited.
+
+Running runs with a regular report file older than five minutes, or a last
+event older than fifteen minutes, show display_state `stuck?`. Both comparisons
+are strictly greater than the threshold. Missing events use the run start time;
+linked files do not supply timestamps. No automatic cancel is added.
+Supervision checks once a second; status and signal-list calls also detect it.
+The first detection exclusively creates an empty private
+signals/<lane>.<goal_id>.stuck using the existing signal mechanism. Metadata
+persists stuck_signalled per run, so acknowledgement and restart do not repeat
+delivery. Reused lane/goal pending names coalesce as with end signals.
 
 Restart reads persisted metadata. A dead run becomes ended with unknown exit.
 Verified survivors regain supervision under an exclusive per-run supervisor lock.
@@ -108,6 +120,13 @@ notification precede tools. The tools are:
 - nuntius_status(): an object with frozen, freeze time/reason and lanes. Each lane
   has state idle/running/ended/ended_no_report, goal/run IDs, start, elapsed,
   last event time and age, exit, outcome and report existence.
+- nuntius_history(limit=20, lane, goal_id, since): read-only finished-run list,
+  newest completion first, limit 1..200. Optional exact lane/goal filters combine;
+  since is a positive Go duration (e.g. 24h) relative to completion time.
+  Rows include run_id, lane, goal_id, ended (timestamp), outcome (redacted,
+  at most 256 bytes), duration_seconds (number), report_exists (boolean), exit
+  (number or null). Running and undated records are excluded. No private run
+  text or process/session identity is returned. Empty results are [].
 - nuntius_dispatch(lane, goal_id, text): start when idle; return run_id.
 - nuntius_reply(lane, text): resume the ended last run when its session ID exists.
 - nuntius_tail(lane, lines=50): 1..200 physical lines of assistant text and tool
@@ -122,7 +141,7 @@ notification precede tools. The tools are:
 - nuntius_unfreeze(): remove the marker. The host must ask the owner each time.
 - nuntius_owner_notes(since): up to 50 redacted notes after an RFC3339 timestamp.
 - nuntius_owner_notes_ack(ids): persist acknowledgements for 1..50 known IDs.
-- nuntius_signals(): only a sorted JSON array of pending end-signal names.
+- nuntius_signals(): only a sorted JSON array of pending ended/stuck signal names.
 - nuntius_signals_ack(names): remove 1..10000 named signals, idempotently;
   validate all names first and refuse traversal, directory and linked entries.
 
@@ -153,10 +172,18 @@ shapes and Desktop permission interaction remain owner-pilot questions.
 
 ## CLI and validation
 
-Commands: mcp, status [--json], agents [--json], paths, web [--bind 127.0.0.1:PORT], unfreeze,
+Commands: mcp, status [--json], agents [--json],
+history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h],
+paths, web [--bind 127.0.0.1:PORT], unfreeze,
 watch LANE, config check, config convert, set KIND-agent-pool N, version and help. Global config
 and store flags precede the command. Status and agents default to human views;
 --json preserves their machine shapes. MCP output stays JSON. Status columns
+use optional display_state for cancelled, timed_out and stuck?, while retaining
+legacy machine state values. History defaults to the last 20 completed runs;
+its table has ENDED (local time), AGENT, GOAL, OUTCOME, DURATION, REPORT yes/no
+and EXIT (- for unknown), using the same redaction and duration helpers.
+History JSON preserves numeric/boolean/null types and matches the MCP list.
+Status columns
 show name/state/goal/elapsed/ETA/event age/activity/report; the header shows
 freeze state and data directory. Idle agents become frozen in the human view
 only. ETA needs at least three earlier completed same-kind/same-size runs;
@@ -212,11 +239,15 @@ The initial cancel button hides until Keep running or the confirmation timeout.
 Every card's Message button selects that agent in the Messages composer.
 Phone history stacks lane/state, goal, then started/duration; badges, lanes and
 durations do not split words. The phone tab bar scrolls within its own bounds.
-The phone header has brand/freeze controls above counts/update age. Panel focus
+The phone header has brand/freeze controls above counts/update age. At widths
+up to 720px the pill shows Enabled/Frozen; title and aria-label retain the full
+dispatch/freeze text. Panel focus
 outlines require keyboard input and focus-visible. Initial and newly visible
 panels render even with a recent hold; panel element focus alone is not busy.
 Data adds kind, eta and activity only to web lanes, reusing the status helpers;
-CLI/MCP JSON is unchanged. Existing redaction and text limits apply.
+CLI/MCP retain legacy state values and add optional display_state. Web history
+also has display_state for distinct terminal outcomes. Existing redaction and
+text limits apply.
 
 Two-second polling updates keyed cards and history rows in place. Expanded
 reports, open tails and open audit content remain stable. Focus, selection and

@@ -26,6 +26,7 @@ func tools() []tool {
 	}
 	return []tool{
 		makeTool("nuntius_status", "Read all configured lane states.", map[string]any{}, []string{}, true),
+		makeTool("nuntius_history", "Read the last 20 finished runs, newest completion first; at most 200.", map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "default": 20}, "lane": stringProp(), "goal_id": stringProp(), "since": stringProp()}, []string{}, true),
 		makeTool("nuntius_signals", "List only pending run-end signal names.", map[string]any{}, []string{}, true),
 		makeTool("nuntius_signals_ack", "Remove named run-end signals.", map[string]any{"names": map[string]any{"type": "array", "items": stringProp(), "minItems": 1, "maxItems": 10000}}, []string{"names"}, false),
 		makeTool("nuntius_dispatch", "Start a goal in an idle configured lane.", map[string]any{"lane": stringProp(), "goal_id": map[string]any{"type": "string", "pattern": goalPattern.String()}, "text": map[string]any{"type": "string", "minLength": 1, "maxLength": 12000}}, []string{"lane", "goal_id", "text"}, false),
@@ -50,6 +51,21 @@ func call(m *Manager, name string, args json.RawMessage) (any, error) {
 		return nil, errors.New("arguments must be an object")
 	}
 	switch name {
+	case "nuntius_history":
+		limit := 20
+		a := struct {
+			Limit  *int   `json:"limit"`
+			Lane   string `json:"lane"`
+			GoalID string `json:"goal_id"`
+			Since  string `json:"since"`
+		}{Limit: &limit}
+		if err := strictJSON(args, &a); err != nil {
+			return nil, err
+		}
+		if a.Limit == nil {
+			return nil, errors.New("limit must be 1..200")
+		}
+		return m.History(HistoryFilter{Limit: *a.Limit, Lane: a.Lane, GoalID: a.GoalID, Since: a.Since})
 	case "nuntius_signals":
 		var a struct{}
 		if e := strictJSON(args, &a); e != nil {

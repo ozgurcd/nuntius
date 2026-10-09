@@ -208,12 +208,13 @@ func (m *Manager) SetPool(path, kind string, size int, convert bool) error {
 }
 
 type AgentStatus struct {
-	Name      string   `json:"name"`
-	Kind      string   `json:"kind"`
-	StartMode string   `json:"start_mode"`
-	Flags     []string `json:"flags"`
-	State     string   `json:"state"`
-	Goal      string   `json:"goal"`
+	Name         string   `json:"name"`
+	Kind         string   `json:"kind"`
+	StartMode    string   `json:"start_mode"`
+	Flags        []string `json:"flags"`
+	State        string   `json:"state"`
+	Goal         string   `json:"goal"`
+	DisplayState string   `json:"display_state,omitempty"`
 }
 
 func (m *Manager) Agents() ([]AgentStatus, error) {
@@ -229,7 +230,7 @@ func (m *Manager) Agents() ([]AgentStatus, error) {
 		if e != nil {
 			return nil, e
 		}
-		out = append(out, AgentStatus{v.Lane, l.Kind, l.mode(), l.ExtraArgs, v.State, v.GoalID})
+		out = append(out, AgentStatus{Name: v.Lane, Kind: l.Kind, StartMode: l.mode(), Flags: l.ExtraArgs, State: v.State, Goal: v.GoalID, DisplayState: v.DisplayState})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
