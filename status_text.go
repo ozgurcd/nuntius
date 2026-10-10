@@ -66,8 +66,24 @@ func (m *Manager) estimateETA(r Run, kind, size string, elapsed time.Duration) s
 }
 
 func (m *Manager) etaFromHistory(runs []Run, r Run, kind, size string, elapsed time.Duration) string {
+	if v := m.etaDetails(runs, r, kind, size, elapsed); v != nil {
+		return v.Label
+	}
+	return "-"
+}
+
+type ETAEstimate struct {
+	Label         string `json:"label"`
+	Explanation   string `json:"explanation"`
+	MedianSeconds int64  `json:"median_seconds"`
+	Samples       int    `json:"samples"`
+	Kind          string `json:"kind"`
+	Size          string `json:"size"`
+}
+
+func (m *Manager) etaDetails(runs []Run, r Run, kind, size string, elapsed time.Duration) *ETAEstimate {
 	if kind == "" || size == "" {
-		return "-"
+		return nil
 	}
 	durations := []time.Duration{}
 	for _, old := range runs {
@@ -77,7 +93,7 @@ func (m *Manager) etaFromHistory(runs []Run, r Run, kind, size string, elapsed t
 		durations = append(durations, old.Ended.Sub(old.Started))
 	}
 	if len(durations) < 3 {
-		return "-"
+		return nil
 	}
 	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
 	median := durations[len(durations)/2]
@@ -85,10 +101,11 @@ func (m *Manager) etaFromHistory(runs []Run, r Run, kind, size string, elapsed t
 		median = durations[len(durations)/2-1] + (median-durations[len(durations)/2-1])/2
 	}
 	minutes := func(d time.Duration) int64 { return max(1, int64((d+time.Minute-1)/time.Minute)) }
+	label := fmt.Sprintf("~%dm left (n=%d)", minutes(median-elapsed), len(durations))
 	if elapsed > median {
-		return fmt.Sprintf("over usual (+%dm)", minutes(elapsed-median))
+		label = fmt.Sprintf("over usual (+%dm)", minutes(elapsed-median))
 	}
-	return fmt.Sprintf("~%dm left (n=%d)", minutes(median-elapsed), len(durations))
+	return &ETAEstimate{Label: label, Explanation: fmt.Sprintf("Usual = %dm: median of %d earlier %s size-%s runs; this run %dm", minutes(median), len(durations), kind, size, int64(elapsed/time.Minute)), MedianSeconds: int64(median / time.Second), Samples: len(durations), Kind: kind, Size: size}
 }
 
 // Only fixed categories reach the owner. Tool inputs are inspected for kind,
@@ -236,6 +253,9 @@ func (m *Manager) writeStatus(out io.Writer, view any, long ...bool) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\tmodel=%s\teffort=%s", cell(s.Lane), state, id, goal, elapsed, eta, age, current, report, cell(s.Kind), identityValue(s.Model), identityValue(s.Effort))
 		if len(long) > 0 && long[0] {
 			fmt.Fprintf(w, "\t%s", actionText(s.CurrentAction))
+			if s.ETA != nil {
+				fmt.Fprintf(w, " · %s", s.ETA.Explanation)
+			}
 		}
 		fmt.Fprintln(w)
 	}

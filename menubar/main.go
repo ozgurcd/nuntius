@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -55,8 +56,39 @@ func (s *socketClient) Action(a string) error {
 }
 
 type nativeTray struct {
-	rows    []*systray.MenuItem
-	actions map[string]*systray.MenuItem
+	rows            []*systray.MenuItem
+	actions         map[string]*systray.MenuItem
+	settingsMenu    *systray.MenuItem
+	settingsRows    []*systray.MenuItem
+	settingsActions []string
+	choose          func(string)
+}
+
+func (t *nativeTray) Settings(rows []Setting) {
+	t.settingsActions = make([]string, len(rows))
+	for i, row := range rows {
+		if i >= len(t.settingsRows) {
+			item := t.settingsMenu.AddSubMenuItem("", "")
+			t.settingsRows = append(t.settingsRows, item)
+			go func(index int) {
+				for range item.ClickedCh {
+					t.choose(strconv.Itoa(index))
+				}
+			}(i)
+		}
+		item := t.settingsRows[i]
+		item.SetTitle(row.Title)
+		item.Show()
+		t.settingsActions[i] = row.Action
+		if row.Action == "" {
+			item.Disable()
+		} else {
+			item.Enable()
+		}
+	}
+	for i := len(rows); i < len(t.settingsRows); i++ {
+		t.settingsRows[i].Hide()
+	}
 }
 
 func (t *nativeTray) Update(title, tip string, rows []string, online bool) {
@@ -165,6 +197,15 @@ func main() {
 	systray.Run(func() {
 		setRelayIcon()
 		tray := &nativeTray{actions: map[string]*systray.MenuItem{}}
+		tray.settingsMenu = systray.AddMenuItem("Settings", "Inspect settings and confirm changes")
+		tray.choose = func(index string) {
+			mu.Lock()
+			defer mu.Unlock()
+			i, err := strconv.Atoi(index)
+			if err == nil && i < len(tray.settingsActions) {
+				controller.Action(tray.settingsActions[i])
+			}
+		}
 		actions := []struct{ key, title string }{{"open", "Open dashboard"}, {"phone", "Send phone link"}, {"qr", "Show phone QR"}, {"start", "Start dashboard"}, {"stop", "Stop dashboard"}, {"quit", "Quit menu bar"}}
 		controller = &Controller{tray: tray, client: client, quit: cancel, run: func(a string) error {
 			args := []string{"--config", *config, "--store", *store, "web", a}
@@ -177,6 +218,39 @@ func main() {
 			defer done()
 			return exec.CommandContext(runCtx, *binary, args...).Run()
 		}}
+		controller.apply = func(args []string) error {
+			runCtx, done := context.WithTimeout(context.Background(), 30*time.Second)
+			defer done()
+			return exec.CommandContext(runCtx, *binary, append([]string{"--config", *config, "--store", *store}, args...)...).Run()
+		}
+		controller.settings = func() (Settings, error) {
+			runCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
+			defer done()
+			cmd := exec.CommandContext(runCtx, *binary, "--config", *config, "--store", *store, "set", "--json")
+			var value Settings
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				return value, err
+			}
+			if err = cmd.Start(); err != nil {
+				return value, err
+			}
+			err = json.NewDecoder(io.LimitReader(stdout, 65536)).Decode(&value)
+			if waitErr := cmd.Wait(); err == nil {
+				err = waitErr
+			}
+			home, _ := os.UserHomeDir()
+			_, loginErr := os.Stat(filepath.Join(home, "Library", "LaunchAgents", "io.nuntius.menubar.plist"))
+			value.AtLogin = loginErr == nil
+			return value, err
+		}
+		controller.reveal = func() {
+			if runtime.GOOS == "darwin" {
+				runCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
+				defer done()
+				_ = exec.CommandContext(runCtx, "/usr/bin/open", "-R", *config).Run()
+			}
+		}
 		for _, a := range actions {
 			item := systray.AddMenuItem(a.title, a.title)
 			tray.actions[a.key] = item

@@ -80,7 +80,10 @@ func (m *Manager) startMenubar() {
 	if err != nil {
 		return
 	}
-	_ = menubarLaunch(exe, []string{"--store", m.store, "--config", m.config.SourcePath, "--nuntius", nuntius})
+	m.mu.Lock()
+	configPath := m.config.SourcePath
+	m.mu.Unlock()
+	_ = menubarLaunch(exe, []string{"--store", m.store, "--config", configPath, "--nuntius", nuntius})
 }
 
 func (w *Web) menubarHandler() http.Handler {
@@ -125,6 +128,17 @@ func (w *Web) menubarHandler() http.Handler {
 		defer cancel()
 		var err error
 		if r.URL.Path == "/phone" {
+			if _, err := w.manager.Status(); err != nil {
+				out.WriteHeader(503)
+				return
+			}
+			w.manager.mu.Lock()
+			enabled := w.manager.config.NotifyIMessageEnabled == nil || *w.manager.config.NotifyIMessageEnabled
+			w.manager.mu.Unlock()
+			if !enabled {
+				out.WriteHeader(409)
+				return
+			}
 			if w.notify == "" || w.allowHost == "" {
 				out.WriteHeader(409)
 				return

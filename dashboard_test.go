@@ -95,7 +95,11 @@ func TestDashboardRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := json.Marshal(map[string]any{"data": json.RawMessage(fixture), "script": string(script), "page": string(page)})
+	css, err := dashboardAssets.ReadFile("app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := json.Marshal(map[string]any{"data": json.RawMessage(fixture), "script": string(script), "page": string(page), "css": string(css)})
 	if err != nil {
 		t.Fatal("cannot encode dashboard test input")
 	}
@@ -165,6 +169,10 @@ function rendered(h, id) {
   return h.ids.auditRows.children.length === input.data.audit.length;
 }
 (async () => {
+	const phoneWidth = 390;
+	const phoneRules = [...input.css.matchAll(/@media\s*\(max-width:\s*(\d+)px\)\s*\{([^@]*?)(?=@media|$)/g)].filter(r => phoneWidth <= Number(r[1])).map(r => r[2]).join('\n');
+	check(/\.table-scroll\s*\{[^}]*overflow-x:\s*auto/.test(phoneRules) && /\.table-scroll td\s*\{[^}]*white-space:\s*nowrap/.test(phoneRules), '390px wide-table cells stay intact inside a scrolling wrapper');
+	check(/\.live-tail\s*\{[^}]*max-width:\s*100%[^}]*white-space:\s*pre-wrap[^}]*overflow-wrap:\s*anywhere/.test(input.css), 'long live-tail paths wrap inside the phone panel');
   for (const id of ['runs', 'messages', 'digest', 'auditSection']) {
     predicate = 'hash-load ' + id;
     const h = start('#' + id, new Map(), '?token=fixture-auth');
@@ -229,6 +237,10 @@ function rendered(h, id) {
   check(noStorage.calls.length === 0 && !noStorage.ids.error.hidden, 'storage failure without bootstrap remains signed out');
   const replaced = new Map([['nuntius.web.token', 'stale-fixture-auth']]);
   const fresh = start('#runs', replaced, '?token=fixture-auth'); await settle();
+	vm.runInContext("selectTab('agents'); lastData.lanes[0].eta = 'over usual (+7m)'; lastData.lanes[0].eta_details = {explanation:'Usual = 24m: median of 3 earlier codex size-S runs; this run 31m'}; globalThis.alert = text => { globalThis.tappedExplanation = text; }; render(lastData)", fresh.context);
+	const eta = fresh.ids.lanes.children[0].querySelectorAll('dd')[2];
+	check(eta.textContent === 'over usual (+7m)' && eta.title.includes('median of 3 earlier codex size-S runs'), 'ETA preserves short label with hover provenance');
+	eta.onclick(); check(vm.runInContext('tappedExplanation',fresh.context) === eta.title, 'phone tap explains ETA');
   vm.runInContext("selectTab('agents'); lastData = JSON.parse(JSON.stringify(lastData)); lastData.lanes[0].display_state = 'timed_out'; lastData.lanes[1].display_state = 'cancelled'; lastData.lanes[2].display_state = 'stuck?'; render(lastData)", fresh.context);
   check(fresh.ids.lanes.textContent.includes('Timed out') && fresh.ids.lanes.textContent.includes('Cancelled') && fresh.ids.lanes.textContent.includes('Stuck?'), 'distinct terminal and stuck card states');
   vm.runInContext("lastData.history[0].display_state = 'cancelled'; selectTab('runs')", fresh.context);

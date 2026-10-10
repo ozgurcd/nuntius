@@ -27,6 +27,8 @@
 .indicator-failed { background: var(--red); }
 .lane-detail { margin-top: 1rem; }
 .live-tail { max-height: 24rem; overflow: auto; }
+.live-tail{min-width:0;max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+@media(max-width:480px){.table-scroll{max-width:100%;overflow-x:auto}.table-scroll td{white-space:nowrap}.table-scroll .run-detail td{white-space:normal}#laneHistory{min-width:800px}.lane-detail{min-width:0}}
 .follow { display: flex; gap: .5rem; align-items: center; }
 .follow input { width: auto; }
 .audit-filters { display: flex; flex-wrap: wrap; gap: .8rem; margin-bottom: 1rem; }

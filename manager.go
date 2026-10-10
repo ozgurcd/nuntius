@@ -69,6 +69,7 @@ type Status struct {
 	Outcome             string         `json:"outcome,omitempty"`
 	DisplayState        string         `json:"display_state,omitempty"`
 	Badge               string         `json:"badge,omitempty"`
+	ETA                 *ETAEstimate   `json:"eta_details,omitempty"`
 }
 type activeRun struct {
 	done chan struct{}
@@ -559,6 +560,9 @@ func (m *Manager) Status() ([]Status, error) {
 				}
 			}
 			s.Model, s.Effort = identityValue(r.Model), identityValue(r.Effort)
+			if r.Model == "" && r.Effort == "" {
+				s.Model, s.Effort = model+" (configured)", effort+" (configured)"
+			}
 			if r.State == "running" && m.active[l.Name] == nil {
 				lock, e := m.lock("supervisor-" + r.ID)
 				if e == nil {
@@ -606,6 +610,9 @@ func (m *Manager) Status() ([]Status, error) {
 				end = *r.Ended
 			}
 			s.ElapsedSeconds = max(0, int64(end.Sub(r.Started).Seconds()))
+			if r.State == "running" {
+				s.ETA = m.etaDetails(runs, *r, l.Kind, m.runSize(r.ID), time.Duration(s.ElapsedSeconds)*time.Second)
+			}
 			if fi, e := os.Lstat(filepath.Join(m.store, "runs", r.ID, "events.jsonl")); e == nil && fi.Mode().IsRegular() {
 				v := fi.ModTime().UTC()
 				s.LastEvent = &v

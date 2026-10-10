@@ -5,6 +5,27 @@ User-facing changes and upgrade actions are listed newest first. See the
 restart an existing server. Choose when to upgrade through the Homebrew tap
 and restart your MCP server or background dashboard to load the new binary.
 
+## v0.3.1 — 2026-10-10
+
+Start with a plain-English guide to what nuntius does, who it helps and how to
+run your first goal. The complete reference now lives in linked docs, and old
+README anchors still lead to those pages.
+
+- Use `nuntius --version` or `-v` as well as `version`.
+- Hover over ETA or tap it on a phone to see what “usual” means. The short
+  estimate stays unchanged; `status --long` also explains it.
+- Older runs without a recorded model/effort show your current template with
+  `(configured)` in agents/status/dashboard, so it is clear what is known.
+- Scroll wide per-agent history tables on a phone; long tail paths wrap.
+- Inspect current settings from the menu bar. Confirm pool-size, iMessage
+  on/off and start-at-login changes; reveal the settings file in Finder.
+- Resumed runs without reports retain their attention indicator (the fix
+  after v0.3.0 is included).
+
+Upgrade with the Homebrew cask when you choose, then restart Claude Desktop
+and the dashboard/helper to use the new binary. No owner upgrade is automatic.
+Existing config remains valid; notification toggles preserve your recipient.
+
 ## v0.3.0 — 2026-10-10
 
 `nuntius web start` now starts the separate Relay menu-bar helper when installed

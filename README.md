@@ -5,769 +5,198 @@
 
 # nuntius
 
-Nuntius v0.3.0 is a small local Go MCP server for a judge using Claude Desktop.
-It starts and follows configured Claude Code, Codex and OpenCode agent pools on macOS or Linux.
-It contains no LLM and makes no network requests of its own. Agent programs may
-use the network under their existing settings. The Relay mark is dedicated to
-the public domain under [CC0 1.0](assets/brand/README.md).
+Give coding work to several agents on your Mac, follow their progress, and read their reports from one coordinating chat.
 
-Register nuntius in Claude Desktop only. Do not register it in Claude Code or
-Codex or OpenCode. Coding agents must not dispatch other agents. Configure the host to ask
-the owner before every dispatch, reply, cancel and unfreeze. MCP annotations describe
-side effects; they do not enforce a click or identify who called the server.
+## What is nuntius?
 
-`nuntius set` lists each writable pool size and its current value/source;
-`nuntius set codex-agent-pool` reads one. Missing pools show zero from the
-default; configured pools and legacy lane counts cite the config file path.
-Only the three pool sizes are writable by `set`. Templates, lanes, max_runtime,
-reports_dir, notifications, auto_resume, oversight_path and notify_imessage
-are read-only config keys. Tailnet flags default to off and are CLI-only.
-Queries do not print template arguments, secrets or tokens, and redact paths.
+Nuntius is a local MCP server and command-line tool that connects a coordinating AI chat to coding agents.
+For example, a Claude Desktop chat can act as your project lead: it sends goals to separate Claude Code, Codex or OpenCode lanes, checks progress and reads the reports.
+You approve the work and stay in control through that chat, the local dashboard and the menu bar.
+Nuntius contains no AI model; your briefs and run records stay on your machine, except for what the agent programs and your chosen chat service send themselves.
+The name is Latin for “messenger”.
 
-## Build and check
+## Who is it for?
 
-Use the Go version in `go.mod` (1.27.2), Staticcheck 2026.2.1 (0.8.1), and
-govulncheck v1.8.0. CI gets Go and the checksum-verified Staticcheck build from
-the pinned Lictor composite action used by Legattus. The pure Go
-[rsc.io/qr v0.2.0](https://github.com/rsc/qr) library generates terminal QR codes,
-with no transitive modules. Go has no standard-library QR encoder; using the
-existing encoder avoids maintaining QR error correction here. Tests use the
-pure-Go goqr decoder (test-only; LGPL-3.0) to read the rendered terminal QR back.
-It is not linked into released binaries. Tests also need Node.js (CI pins 26.8.1) to run the dashboard
-JavaScript in an offline fake DOM; no browser or npm packages are needed.
-macOS and Linux are supported; Windows is not a target.
+Use nuntius when you already use coding agents and want one coordinating session to manage several pieces of work.
+It helps when separate repositories or clearly separated tasks can run side by side, or when you want to check long runs from your phone.
+Start with one lane and a small read-only task; add capacity when you know how your agents behave.
+You still need to install, sign in to and configure each agent yourself. Nuntius also supports Linux; the quick start below is for a Mac.
 
-### Menu bar
-
-`nuntius web start` starts the installed Relay menu-bar helper in a desktop
-session. Use `--no-menubar` to skip it. The icon shows idle, the running lane
-count, or attention for stuck/failed work, an end without a report, or a waiting
-question. Hover for lane counts. Each menu row shows lane, goal, state and
-elapsed time. Actions open the signed-in local dashboard, send the configured
-iMessage phone link, show the phone QR, and start/stop the dashboard. Quit menu
-bar leaves the dashboard running; `web stop` closes both. Dispatch/cancel
-remain in the dashboard.
-
-On macOS, opt in with `nuntius menubar --at-login on` and disable with
-`nuntius menubar --at-login off`. The helper alone starts at your next login;
-it does not start the dashboard. Installation enables no login items.
-On Linux, KDE supports StatusNotifierItem, XFCE needs its StatusNotifier
-plugin, and GNOME normally needs an AppIndicator extension. An unsupported
-desktop exits without affecting the dashboard.
-
-The main command remains pure Go. Native code lives in a separate helper
-module and macOS app. Its ad-hoc signature is not Developer ID signing or
-notarization; Homebrew removes quarantine for installed files, while manual
-downloads need normal Gatekeeper approval. Relay assets are CC0. The helper
-API is an owner-only Unix socket; no sign-in link enters helper argv,
-environment or logs. Browser/QR pages are 0600 and removed after two minutes
-or dashboard shutdown. Keep a displayed QR private.
-
-Agents lane-tab dots use grey for idle, green for running, violet for finished,
-amber for stuck, and red for failed/interrupted work. Hover and screen-reader
-labels explain the state. See [the design note](docs/menubar-design.md).
-
-```sh
-make verify
+```text
+You (owner)
+  -> coordinator chat (for example, Claude Desktop)
+     -> nuntius
+        -> Claude Code lane / Codex lane / OpenCode lane
+           -> reports -> coordinator chat and local dashboard -> you
 ```
 
-Read [Release notes](RELEASE_NOTES.md) for user-facing changes and upgrade
-actions, and [CHANGELOG](CHANGELOG.md) for technical detail. Contributors must
-add a section to both files for each release. `make release-notes-test` checks
-offline refusal fixtures; `make release-check` refuses a source version with
-missing or empty sections. The tagged release workflow checks the exact tag
-version and uses its release-note section as the GitHub release body.
+## Quick start
 
-Install the published release through the owner's Homebrew tap. Never install
-nuntius into `~/go/bin`.
+1. **Install nuntius.** Use the Homebrew cask. Install Claude Code and Codex separately and finish their normal sign-in/setup first.
 
-```sh
-brew install --cask ozgurcd/tap/nuntius
-nuntius version
-```
+   ```sh
+   brew tap ozgurcd/tap
+   brew install --cask ozgurcd/tap/nuntius
+   nuntius --version
+   ```
 
-The tests compile an offline Go fake. They never execute the real agents,
-load agent settings, or make network calls. The separate govulncheck gate reads
-the public vulnerability database.
+2. **Create your lane file.** Create `~/.config/nuntius/lanes.json` with the following shape. Replace every `/absolute/...` path with an existing path on your Mac. Use `command -v claude`, `command -v codex` and `brew --prefix` to find executables. Choose an existing repository as the workspace and a private report directory.
 
-## Owner configuration
+   ```json
+   {
+     "pools": {
+       "claude": {
+         "size": 1,
+         "template": {
+           "binary": "/absolute/bin/claude",
+           "workdir": "/absolute/workspace",
+           "extra_args": [],
+           "start_mode": "goal_then_continue"
+         }
+       },
+       "codex": {
+         "size": 1,
+         "template": {
+           "binary": "/absolute/bin/codex",
+           "workdir": "/absolute/workspace",
+           "extra_args": [],
+           "start_mode": "as_is"
+         }
+       }
+     },
+     "max_runtime": "8h",
+     "reports_dir": "/absolute/private/reports"
+   }
+   ```
 
-Create `~/.config/nuntius/lanes.json`. Use absolute executable and workspace
-paths from your machine. The following paths are placeholders, not defaults:
+   ```sh
+   nuntius config check
+   nuntius agents
+   ```
 
-```json
-{
-  "pools": {
-    "claude":{"size":1,"template":{"workdir":"/absolute/workspace","binary":"/absolute/bin/claude","extra_args":[],"start_mode":"goal_then_continue","continue_text":"continue"}},
-    "codex":{"size":2,"template":{"workdir":"/absolute/workspace","binary":"/absolute/bin/codex","extra_args":[],"start_mode":"as_is"}}
-  },
-  "max_runtime":"8h",
-  "reports_dir":"/absolute/workspace/reports",
-  "notifications":true
-}
-```
+   This creates `claude-1` and `codex-1`. Normal agent permissions still apply. For headless permissions, model flags, OpenCode and optional settings, read [configuration](docs/configuration.md).
 
-`notifications` is optional and defaults to true. Lane `start_mode` defaults
-to `goal_then_continue` for Claude and `as_is` for Codex. `continue_text`
-defaults to `continue`. Set Claude to `as_is` to disable automatic continuation.
-Codex and OpenCode support `as_is` only. The text and start mode cannot be supplied by MCP.
-`auto_resume` is optional and defaults to true. Set it to false to keep
-interrupted goals visible without automatically starting another agent.
-`notify_imessage` is optional: your own iMessage handle (an email address or an
-E.164 phone number such as `+15551234567`) that `nuntius web --tailnet` sends
-the phone sign-in link to. `--notify-imessage` on the command line overrides it.
-An invalid handle is refused at load. See "Phone access over Tailscale".
+3. **Connect the coordinator chat.** In Claude Desktop's configuration, add this entry inside the existing `mcpServers` object. Keep your other entries. Replace the command path with your Homebrew prefix plus `/bin/nuntius`.
 
-Each kind has one template and a size from 0 to 8. Agents are named
-`claude-1` through `claude-N`, `codex-1` through `codex-N`, and `opencode-1` through `opencode-N`. A disabled
-pool retains its template. Templates are validated even when their size is zero.
-No MCP tool changes pool sizes or templates. The CLI rewrites configuration
-atomically with mode 0600; shrinking below a busy agent is refused.
+   ```json
+   "nuntius": {
+     "command": "/absolute/homebrew/prefix/bin/nuntius",
+     "args": ["mcp"]
+   }
+   ```
 
-Legacy `lanes` files still load. When all lanes are idle, convert them:
+   Restart Desktop. Set dispatch, reply, cancel and unfreeze to ask for your approval each time. Register nuntius only in the coordinator app, never in a coding agent. If you override config or data paths, give Desktop the same values as your terminal; see [the Desktop entry](docs/mcp.md#claude-desktop-entry).
 
-```sh
-nuntius config convert
-nuntius set claude-agent-pool 1
-nuntius set codex-agent-pool 2
-nuntius agents
-nuntius agents --json
-```
+4. **Send your first goal from the chat.** Ask the coordinator to check status, then dispatch this example to `codex-1` after your approval. Replace the report path with your configured directory.
 
-Conversion maps the Claude lane `identuum` to `claude-1`. Agents of each
-kind are numbered in their original lane order. It preserves recorded sessions
-under their converted names. Differing templates within one kind, more than
-eight agents of one kind, or busy lanes refuse conversion without guessing
-which settings to keep. Reconcile templates in the owner file first.
-Existing servers reload configuration on status checks and before dispatch.
+   ```text
+   Goal ID: FIRST-REVIEW
+   Brief:
+   FIRST-REVIEW — size S.
+   Read the repository README and explain how to build and test it.
+   Do not edit repository files. Do not commit or push.
+   Write your report to /absolute/private/reports/FIRST-REVIEW.txt.
+   ```
 
-Unknown fields, duplicate lane names,
-relative paths, non-executable binaries, invalid working directories, empty
-lane sets, more than 32 lanes, and invalid durations are refused. `max_runtime`
-must be positive and no longer than seven days. Configuration is limited to
-64 KiB. No setting is read from agent configuration files by nuntius.
+   The coordinator calls `nuntius_dispatch` with `lane`, `goal_id` and `text`. A brief must tell the agent what to do, what it may change, and where to write its report. Nuntius does not write that report for it.
 
-`extra_args` supports `--model`/`-m` for Claude and Codex, and `--effort` and
-`--max-budget-usd` for Claude. Claude also permits `--permission-mode` with
-exactly `auto`, `acceptEdits`, `plan` or `manual`. Codex permits
-`--skip-git-repo-check` without a value and `--sandbox` with exactly `read-only`
-or `workspace-write`. Value-taking options support split and `--name=value`
-forms. These options are agent-specific. Other options
-are refused, including permission/sandbox bypasses, hook or settings overrides,
-working-directory changes, session selection and output-format overrides.
-This also closes indirect bypasses through Codex `-c` and Claude `--settings`.
-The child inherits the server environment unchanged. The owner must start
-Desktop with the intended normal environment and agent settings.
+5. **Watch the run.** Ask the chat for progress, or use the terminal:
 
-## opencode lanes
+   ```sh
+   nuntius status
+   nuntius watch codex-1
+   nuntius web start
+   ```
 
-Install [OpenCode](https://opencode.ai/docs/) separately and log in using its
-own tools. Login stays in OpenCode's own configuration; nuntius never reads or
-copies it. Add an owner-chosen provider/model to the pool template:
+   Open the private sign-in link printed by `web start`. Keep it private. The dashboard runs in the background; closing Terminal does not stop it. The installed menu-bar helper starts with it in a supported desktop session. `watch` ends when the run ends; Ctrl-C stops watching only.
 
-```json
-{
-  "pools": {
-    "opencode": {
-      "size": 1,
-      "template": {
-        "workdir": "/absolute/workspace/repository",
-        "binary": "/absolute/bin/opencode",
-        "model": "opencode/minimax-m2.7",
-        "extra_args": [],
-        "start_mode": "as_is"
-      }
-    }
-  },
-  "max_runtime": "8h",
-  "reports_dir": "/absolute/workspace/reports",
-  "notifications": true
-}
-```
+6. **Read the report.** Ask the chat to read the report for `FIRST-REVIEW`, or open it through dashboard History. Check its questions and evidence before asking for more work. `nuntius history` shows the completed run; a missing report stays visible.
 
-The model is an example, not a free-model claim or a default. Choose the exact
-OpenCode Zen model ID and check its current cost with OpenCode. Nuntius requires
-an explicit `provider/model` and never chooses, upgrades or falls back to another
-model. Keep it in the template's `model` field; `--model` in `extra_args` is
-refused to prevent conflicting selections. Optional `--agent` and `--variant`
-accept split or equals forms. No MCP request can select a model or change flags.
+## Concepts
 
-For Identuum, follow the owner-install steps in
-`wiki/tools/opencode/README.md` for the guard plugin and
-`wiki/tools/opencode/opencode.permission.json` template. OPENCODE-GUARD-1 owns
-those files. Install the plugin in the documented plural `plugins/` directory
-and merge only the permission member, preserving the owner's other settings.
-Review effective agent overrides and launch inside the configured repository
-so its parent `AGENTS.md` rules apply. Nuntius installs or edits none of these.
-The guard is a tool hook, not an OS sandbox; see its guide for containment limits.
+- **Lanes and pools:** a lane is one named place to run an agent. A pool creates up to eight lanes of one kind from a shared template. Each lane handles one run at a time; a busy dispatch is refused, not queued. Pool sizes can be zero.
+- **Goals and briefs:** the goal ID names the work. The brief is the instruction sent intact on stdin. IDs use uppercase letters, digits, dots and hyphens; choose a distinct ID for each goal. Nuntius accepts up to 12,000 bytes, but an agent's own goal command may have a smaller limit.
+- **Reports:** the agent writes `GOAL-ID.txt` in your configured report directory. Returned reports are bounded and redacted. A report must belong to the current run; an old file does not prove new work is done.
+- **States and colours:** idle means free; running means working; ended means the process ended. Missing reports, cancellation, timeouts and `stuck?` need a look. Dashboard badges are green for working or normal completion, amber for attention, red for failure. Lane dots use grey for idle, green for running, violet for finished, amber for stuck and red for failure/interruption. Text explains the colour.
+- **ETA:** `~Nm left (n=K)` or `over usual (+Nm)` compares elapsed time with the median of at least three earlier ended runs of the same agent kind and goal size. Hover over ETA, tap it on a phone, or use `status --long` for the explanation. It is an estimate, not a deadline.
+- **Recovery:** goals are saved before launch. After a crash or app restart, MCP startup or `nuntius recover` can resume an interrupted goal in its recorded session, or resend the brief with a restart note. Automatic recovery defaults on and permits at most two attempts per chain. Cancellation and timeout do not trigger recovery. See [recovery and its limits](docs/recovery.md).
+- **Freeze:** an emergency pause. It persists, interrupts verified running agents and prevents new dispatches, replies and recovery until you unfreeze. It is more than pausing a queue.
+- **Owner notes:** decisions and questions you leave for the coordinator, optionally addressed to a lane. Notes stay visible until acknowledged.
+- **Signals:** small local notifications that work ended, stalled, was interrupted or resumed. The coordinator can list and acknowledge them; they do not dispatch more work themselves.
+- **Menu bar:** the Relay icon shows a running count or attention dot. Open the dashboard, send the phone link, show its QR, or start/stop the dashboard. Settings shows pool sizes, notification state, tailnet default, report directory, runtime limit, recovery choice and lane model/effort. Changes ask you to confirm and use the same CLI commands. Start at login starts the helper only, never the dashboard.
 
-Run `nuntius config check`, then `nuntius set opencode-agent-pool 1` or
-`nuntius agents` to inspect the pool. The template must already exist. Legacy
-OpenCode lanes also support `config convert`; different models within one kind
-refuse conversion. Status, agents, history, MCP and the dashboard show kind and
-model and effort; historical runs retain their launch values after configuration changes.
+Recorded runs keep their launch model and effort. Older runs without that record show the current template with `(configured)` in agents/status/dashboard; that label does not claim what the old agent actually used. `default` means nuntius has no explicit value, not that it read your agent settings.
 
-Starts use `opencode run --format json --model MODEL [extra_args]`, with the
-brief supplied intact on stdin. Resume adds `--session ID`; missing IDs use the
-same brief with the existing interruption note during crash recovery. Darwin
-uses the same transient launchd job and identity checks as other agents. Cancel,
-timeout, freeze and the bounded recovery chain follow the same rules.
+## Everyday tasks
 
-Verified CLI help: OpenCode 1.18.35. Its `--auto` flag automatically approves
-permissions not denied, but nuntius refuses permission overrides, including
-`--auto`, as well as `--pure`, attachments, remote-server selection, interactive
-mode and output/session overrides. Configure permitted mechanical tools in
-OpenCode's normal permissions instead. Nuntius inherits the environment without
-injecting `OPENCODE_PERMISSION` or changing settings.
+| Task | Command or action |
+| --- | --- |
+| Check progress and current actions | `nuntius status` / `nuntius status --long` |
+| List lanes and configured flags | `nuntius agents` |
+| Read current settings safely | `nuntius set` / `nuntius set --json` |
+| Change a pool size | `nuntius set codex-agent-pool 2` |
+| Turn configured iMessage notifications on/off | `nuntius set notify-imessage on` / `off` |
+| Read recent runs | `nuntius history --lane codex-1 --limit 20` |
+| Read recent actions and refusals | `nuntius audit --since 1h` |
+| Follow output / read a short tail | `nuntius watch codex-1` / ask the chat for `nuntius_tail` |
+| Manage the background dashboard | `nuntius web start` / `stop` / `status` / `link` |
+| Send its link again | `nuntius web link --notify` |
+| Start the menu bar at your next Mac login | `nuntius menubar --at-login on` / `off` |
+| Cancel one lane | Dashboard Cancel, or ask the chat for `nuntius_cancel` |
+| Freeze / unfreeze | Dashboard controls, or chat `nuntius_freeze` / `nuntius_unfreeze`; local `nuntius unfreeze` |
 
-Event fixtures are derived from
-[upstream run source](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/cli/cmd/run.ts),
-not a live model capture. They remain unverified against real 1.18.35 model
-output. An isolated free-only Step 5 attempt returned an error event and no
-successful model text; no paid model or owner configuration was supplied.
-The documented JSON stream supplies `sessionID`, millisecond timestamps,
-text, step events, errors and nested tool state/input. Summaries exclude results.
-Current upstream emits tool parts at completion/error only, so running-command
-duration is unavailable without a start event. Native MCP names use
-`server_tool`; display splits at the first underscore, and server names containing
-underscores can be ambiguous. Unknown event types retain a bounded first string
-argument, excluding identity/result metadata. Raw private streams stay on disk.
+CLI flags, filters, machine output and agent launch details: [CLI reference](docs/cli.md). MCP tool arguments and limits: [MCP reference](docs/mcp.md).
 
-## Run views
+## Check from your phone
 
-```sh
-nuntius config check
-nuntius status
-nuntius status --long
-nuntius status --json
-nuntius history
-nuntius history --json --limit 50 --lane codex-1 --since 24h
-nuntius audit --since 1h
-nuntius audit --json
-nuntius paths
-nuntius watch claude-1
-```
-
-`status` and `agents` print human views by default; add `--json` for machine
-output. Status JSON keeps existing fields and adds `current_action` for running lanes.
-The aligned status view shows agent, state, short run ID, goal, elapsed, ETA, last event age,
-last activity kind, report presence, kind, model and effort. Its header shows freeze state and the
-data directory. Idle agents show `frozen` during a freeze; active and ended
-agents keep their run state. No terminal colour escapes are emitted.
-
-`agents` displays effective launch flags separately, for example
-`claude-1 ... model=claude-opus-5-5 effort=high` and
-`codex-1 ... model=gpt-6.1-sol effort=default`.
-`status --long` includes MODEL/EFFORT columns such as
-`model=claude-opus-5-5 effort=high`, plus the current action.
-`--model`/`-m` and Claude `--effort` accept split or `=` forms. A missing model
-is `default`. Codex effort comes only from structured startup metadata when
-present; `default` means the stream did not report it. Nuntius never reads
-`~/.codex` or other agent settings. OpenCode keeps its template model.
-Status for a recorded run and history use that run's launch values, not the
-current template. Old records without identity fields display `default`.
-
-`audit [--since 1h] [--json]` shows the latest bounded actions, newest first,
-with local timestamps, action in words, lane, goal, result and a short brief
-digest. Refusals include the recorded reason; older refusals without one say
-`reason not recorded`. JSON includes structured fields and the redacted raw
-record. The reader uses the latest 1 MiB of complete audit lines and returns
-at most 200 entries within a 64 KiB presentation budget.
-
-ETA uses the first line's `size S`, `size M` or `size L` and the median duration
-of earlier finished runs of the same agent kind and size. Only runs that ended
-before the current run started count. With fewer than three matches or unavailable
-history it shows `-`; otherwise it shows `~12m left (n=5)` or
-`over usual (+8m)`. It is an estimate, never a dispatch or waiting rule.
-Activity shows fixed kinds such as `editing files`, `running tests` and
-`git push`, never tool arguments or command text. Unknown kinds use a generic label.
-
-`status --long` also shows the latest action: the actual command's first line,
-edited/read file, search query or tool argument. Running lanes expose the same
-`current_action` object in MCP and on the dashboard: `summary`, `age_seconds`,
-`age_source`, and `running_seconds` while a matched command has not finished.
-An event timestamp gives an exact age (`age_source: event`). Native streams
-usually omit timestamps; ages then use the first observation, initially
-estimated from event-file modification time (`age_source: observed`, shown
-with `~`). Unrelated output does not reset an observed action's age. Observation
-times live only in memory and restart with the reader. Commands lacking a start
-event or identity do not claim a running duration. Parsing uses the latest 1 MiB
-of complete events; an action outside that window can be unavailable.
-
-`history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h]` shows
-finished runs, including cancelled, timed-out and no-report runs. It defaults
-to the last 20, newest completion first; `--limit` accepts 1..200. Lane and
-goal filters are exact and can be combined. `--since` is a positive Go duration
-measured from now against completion time. The human table shows ENDED in local
-time, AGENT, RUN, GOAL, OUTCOME, DURATION, REPORT (yes/no), EXIT (`-` if unknown)
-RELATION, KIND and MODEL. Relations say `first run`, `continue step of the 01:04 run`,
-`resumed 1/2 after interruption at 23:31`, or `resumed by the 23:40 run`.
-The selected runs group by their recorded chain, newest chain first, with child
-runs indented. Separate goals that reuse the same name are not merged.
-JSON retains timestamps, numeric seconds/exit codes, booleans and null unknown
-exits; it excludes session IDs, process identity, prompts and report text.
-CLI `--json` alone retains full run/link/chain IDs. Human status/history, the
-dashboard and MCP use the same first eight characters. MCP history adds readable
-`relation`, `chain_id` and `chain_depth`; CLI JSON also supplies `short_run_id`.
-MCP dispatch/reply responses use the same short run ID; actions still target lanes.
-
-Human status, agents and the dashboard distinguish `timed_out` and `cancelled`.
-An active recovery run reads `Running · resumed 1/2` (or `2/2`), so the
-resume count does not hide that the agent is running. A finished recovery run
-reads as its outcome: `Ended · resumed 1/2`, `Failed · resumed 1/2`,
-`Cancelled · resumed 1/2` or `Timed out · resumed 1/2`, in status,
-`status --long`, history, MCP status/history and the dashboard.
-Existing status/agents JSON `state` values remain compatible; an optional
-`display_state` supplies those labels and `stuck?`, and an optional `badge`
-names the dashboard colour (`green`, `amber`, `red`; absent for plain). A running run is `stuck?`
-when its regular report file's modification time is over five minutes old,
-or its last event is over fifteen minutes old. With no event file, age starts
-at run start. Checks use strict thresholds and never automatically cancel.
-Supervision checks once a second; status and signals also check immediately.
-Only runs that are still running qualify. Reused goal IDs can refer to older
-reports, so use distinct goal IDs as with report-presence checks.
-
-Global `--config FILE` and `--store DIRECTORY` flags precede the command.
-One private data directory holds `runs/`, `audit.jsonl`, `notes.jsonl`,
-`freeze.json`, `signals/` and control locks. Resolution order is `--store`,
-`NUNTIUS_DATA_DIR`, then the OS default:
-
-- macOS: `~/Library/Application Support/nuntius`.
-- Linux: `$XDG_DATA_HOME/nuntius`, or `~/.local/share/nuntius` when unset.
-- Other OS: no default; set `NUNTIUS_DATA_DIR` or `--store` explicitly.
-
-Config resolution is `--config`, `NUNTIUS_CONFIG`, then
-`$XDG_CONFIG_HOME/nuntius/lanes.json`, or `~/.config/nuntius/lanes.json` when
-unset, including on macOS. Environment values must be nonempty; data paths must
-be absolute. `nuntius paths` prints both resolved paths and their source
-(`flag`, `env`, `default`) without loading config or creating a store.
-If the selected store has no runs while the OS default holds runs, CLI stderr
-prints a warning. No files move automatically. macOS notifications are skipped
-on other systems. Release checks reject every build OS except Darwin/Linux.
-
-The data directory must be outside source repositories.
-`watch`, MCP `nuntius_tail` and dashboard tails share one action-summary parser.
-Commands show their first line; edits show a verb and file; searches show their
-pattern/query; MCP tools show `server.tool` and a key argument; agent tasks show
-their description. Codex file changes show add/update/delete with each path.
-Unknown tools/items show their name and first eligible string argument.
-Summaries are redacted before truncation, stay on one line and contain at most
-120 Unicode characters. Tool output/results and edit bodies are excluded.
-`watch` prints changed tail snapshots until the lane ends; it is not a raw
-transcript. Ctrl-C stops watching. The existing ended-without-report exception
-still returns the bounded final assistant message.
-
-## Claude Desktop entry
-
-Add a `nuntius` entry inside the existing `mcpServers` object of Claude
-Desktop's configuration. Resolve the executable path with `brew --prefix`;
-the cask links `nuntius` into that prefix's `bin` directory.
-Do not overwrite other entries. This repository does not edit app settings.
-
-```json
-"nuntius": {
-  "command": "/absolute/homebrew/prefix/bin/nuntius",
-  "args": ["mcp"],
-  "env": {"NUNTIUS_DATA_DIR": "/absolute/private/nuntius"}
-}
-```
-
-The Claude app starts the MCP server without your shell's environment. If you
-set `NUNTIUS_DATA_DIR` in your shell, set the same variable in the app's
-`nuntius` entry as above, or the CLI and server will read different stores.
-Set `NUNTIUS_CONFIG` there too if you override the config file in your shell.
-Use `nuntius paths` locally to check the selected paths.
-
-Restart Desktop after saving. Set dispatch, reply, cancel and unfreeze to ask each time.
-Ask the judge for status first, then approve one small read-only pilot goal.
-Check the first session ID, resume behavior, report and audit locally without
-copying raw agent logs into chat.
-
-## Away from the Mac
-
-Use the Claude mobile app to tell the judge to check status, answer questions,
-freeze work, or send a reply. The Mac runs nuntius; mobile reaches it through
-the judge and Claude Desktop, not through a public dashboard port.
-
-The Mac's own energy settings decide sleep. Nuntius installs no service, login
-item or energy helper. Claude Desktop must be open for the judge to reach MCP.
-
-## Crash and restart safety
-
-Every accepted goal is published durably before an agent starts. Its private
-record contains the lane, goal ID, original brief, session ID once detected,
-resume count and links to earlier/later runs. On macOS, each agent starts through
-a transient `gui/<uid>/nuntius.run.<run_id>` launchd job. Its private plist lives
-only in that run's data directory, never in `~/Library/LaunchAgents`. Bootstrap
-loads it without `RunAtLoad` or `KeepAlive`, then explicitly starts it once.
-`LaunchOnlyOnce` allows launchd to discard the finished job even while MCP is
-down. An exec-only bootstrap becomes the agent; no wrapper, daemon, login item
-or watchdog remains. Standard input, output and error use the run's files.
-The bootstrap restores the same argv, working directory and inherited environment;
-environment values cross a bounded private pipe and are never saved to disk.
-The launchd plist carries the dispatching nuntius process's inherited umask,
-captured at startup, with 022 as the fallback. Starting nuntius from a Terminal
-with umask 022 therefore gives its jobs 022, rather than a forced 077.
-Private run files still use 0600 and directories use 0700.
-Linux keeps the double-fork/session start used in v0.2.3.
-
-- App quit/restart or MCP crash: the macOS agent belongs to its own GUI job,
-  outside the app's job. A live nuntius process polls its PID and kernel start
-  identity and removes the recorded job on end, cancellation or timeout.
-  Recovery retries stale-job cleanup using only labels in intact run records.
-- A launchctl failure uses the v0.2.3 detached start. A fixed `launchd_fallback`
-  event and `launch_fallback` status flag warn that app-quit survival is unavailable.
-  If a partial start cannot be safely identified and removed, the recorded goal
-  stays pending rather than starting a duplicate or killing an unknown process.
-  Before any start is attempted, an unavailable launchctl still permits fallback;
-  an unconfirmed inactive job label remains recorded for cleanup retries.
-- Nuntius upgrade: replacing/removing the nuntius executable does not affect
-  an already running agent. Nuntius does not reinstall or restart owner apps.
-- Reboot, power loss or agent crash: the process can end, but the durable goal
-  remains. Recovery runs when the app next starts its MCP server, or explicitly:
-
-```sh
-nuntius recover
-```
-
-Recovery marks an unreported, unstopped end `interrupted` and emits
-`<lane>.<goal>.interrupted`. With `auto_resume` enabled, it resumes the agent's
-own recorded session, or starts the same brief fresh if no session ID is known.
-It prepends a restart note requiring the agent to re-measure previous work.
-Repeating part of the work is acceptable; no periodic work journal is required.
-Each goal chain permits at most two automatic recovery attempts. Each attempt
-emits `<lane>.<goal>.resumed`; interrupted goals beyond the limit stay visible
-for the owner. History links the chain and displays `Ended · resumed 1/2`
-(or the failed, cancelled or timed-out outcome with the same count).
-
-A busy lane leaves the interrupted goal `waiting to resume`. The running MCP
-server retries when the lane frees. Freeze prevents launching; cancellation
-and timeout never trigger recovery. Disabled or removed lanes retain their
-interrupted records. `status`, `agents`, `history` and web views only display
-and observe; they never launch recovery. Without MCP, run `recover` again after
-a busy lane frees. Recovery is a local action explicitly enabled by the config.
-
-End detection derives `completed` from a regular report, otherwise
-`ended_no_report`. Exit codes are unknown because no parent waits for the agent.
-No process is signalled unless its PID, start time and process group match.
-Job removal also checks any live job PID against that identity; unrelated or
-unrecorded labels are never removed. Cleanup failure is audited and retried.
-When no nuntius process runs, only the agents run; end detection, timeout and
-recovery wait until a nuntius process next checks the store.
-
-Metadata, config and signals use temporary files, file fsync, atomic rename
-and directory fsync. Run records carry an integrity hash. Torn/malformed records
-and incomplete temporary files are ignored while intact records remain usable;
-linked files and I/O failures still refuse unsafe access. Invalid configuration
-leaves MCP non-serving. This cannot repair damaged storage or stop an external
-program from explicitly killing an agent. Offline proofs cover parent loss,
-MCP death, binary replacement, recovery policy, waiting and torn files; real
-Claude-app restarts and reboots still need the owner's pilot.
-
-Tool approvals in Claude Desktop:
-
-- **Ask**: `nuntius_dispatch`, `nuntius_reply`, `nuntius_cancel`, `nuntius_unfreeze`.
-- **Allow**: `nuntius_status`, `nuntius_history`, `nuntius_tail`, `nuntius_report`,
-  `nuntius_owner_notes`, `nuntius_owner_notes_ack`, `nuntius_freeze`.
-  `nuntius_signals` and `nuntius_signals_ack` read and acknowledge end signals.
-
-Freeze is immediate: it persists a marker, interrupts verified running runs,
-and refuses dispatch, reply and automatic continuation until unfreeze.
-Unfreeze through the judge requires the owner's tap in the host. The local
-dashboard and `nuntius unfreeze` also unfreeze. Status returns an object with
-`frozen`, `freeze` (time and redacted reason) and `lanes`, including each
-running lane's `last_event_age_seconds` to spot a hung run. Freeze still shows
-when both pools are disabled. Owner notes are append-only in `notes.jsonl`;
-the judge reads at most 50 after `since` (RFC3339) and acknowledges their IDs.
-
-## Local oversight dashboard
-
-```sh
-nuntius web
-```
-
-Open the private URL printed by that invocation. It contains a new random
-credential each start; do not share or log the URL. The page removes it from
-the address bar after loading and stores it in `sessionStorage` for this tab
-only. Reload keeps sign-in and the selected tab; closing the browser tab clears
-the stored credential. If storage is disabled, the start link works for the
-current load, but reload needs that link again. Without a credential the page
-shows: "Open the link printed by `nuntius web` to sign in."
-Binding is restricted to `127.0.0.1`; use
-`nuntius web --bind 127.0.0.1:8124` for another port. No LAN/remote bind or CORS
-is enabled. The static shell (`index.html`, `app.css`, `app.js`) is available
-without sign-in and contains no private data or credential. Every request still
-checks the allowed Host and port, method and security headers; POST Origin must
-match the request's local origin, or the exact opted-in HTTPS origin below. `/data` and `/action` require the
-`X-Nuntius-Token` header; a query parameter cannot authenticate either API.
-Actions accept only POST.
-
-### Phone access over Tailscale
-
-Install and connect Tailscale on the Mac and iPhone with the same account.
-Enable MagicDNS and HTTPS certificates for the tailnet. See the official
-[Serve guide](https://tailscale.com/docs/features/tailscale-serve) and
-[HTTPS setup](https://tailscale.com/docs/how-to/set-up-https-certificates).
-The Mac must stay awake and connected to Tailscale. The background dashboard
-survives closing Terminal; it is a transient per-user job, not a login item.
-
-One command does the rest:
+Connect your Mac and phone to the same Tailscale account. Enable MagicDNS and HTTPS certificates, and keep the Mac awake. Then run:
 
 ```sh
 nuntius web start --tailnet --notify-imessage you@icloud.com
 ```
 
-`start` waits for the loopback dashboard to answer, prints one summary, the
-private sign-in link and a compact terminal QR, then exits. On macOS it uses
-the per-user launchd job `gui/<uid>/nuntius.web`, with no RunAtLoad or KeepAlive
-and your inherited umask. On Linux it starts a detached session with a private
-`web.pid` in the data directory. Standard input is closed; stdout/stderr go to
-the private `web.log`, which never receives the sign-in link or QR.
-An existing dashboard is left running; use `web start --replace` to restart it.
+Use your own iMessage email or E.164 phone number. Nuntius finds the Mac's tailnet name, sets up or reuses Tailscale Serve, sends the private link and prints a QR. The background dashboard survives Terminal closure. `web stop` removes only the Serve mapping it created, unless you chose `--tailnet-keep`; it leaves agent runs alone.
 
-```sh
-nuntius web status
-nuntius web link
-nuntius web link --notify
-nuntius web stop
-```
+For prerequisites, cleanup, manual setup and private-link storage, see [phone access](docs/dashboard.md#phone-access-over-tailscale).
 
-`status` and `status --long` show the same credential-free dashboard line:
-running state, start time, PID/job, port, tailnet host, Serve mode and last
-iMessage result. `link` displays the current link and QR again; `--notify`
-resends to the handle used at start. `stop` sends a clean shutdown, removes
-the job and private access files, and succeeds when nothing is running.
-It does not stop agent runs. Plain `nuntius web` keeps foreground behaviour.
+## Safety and control
 
-Background access is stored only in `web-access.json` (0600) inside your
-private data directory (0700), so only your OS account can read it. It contains
-the current credential, handle and process identity; keep it private and out
-of backups or shared folders. It is removed on normal stop and replaced on
-restart. A crash can leave a stale private file; `web stop` removes it safely.
-Foreground mode keeps its credential in memory and has no retrievable file.
+Nuntius listens only on `127.0.0.1`. Phone access uses tailnet-only HTTPS through Tailscale Serve. It refuses an existing conflicting Serve mapping or enabled Funnel. **Never enable Funnel for this dashboard.** Tailscale access rules and the private dashboard credential both matter; someone with reachability and that credential can control agents.
 
-The QR uses qr.L, one character per module column and two module rows per
-half-block line, black on white with a two-module quiet zone. If the known
-terminal width is too small, only links print with a fit warning.
+Every dashboard start creates a new sign-in credential. Links and QR codes are private. Sign-in stays in the current browser tab; a background start also saves access in an owner-only file that normal shutdown removes. Raw run folders contain briefs and full agent output, may contain private material, and must not be shared. Displayed output is bounded and redacted, but redaction cannot promise that arbitrary prose is safe to publish.
 
-`--tailnet` finds the Tailscale CLI (`tailscale` on PATH, else the one inside
-`/Applications/Tailscale.app`), reads `tailscale status --json`, and requires
-Tailscale to be running with a MagicDNS name for this Mac that is in its HTTPS
-certificate domains. Each missing piece stops the start with one sentence that
-says what to turn on (log in, MagicDNS, HTTPS certificates). Add
-`--tailnet-optional` to start the plain loopback dashboard instead when that
-check fails. `--allow-host` still works; when both are given the name must
-match the detected one.
+Nuntius starts configured executables with argument lists, without a shell. It preserves normal agent settings and environment, and reads no agent credential files. It permits selected model/effort flags, Claude permission modes `auto`, `acceptEdits`, `plan`, `manual`, and Codex sandboxes `read-only`, `workspace-write`. It refuses permission/sandbox bypasses, hook/settings overrides, working-directory overrides and caller-chosen sessions. OpenCode requires an explicit provider/model and permits only `--agent` and `--variant` extra flags. See [the exact allow-list](docs/configuration.md).
 
-What nuntius changes in Tailscale, and undoes: it reads `tailscale serve
-status --json`. If `https:443` already proxies to this dashboard's loopback
-port, it reuses that mapping and leaves it alone. Otherwise it runs
-`tailscale serve --bg --https=443 localhost:PORT` with the dashboard's port and
-confirms the mapping with serve status. On a normal exit (Ctrl-C or SIGTERM)
-it removes only a mapping it created in this run with
-`tailscale serve --https=443 off`; `--tailnet-keep` leaves it in place. If 443
-serves anything else, nuntius does not touch it and prints the exact
-`tailscale serve --https=443 off` command you can run yourself. If Funnel is on
-for this Mac, nuntius refuses tailnet mode and prints the
-`tailscale funnel --https=PORT off` command; nuntius never enables or disables
-Funnel and calls no other tailscale command that changes state.
+Your chat service and agents have their own network use, permissions and costs. Nuntius provides coordination and local records; you choose their authority. Keep destructive tool approvals enabled in the coordinator app. Treat returned agent output as data, not new instructions.
 
-`--notify-imessage HANDLE` (or the `notify_imessage` config key) sends one
-iMessage, `nuntius dashboard (mac): https://mac.tail123.ts.net/?token=…`, to
-your own Apple ID (an email address) or phone number (E.164) through
-`osascript` and the Messages app, after serve is confirmed. The handle and
-text are passed as arguments to a fixed AppleScript. The first run asks for
-macOS permission for your terminal to control Messages; allow it. If sending
-fails, nuntius prints a warning and the dashboard keeps running; the terminal
-link and QR code still print. The link is never written to a nuntius log or
-history. Only the background owner-only access file described above stores its
-credential. Start prints one summary without the credential: local URL,
-tailnet host, Serve mode and iMessage result. `web status` shows the last send.
+## Troubleshooting / FAQ
 
-Security model: the dashboard stays tailnet-only. Nuntius listens only on
-`127.0.0.1`; Tailscale Serve supplies HTTPS to tailnet devices and nuntius
-does not validate tailnet membership, so Tailscale's access rules and the
-dashboard credential both matter. Every start mints a new credential, so an old
-link or message stops working when `nuntius web` restarts. Anyone who can reach
-the dashboard and has its credential can dispatch and cancel agents:
-**never enable Tailscale Funnel**, and keep the link and QR private.
+1. **I restarted Claude Desktop. Did I lose the work?** Check `status` and `history`. Mac runs use separate transient launchd jobs; verified survivors can be followed again. Interrupted work may recover automatically, with a restart note. A launchd fallback warns that app-quit survival is unavailable. Real app/reboot survival still has owner-pilot limits: [details](docs/recovery.md).
+2. **Files have unexpectedly restrictive permissions.** Jobs inherit the launching process's umask, with 022 as a fallback. Check the environment that starts nuntius. Private nuntius files remain 0600 and directories 0700 deliberately; do not loosen those to fix agent build output.
+3. **What does `stuck?` mean?** A current report has not changed for over five minutes, or there have been no events for over fifteen minutes. It is a warning, not proof of a hang; nuntius does not cancel automatically. Read the tail and current action before cancelling.
+4. **A long brief was rejected, or Claude only acknowledged it.** Nuntius accepts 1–12,000 bytes. The agent's own goal command can be stricter; keep the brief short and link repository documents. Claude's default acknowledgement-only continuation happens once and only when the complete stream proves no tool work happened. Check the tail/report instead of assuming work started.
+5. **After upgrading, the app reports invalid configuration.** Run `nuntius config check` and `nuntius paths` with the same config/store as Desktop. Unknown keys, relative paths, missing executables and disallowed flags are refused. Restart Desktop so it launches the new Homebrew binary; nuntius does not upgrade your app or edit its settings. [Config rules](docs/configuration.md).
+6. **The phone cannot connect with Tailscale and another VPN.** Check that Tailscale is running on both devices, the Mac is awake, and MagicDNS/HTTPS are enabled. Another VPN can interfere with routes or DNS; resolve that in the VPN/Tailscale settings rather than exposing the dashboard publicly. Nuntius does not change VPN settings. [Phone setup](docs/dashboard.md#phone-access-over-tailscale).
+7. **Messages did not send the link.** Allow the macOS Automation request for the launching program to control Messages, use your own valid handle, and confirm Messages is signed in. A send failure leaves the dashboard running. Use the terminal link/QR or `web link`; check `web status` for the last result.
+8. **The chat and terminal show different or empty histories.** Their config/store paths can differ because Desktop does not inherit your shell environment. Compare `nuntius paths` and the Desktop entry; set the same overrides in both. Nuntius warns about an empty selected store but never moves private records automatically.
 
-Manual fallback. Find the Mac's full DNS name in Tailscale, for example
-`mac.tail123.ts.net`, and start the dashboard with that exact name (one
-`--allow-host` value):
+## Reference and contributing
 
-```sh
-nuntius web --allow-host mac.tail123.ts.net
-```
+The detailed reference remains available:
 
-Nuntius still listens only on `127.0.0.1:8123`. In another Terminal, use the
-dashboard port shown in the loopback link (8123 by default):
+<a id="build-and-check"></a>
+- [Build, verification, installation and menu-bar platform details](docs/development.md#build-and-check)
+<a id="owner-configuration"></a><a id="opencode-lanes"></a>
+- [Configuration and OpenCode](docs/configuration.md)
+<a id="run-views"></a><a id="measured-cli-interface"></a>
+- [Run views, CLI and measured agent interfaces](docs/cli.md)
+<a id="claude-desktop-entry"></a><a id="mcp-interface-and-storage"></a>
+- [Claude Desktop, MCP and private storage](docs/mcp.md)
+<a id="away-from-the-mac"></a><a id="crash-and-restart-safety"></a>
+- [Away from the Mac and crash/restart safety](docs/recovery.md)
+<a id="local-oversight-dashboard"></a><a id="phone-access-over-tailscale"></a>
+- [Dashboard and Tailscale phone access](docs/dashboard.md)
+<a id="menu-bar"></a>
+- [Menu-bar design and platform limits](docs/menubar-design.md)
 
-```sh
-tailscale serve --bg --https=443 localhost:8123
-tailscale serve status
-```
-
-On the iPhone, scan the terminal QR code or open the printed private
-`https://mac.tail123.ts.net/` sign-in link. The link and QR contain the same
-per-start credential; keep both private. The plain loopback sign-in link also
-remains available. Sign-in still uses tab-scoped `sessionStorage`, with API
-credentials sent only in the `X-Nuntius-Token` header.
-
-The opt-in accepts only the exact DNS Host, with no port or `:443`, and exactly
-`https://mac.tail123.ts.net` as its POST Origin. Wildcards, other hosts and
-ports, HTTP origins, and forwarded headers grant no access. To turn off a
-manual Serve endpoint:
-
-```sh
-tailscale serve --https=443 off
-```
-
-See the official [Serve command reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
-
-The dashboard adapts to laptop and phone-width windows and your system's light
-or dark mode. The sticky top bar shows dispatch/freeze controls, running, idle
-and ended counts, and refresh freshness on every tab. Agents opens by default;
-Messages & notes, Digest, History and Audit have their own panels. Arrow keys
-and Home/End navigate tabs. The URL hash selects the view on start and reload.
-The phone header uses two lines: brand and freeze controls, then counts and
-update age. Its pill shows `Enabled` / `Frozen` at narrow widths, with full
-dispatch/freeze text in its title and accessible label. The tab bar scrolls
-within phone-width windows.
-Compact agent cards show kind, state, short run ID, goal, elapsed time, ETA, event age, current action and
-report presence. Open a card's tail to read its bounded output. Cancel uses
-an in-page confirmation before interrupting a running agent; Keep running or
-the timeout restores the initial button. Message opens that agent's composer.
-
-Within Agents, choose All or one lane. Lane tabs show the server's badge colour
-and scroll horizontally on a phone. A lane link such as `#agents/codex-2`
-survives reload and back/forward navigation. Pool changes update the tab strip;
-removing the selected lane returns to All. A lane view includes model/effort,
-its live tail newest first (Follow can be paused), its rows from the latest 50
-dashboard runs with report links, lane-specific owner notes and pending signals.
-Use the note form's For selector to address a lane; shared judge notes stay in
-Messages & notes.
-
-The other tabs show messages and notes, the judge's `OVERSIGHT.md` digest next
-to the reports directory (or optional absolute `oversight_path` in config),
-the latest 50 runs and the bounded audit log. Audit rows show action, lane, goal,
-result/refusal reason and short brief digest, newest first. Filter by text, lane
-or action; each Raw toggle shows the original redacted JSON. Filter history by goal ID or lane,
-then expand a row for highlighted QUESTIONS/DECISIONS, goal and report.
-Times are relative with absolute dates on hover.
-History rows stack on phones without splitting badge, lane or duration words.
-Badge colours come from the server's `badge` field, never from the label text:
-green = working or finished normally (including a resumed run), amber = needs
-a look (no report, cancelled, timed out, `stuck?`), red = failed. Idle and
-interrupted badges stay plain.
-Tab counts show running agents, unread owner notes and runs with open questions.
-
-Polling runs every two seconds; hidden panels update when shown. Stable cards and rows keep focus and expansion;
-reading an open tail, report or audit log pauses its content updates. Sections
-pause briefly after interaction and while focused or selected. A visible banner
-reports refresh failures while retaining the last data. All assets are embedded,
-offline; data and actions stay authenticated. CSP permits only same-origin scripts/styles, with no
-inline code. All report and note text is inserted as text. Output stays redacted;
-raw tool results, session IDs and stderr are not dashboard data.
-
-Send a message to an ended session, queue one message for delivery after a
-running run ends, or choose “Stop and send”. The pending message is private and
-durable. Freeze suppresses delivery. Duplicate queued messages are refused.
-Cancel, Freeze, Unfreeze and owner-note entry are local owner actions.
-
-## Measured CLI interface
-
-Measured using help only on 2026-10-09: Claude Code 2.1.295 and Codex CLI
-0.159.2. That measurement did not verify real event shapes. For v0.2.5,
-`testdata/action-events.jsonl` captures sanitized action envelopes from existing
-Claude stream-json and Codex exec --json run files. Its provenance note describes
-the replaced arguments and excluded private data. Tests replay these fixtures
-offline; this change does not start a real agent.
-
-- Claude start: `claude -p --output-format stream-json --verbose [extra_args]`.
-- Claude resume: the same flags plus `--resume SESSION_ID` before extra args.
-  Resume is a top-level option, not a separate subcommand.
-- Codex start: `codex exec --json [extra_args] -`.
-- Codex resume: `codex exec --json [extra_args] resume SESSION_ID -`.
-  `--sandbox` is an `exec` option, not a `resume` option; flags precede `resume`.
-  Verified again from `codex exec resume --help`; the fake rejects the old order.
-
-Each prompt is sent only on stdin. There is no shell and no injected environment.
-Working directory is the lane's configured directory. Help confirms the argv
-forms; it does not establish that noninteractive permission prompts work as
-expected in the owner's app. A denied permission is never answered by nuntius.
-
-The parser accepts top-level `session_id`, `thread_id`, and nested
-`session.id`/`thread.id`. Unknown event fields are ignored. A missing or unsafe
-session ID disables reply; it is not guessed. Session detection reads the first
-1 MiB of complete events. These assumptions need the owner's pilot.
-
-For a successful first Claude run in `goal_then_continue` mode, nuntius scans
-the complete event stream for work. An assistant acknowledgement with no tool
-calls starts exactly one resume. Tool calls, a missing ID, malformed or oversized
-events, unfamiliar event types, cancellation, timeout or an error result suppress
-the automatic resume. A complete result event is required. Each run's metadata links the other run. The lane lock
-stays held between them. A manual reply never triggers another automatic reply.
-
-## MCP interface and storage
-
-The tools are `nuntius_status`, `nuntius_history`, `nuntius_dispatch`, `nuntius_reply`,
-`nuntius_tail`, `nuntius_report`, `nuntius_cancel`, `nuntius_freeze`,
-`nuntius_unfreeze`, `nuntius_owner_notes`, `nuntius_owner_notes_ack`,
-`nuntius_signals` and `nuntius_signals_ack`. See `PROJECT_SPEC.md` for
-arguments, limits and failure behavior. The transport uses newline-delimited
-JSON-RPC over stdio and MCP 2025-11-25. Stdout carries protocol messages only.
-References: [stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
-and [MCP tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
-
-An ended run without a report has status `ended_no_report`. Its tail returns
-the final assistant message as one text entry, up to 8 KiB after redaction,
-regardless of the requested line count. `asked_interactively` flags a known
-AskUserQuestion or request_user_input attempt in the last 1 MiB of events,
-including refused attempts. The judge can answer with `nuntius_reply`.
-Unknown question event shapes need the owner pilot; no tool arguments or
-tool results are returned. Report presence and stuck detection count only a
-regular report modified at or after the current run started. Older reports do
-not mark a redispatched goal complete or stuck. A report delivered late is
-accepted until a newer run of the same goal owns that report timestamp.
-
-Run folders are private (0700), and files are private (0600). They include the
-full prompt and raw agent stdout/stderr, which can contain sensitive material.
-Do not share them. MCP and owner CLI output redact the specified secret classes;
-redaction is not a claim that arbitrary prose can never contain private data.
-The audit log records tool, lane, goal, prompt hash and result, not prompt text.
-No automatic history deletion occurs. Archive ended runs before reaching the
-10,000-entry limit. Incomplete `.pending-*` folders are not exposed as runs.
-
-Every run end, including failure, cancellation, timeout or restart recovery,
-atomically creates an empty private `signals/<agent>.<goal_id>.ended` file.
-`nuntius_signals()` returns only a sorted JSON list of pending names.
-`nuntius_signals_ack(names)` removes the named signals; paths, traversal and
-linked files are refused. Duplicate agent/goal signals coalesce until acknowledged;
-use distinct goal IDs when each run needs a separate signal. Acknowledgements
-are idempotent. A failed signal write is recorded in the audit log.
-
-Stuck detection creates the same private empty signal form as
-`signals/<agent>.<goal_id>.stuck`. A per-run persisted flag prevents delivery
-again after acknowledgement or restart, even if the run remains stuck.
-Repeated lane/goal names coalesce while pending. Listing and acknowledgements
-accept `.ended`, `.stuck`, `.interrupted` and `.resumed`, with the same bounds
-and path protections. Recovery delivery flags survive acknowledgements.
-
-Timeout sends SIGINT to the run's process group, then SIGKILL after 30 seconds.
-Cancel follows the same escalation. Each run starts in its own session with
-stdin/stdout/stderr directed straight to private files. Short-lived launch stages
-exit before the agent executes under the OS parent. Shutdown leaves agents running.
-Verified surviving runs regain timeout/cancel checks inside a live nuntius process.
-Dead runs get unknown exit codes and file-derived outcomes, followed by the
-recovery policy above when enabled. The recorded
-PID and kernel process start time must match before every signal. Darwin uses
-microsecond kernel start times, Linux boot ID plus process start ticks. A run
-with a mismatched identity is ended with unknown exit, never signalled. Legacy
-v1 records with a live PID but no start identity remain busy and cannot be
-signalled safely. Inspect those locally; identity and exit codes are never guessed.
-
-Malformed configuration or an unavailable store leaves MCP in a non-serving
-state: initialize/list still work; tool calls report the fault. Run `config
-check`, correct the owner configuration, then restart the server. No agent
-settings editor, public listener, automatic deletion or LLM is included.
+Read [release notes](RELEASE_NOTES.md), [CHANGELOG](CHANGELOG.md) and [the specification](PROJECT_SPEC.md). Run `make verify` before contributing. Tests use offline fake agents and temporary directories, never your real coding agents or their credentials. The Relay logo is [CC0](assets/brand/README.md).

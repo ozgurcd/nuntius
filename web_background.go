@@ -97,6 +97,9 @@ func webLaunchctl(args ...string) ([]byte, error) {
 }
 
 func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.Writer) int {
+	m.mu.Lock()
+	config := m.config
+	m.mu.Unlock()
 	if len(args) > 0 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
 		fmt.Fprintln(out, "web start [--replace] [--bind 127.0.0.1:PORT] [--tailnet] [--tailnet-optional] [--tailnet-keep] [--notify-imessage HANDLE] [--allow-host HOST]\nweb stop | status | link [--notify]\nweb [same flags] stays in the foreground; use start to free the terminal.")
 		return 0
@@ -198,7 +201,7 @@ func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.
 			}
 		}
 		// Build a canonical argv; no credential is generated or put on argv.
-		childArgs := []string{"--config", m.config.SourcePath, "--store", m.store, "web", "__background", "--bind", *bind}
+		childArgs := []string{"--config", config.SourcePath, "--store", m.store, "web", "__background", "--bind", *bind}
 		if *tnMode {
 			childArgs = append(childArgs, "--tailnet")
 		}
@@ -244,7 +247,10 @@ func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.
 		}
 		out = io.Discard
 	}
-	w.notify = m.config.NotifyIMessage
+	w.notify = config.NotifyIMessage
+	if !config.imessageEnabled() {
+		w.notify = ""
+	}
 	if *notify != "" {
 		w.notify = *notify
 	}
@@ -412,6 +418,12 @@ func (m *Manager) webLink(ctx context.Context, state *webState, notify bool, out
 	}
 	w := &Web{address: state.Address, allowHost: state.Host, token: access.Token}
 	if notify {
+		m.mu.Lock()
+		disabled := m.config.NotifyIMessageEnabled != nil && !*m.config.NotifyIMessageEnabled
+		m.mu.Unlock()
+		if disabled {
+			return errors.New("iMessage notifications are off; use set notify-imessage on")
+		}
 		if access.Notify == "" || state.Host == "" {
 			return errors.New("no tailnet iMessage handle configured; restart with --notify-imessage")
 		}

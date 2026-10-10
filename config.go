@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const Version = "v0.3.0"
+const Version = "v0.3.1"
 
 type Lane struct {
 	Name         string   `json:"name"`
@@ -36,7 +36,12 @@ type Config struct {
 	AutoResume    *bool                `json:"auto_resume,omitempty"`
 	// NotifyIMessage is the owner's own iMessage handle (email or E.164 phone)
 	// that web --tailnet sends the sign-in link to; --notify-imessage overrides it.
-	NotifyIMessage string `json:"notify_imessage,omitempty"`
+	NotifyIMessage        string `json:"notify_imessage,omitempty"`
+	NotifyIMessageEnabled *bool  `json:"notify_imessage_enabled,omitempty"`
+}
+
+func (c Config) imessageEnabled() bool {
+	return c.NotifyIMessage != "" && (c.NotifyIMessageEnabled == nil || *c.NotifyIMessageEnabled)
 }
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$`)

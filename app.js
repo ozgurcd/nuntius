@@ -181,6 +181,10 @@ function updateCard(v, s) {
   setText(v.fields.Run, s.run_id || '—');
   v.fields.Elapsed.title = s.started ? 'Started ' + new Date(s.started).toLocaleString() : '';
   setText(v.fields.ETA, s.eta === '-' ? 'Not enough history' : s.eta || '—');
+	const explanation = s.eta_details ? s.eta_details.explanation : '';
+	v.fields.ETA.title = explanation;
+	v.fields.ETA.tabIndex = explanation ? 0 : -1;
+	v.fields.ETA.onclick = () => { if (explanation) alert(explanation); };
   setText(v.fields['Last event'], s.last_event_age_seconds == null ? '—' : duration(s.last_event_age_seconds) + ' ago');
   v.fields['Last event'].title = s.last_event ? new Date(s.last_event).toLocaleString() : '';
   setText(v.fields.Report, s.report_exists ? 'Yes' : 'No');

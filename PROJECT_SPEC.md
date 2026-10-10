@@ -1,11 +1,12 @@
-# Nuntius v0.3.0 — specification as built
+# Nuntius v0.3.1 — specification as built
 
 ## Boundary
 
 Nuntius is a Go stdio MCP server for an owner-approved
 judge on macOS or Linux. Linux CI tests the same process and file contracts. The module
-is `github.com/ozgurcd/nuntius`. It has no network client, LLM or shell runner.
-Version v0.3.0 is compiled in; publication is a separate release workflow.
+is `github.com/ozgurcd/nuntius`. It has no model-provider client, LLM or shell runner. Dashboard control uses
+loopback HTTP; Tailscale and Messages run through their installed programs.
+Version v0.3.1 is compiled in; publication is a separate release workflow.
 The optional menu-bar helper lives in its own module under menubar/. It uses
 fyne.io/systray v1.12.0 (Cocoa/cgo on macOS, D-Bus StatusNotifierItem on Linux),
 and is not imported by the pure-Go main binary. Background start launches it
@@ -90,8 +91,8 @@ Status/agents expose kind and effective model/effort. Claude/Codex model comes
 from --model/-m (split or equals); Claude effort comes from --effort. Codex
 effort comes only from structured startup events when present, otherwise
 default; agent settings are never read. OpenCode keeps its template model.
-Runs persist launch values for history, MCP and web data; old records show
-default rather than borrowing current configuration.
+Runs persist launch values for history, MCP and web data; old records without launch identity show current configured values marked
+(configured) in agents/status/dashboard. History CLI retains unknown defaults.
 
 The data directory resolves from --store, NUNTIUS_DATA_DIR, then macOS
 ~/Library/Application Support/nuntius or Linux $XDG_DATA_HOME/nuntius
@@ -352,7 +353,7 @@ to run, and nuntius never enables or disables Funnel. On a normal exit it runs
 --tailnet-keep leaves it. No other state-changing tailscale command is used.
 --notify-imessage HANDLE, or the notify_imessage config key, sends one message
 "nuntius dashboard (NAME): LINK" through osascript with a fixed AppleScript
-that reads handle and text from argv; handles are email or E.164 only; a failed
+that reads handle and text from stdin; handles are email or E.164 only; a failed
 send warns and the dashboard keeps running. The link is never written to a
 nuntius log or history file. Background web start stores the credential only in
 web-access.json (0600) in the owner's data directory (0700); stop removes it.
@@ -436,3 +437,24 @@ the run and delivers after it ends; freeze suppresses queued delivery.
 No real-agent integration test, scheduler, public listener, automatic deletion,
 app/agent-settings edits or LLM. Release publishing belongs to CI.
 Store scans refuse over 10,000 entries; archive only ended records externally.
+
+## v0.3.1 display and owner settings
+
+CLI version, --version and -v share the same source version. Running status
+adds eta_details when at least three earlier same-kind/same-size ended runs
+exist: label, explanation, median_seconds, samples, kind and size. The short
+web ETA remains unchanged; title and tap explain it, and status --long prints
+the sentence. Phone lane history and other wide tables can scroll within their
+panel; live tails wrap long paths. Verification is offline DOM/CSS at 390px,
+not a browser rendering claim.
+
+set --json exposes pool sizes, notify_imessage on/off (not its recipient),
+tailnet default off, reports_dir, max_runtime, auto_resume and lane model/effort.
+set notify-imessage on|off atomically preserves the recipient and all templates;
+on needs an existing recipient. notify_imessage_enabled defaults to enabled
+when a recipient exists. Explicit off suppresses phone sends and configured
+startup sends; explicit --notify-imessage still selects a startup recipient.
+The helper Settings submenu reads this snapshot through the CLI even while
+the dashboard is stopped. Changes queue a confirmation, then execute the same
+set or menubar --at-login CLI path. It reveals lanes.json in Finder on macOS.
+No model/effort, runtime, reports directory, recovery or tailnet edits are offered.

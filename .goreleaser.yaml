@@ -28,6 +28,9 @@ archives:
       - README.md
       - CHANGELOG.md
       - RELEASE_NOTES.md
+      - PROJECT_SPEC.md
+      - docs/*.md
+      - assets/brand/*
       - THIRD_PARTY_NOTICES
       - src: menubar/licenses/*.txt
         dst: menubar-licenses
@@ -74,7 +77,7 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/ozgurcd/nuntius"
-    description: "Local MCP run manager for the judge in Claude Desktop"
+    description: "Local MCP server and CLI for coordinating coding agents"
     binaries:
       - nuntius
     custom_block: |

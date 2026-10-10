@@ -1,0 +1,101 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/brand/nuntius-logo-dark.svg">
+  <img src="../assets/brand/nuntius-logo.svg" alt="Nuntius Relay logo" width="96" height="96">
+</picture>
+
+# nuntius
+
+Nuntius v0.3.1 is a small local Go MCP server for a judge using Claude Desktop.
+It starts and follows configured Claude Code, Codex and OpenCode agent pools on macOS or Linux.
+It contains no LLM and does not call model providers. Dashboard readiness
+uses loopback HTTP; agent programs and optional Tailscale/Messages integrations
+use the network under their existing settings. The Relay mark is dedicated to
+the public domain under [CC0 1.0](../assets/brand/README.md).
+
+Register nuntius in Claude Desktop only. Do not register it in Claude Code or
+Codex or OpenCode. Coding agents must not dispatch other agents. Configure the host to ask
+the owner before every dispatch, reply, cancel and unfreeze. MCP annotations describe
+side effects; they do not enforce a click or identify who called the server.
+
+`nuntius set` lists each writable pool size and its current value/source;
+`nuntius set codex-agent-pool` reads one. Missing pools show zero from the
+default; configured pools and legacy lane counts cite the config file path.
+Pool sizes and iMessage on/off are writable by `set`. Templates, lanes,
+max_runtime, reports_dir, notifications, auto_resume, oversight_path and the
+iMessage recipient are owner-edited config keys. Tailnet flags default to off and are CLI-only.
+Queries do not print template arguments, secrets or tokens, and redact paths.
+
+## Build and check
+
+Use the Go version in `go.mod` (1.27.2), Staticcheck 2026.2.1 (0.8.1), and
+govulncheck v1.8.0. CI gets Go and the checksum-verified Staticcheck build from
+the pinned Lictor composite action used by Legattus. The pure Go
+[rsc.io/qr v0.2.0](https://github.com/rsc/qr) library generates terminal QR codes,
+with no transitive modules. Go has no standard-library QR encoder; using the
+existing encoder avoids maintaining QR error correction here. Tests use the
+pure-Go goqr decoder (test-only; LGPL-3.0) to read the rendered terminal QR back.
+It is not linked into released binaries. Tests also need Node.js (CI pins 26.8.1) to run the dashboard
+JavaScript in an offline fake DOM; no browser or npm packages are needed.
+macOS and Linux are supported; Windows is not a target.
+
+### Menu bar
+
+`nuntius web start` starts the installed Relay menu-bar helper in a desktop
+session. Use `--no-menubar` to skip it. The icon shows idle, the running lane
+count, or attention for stuck/failed work, an end without a report, or a waiting
+question. Hover for lane counts. Each menu row shows lane, goal, state and
+elapsed time. Actions open the signed-in local dashboard, send the configured
+iMessage phone link, show the phone QR, and start/stop the dashboard. Quit menu
+bar leaves the dashboard running; `web stop` closes both. Dispatch/cancel
+remain in the dashboard.
+
+On macOS, opt in with `nuntius menubar --at-login on` and disable with
+`nuntius menubar --at-login off`. The helper alone starts at your next login;
+it does not start the dashboard. Installation enables no login items.
+On Linux, KDE supports StatusNotifierItem, XFCE needs its StatusNotifier
+plugin, and GNOME normally needs an AppIndicator extension. An unsupported
+desktop exits without affecting the dashboard.
+
+The main command remains pure Go. Native code lives in a separate helper
+module and macOS app. Its ad-hoc signature is not Developer ID signing or
+notarization; Homebrew removes quarantine for installed files, while manual
+downloads need normal Gatekeeper approval. Relay assets are CC0. The helper
+API is an owner-only Unix socket; no sign-in link enters helper argv,
+environment or logs. Browser/QR pages are 0600 and removed after two minutes
+or dashboard shutdown. Keep a displayed QR private.
+
+Agents lane-tab dots use grey for idle, green for running, violet for finished,
+amber for stuck, and red for failed/interrupted work. Hover and screen-reader
+labels explain the state. See [the design note](menubar-design.md).
+
+```sh
+make verify
+```
+
+Read [Release notes](../RELEASE_NOTES.md) for user-facing changes and upgrade
+actions, and [CHANGELOG](../CHANGELOG.md) for technical detail. Contributors must
+add a section to both files for each release. `make release-notes-test` checks
+offline refusal fixtures; `make release-check` refuses a source version with
+missing or empty sections. The tagged release workflow checks the exact tag
+version and uses its release-note section as the GitHub release body.
+
+Install the published release through the owner's Homebrew tap. Never install
+nuntius into `~/go/bin`.
+
+```sh
+brew install --cask ozgurcd/tap/nuntius
+nuntius version
+```
+
+The tests compile an offline Go fake. They never execute the real agents,
+load agent settings, or make network calls. The separate govulncheck gate reads
+the public vulnerability database.
+
+
+## Menu-bar Settings
+
+Settings reads the current CLI display values even with the dashboard stopped.
+Pool sizes and iMessage on/off require a pending change followed by Confirm;
+Discard clears it. Start at login uses the existing menubar --at-login path
+with the same confirmation. Open settings file reveals lanes.json in Finder
+on macOS. Other displayed values and lane model/effort are read-only.

@@ -21,13 +21,18 @@ type Dashboard interface {
 	Action(string) error
 }
 type Controller struct {
-	tray   Tray
-	client Dashboard
-	run    func(string) error
-	quit   func()
+	tray     Tray
+	client   Dashboard
+	run      func(string) error
+	quit     func()
+	settings func() (Settings, error)
+	apply    func([]string) error
+	reveal   func()
+	pending  []string
 }
 
 func (c *Controller) Refresh() {
+	c.refreshSettings()
 	lanes, err := c.client.Status()
 	if err != nil {
 		c.tray.Update("", "Nuntius · dashboard stopped", nil, false)
@@ -68,6 +73,9 @@ func elapsed(s int64) string {
 	return fmt.Sprintf("%dm %ds", s/60, s%60)
 }
 func (c *Controller) Action(a string) {
+	if c.settingsAction(a) {
+		return
+	}
 	switch a {
 	case "open", "phone", "qr":
 		if c.client.Action(a) != nil {

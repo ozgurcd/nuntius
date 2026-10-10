@@ -1,0 +1,203 @@
+## Local oversight dashboard
+
+```sh
+nuntius web
+```
+
+Open the private URL printed by that invocation. It contains a new random
+credential each start; do not share or log the URL. The page removes it from
+the address bar after loading and stores it in `sessionStorage` for this tab
+only. Reload keeps sign-in and the selected tab; closing the browser tab clears
+the stored credential. If storage is disabled, the start link works for the
+current load, but reload needs that link again. Without a credential the page
+shows: "Open the link printed by `nuntius web` to sign in."
+Binding is restricted to `127.0.0.1`; use
+`nuntius web --bind 127.0.0.1:8124` for another port. No LAN/remote bind or CORS
+is enabled. The static shell (`index.html`, `app.css`, `app.js`) is available
+without sign-in and contains no private data or credential. Every request still
+checks the allowed Host and port, method and security headers; POST Origin must
+match the request's local origin, or the exact opted-in HTTPS origin below. `/data` and `/action` require the
+`X-Nuntius-Token` header; a query parameter cannot authenticate either API.
+Actions accept only POST.
+
+### Phone access over Tailscale
+
+Install and connect Tailscale on the Mac and iPhone with the same account.
+Enable MagicDNS and HTTPS certificates for the tailnet. See the official
+[Serve guide](https://tailscale.com/docs/features/tailscale-serve) and
+[HTTPS setup](https://tailscale.com/docs/how-to/set-up-https-certificates).
+The Mac must stay awake and connected to Tailscale. The background dashboard
+survives closing Terminal; it is a transient per-user job, not a login item.
+
+One command does the rest:
+
+```sh
+nuntius web start --tailnet --notify-imessage you@icloud.com
+```
+
+`start` waits for the loopback dashboard to answer, prints one summary, the
+private sign-in link and a compact terminal QR, then exits. On macOS it uses
+the per-user launchd job `gui/<uid>/nuntius.web`, with no RunAtLoad or KeepAlive
+and your inherited umask. On Linux it starts a detached session with a private
+`web.pid` in the data directory. Standard input is closed; stdout/stderr go to
+the private `web.log`, which never receives the sign-in link or QR.
+An existing dashboard is left running; use `web start --replace` to restart it.
+
+```sh
+nuntius web status
+nuntius web link
+nuntius web link --notify
+nuntius web stop
+```
+
+`status` and `status --long` show the same credential-free dashboard line:
+running state, start time, PID/job, port, tailnet host, Serve mode and last
+iMessage result. `link` displays the current link and QR again; `--notify`
+resends to the handle used at start. `stop` sends a clean shutdown, removes
+the job and private access files, and succeeds when nothing is running.
+It does not stop agent runs. Plain `nuntius web` keeps foreground behaviour.
+
+Background access is stored only in `web-access.json` (0600) inside your
+private data directory (0700), so only your OS account can read it. It contains
+the current credential, handle and process identity; keep it private and out
+of backups or shared folders. It is removed on normal stop and replaced on
+restart. A crash can leave a stale private file; `web stop` removes it safely.
+Foreground mode keeps its credential in memory and has no retrievable file.
+
+The QR uses qr.L, one character per module column and two module rows per
+half-block line, black on white with a two-module quiet zone. If the known
+terminal width is too small, only links print with a fit warning.
+
+`--tailnet` finds the Tailscale CLI (`tailscale` on PATH, else the one inside
+`/Applications/Tailscale.app`), reads `tailscale status --json`, and requires
+Tailscale to be running with a MagicDNS name for this Mac that is in its HTTPS
+certificate domains. Each missing piece stops the start with one sentence that
+says what to turn on (log in, MagicDNS, HTTPS certificates). Add
+`--tailnet-optional` to start the plain loopback dashboard instead when that
+check fails. `--allow-host` still works; when both are given the name must
+match the detected one.
+
+What nuntius changes in Tailscale, and undoes: it reads `tailscale serve
+status --json`. If `https:443` already proxies to this dashboard's loopback
+port, it reuses that mapping and leaves it alone. Otherwise it runs
+`tailscale serve --bg --https=443 localhost:PORT` with the dashboard's port and
+confirms the mapping with serve status. On a normal exit (Ctrl-C or SIGTERM)
+it removes only a mapping it created in this run with
+`tailscale serve --https=443 off`; `--tailnet-keep` leaves it in place. If 443
+serves anything else, nuntius does not touch it and prints the exact
+`tailscale serve --https=443 off` command you can run yourself. If Funnel is on
+for this Mac, nuntius refuses tailnet mode and prints the
+`tailscale funnel --https=PORT off` command; nuntius never enables or disables
+Funnel and calls no other tailscale command that changes state.
+
+`--notify-imessage HANDLE` (or the `notify_imessage` config key) sends one
+iMessage, `nuntius dashboard (mac): https://mac.tail123.ts.net/?token=…`, to
+your own Apple ID (an email address) or phone number (E.164) through
+`osascript` and the Messages app, after serve is confirmed. The handle and
+text go through stdin to a fixed AppleScript, never process arguments. The first run asks for
+macOS permission for your terminal to control Messages; allow it. If sending
+fails, nuntius prints a warning and the dashboard keeps running; the terminal
+link and QR code still print. The link is never written to a nuntius log or
+history. Only the background owner-only access file described above stores its
+credential. Start prints one summary without the credential: local URL,
+tailnet host, Serve mode and iMessage result. `web status` shows the last send.
+
+Security model: the dashboard stays tailnet-only. Nuntius listens only on
+`127.0.0.1`; Tailscale Serve supplies HTTPS to tailnet devices and nuntius
+does not validate tailnet membership, so Tailscale's access rules and the
+dashboard credential both matter. Every start mints a new credential, so an old
+link or message stops working when `nuntius web` restarts. Anyone who can reach
+the dashboard and has its credential can dispatch and cancel agents:
+**never enable Tailscale Funnel**, and keep the link and QR private.
+
+Manual fallback. Find the Mac's full DNS name in Tailscale, for example
+`mac.tail123.ts.net`, and start the dashboard with that exact name (one
+`--allow-host` value):
+
+```sh
+nuntius web --allow-host mac.tail123.ts.net
+```
+
+Nuntius still listens only on `127.0.0.1:8123`. In another Terminal, use the
+dashboard port shown in the loopback link (8123 by default):
+
+```sh
+tailscale serve --bg --https=443 localhost:8123
+tailscale serve status
+```
+
+On the iPhone, scan the terminal QR code or open the printed private
+`https://mac.tail123.ts.net/` sign-in link. The link and QR contain the same
+per-start credential; keep both private. The plain loopback sign-in link also
+remains available. Sign-in still uses tab-scoped `sessionStorage`, with API
+credentials sent only in the `X-Nuntius-Token` header.
+
+The opt-in accepts only the exact DNS Host, with no port or `:443`, and exactly
+`https://mac.tail123.ts.net` as its POST Origin. Wildcards, other hosts and
+ports, HTTP origins, and forwarded headers grant no access. To turn off a
+manual Serve endpoint:
+
+```sh
+tailscale serve --https=443 off
+```
+
+See the official [Serve command reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
+
+The dashboard adapts to laptop and phone-width windows and your system's light
+or dark mode. The sticky top bar shows dispatch/freeze controls, running, idle
+and ended counts, and refresh freshness on every tab. Agents opens by default;
+Messages & notes, Digest, History and Audit have their own panels. Arrow keys
+and Home/End navigate tabs. The URL hash selects the view on start and reload.
+The phone header uses two lines: brand and freeze controls, then counts and
+update age. Its pill shows `Enabled` / `Frozen` at narrow widths, with full
+dispatch/freeze text in its title and accessible label. The tab bar scrolls
+within phone-width windows.
+Compact agent cards show kind, state, short run ID, goal, elapsed time, ETA, event age, current action and
+report presence. Open a card's tail to read its bounded output. Cancel uses
+an in-page confirmation before interrupting a running agent; Keep running or
+the timeout restores the initial button. Message opens that agent's composer.
+
+Within Agents, choose All or one lane. Lane tabs show the server's badge colour
+and scroll horizontally on a phone. A lane link such as `#agents/codex-2`
+survives reload and back/forward navigation. Pool changes update the tab strip;
+removing the selected lane returns to All. A lane view includes model/effort,
+its live tail newest first (Follow can be paused), its rows from the latest 50
+dashboard runs with report links, lane-specific owner notes and pending signals.
+Use the note form's For selector to address a lane; shared judge notes stay in
+Messages & notes.
+
+The other tabs show messages and notes, the judge's `OVERSIGHT.md` digest next
+to the reports directory (or optional absolute `oversight_path` in config),
+the latest 50 runs and the bounded audit log. Audit rows show action, lane, goal,
+result/refusal reason and short brief digest, newest first. Filter by text, lane
+or action; each Raw toggle shows the original redacted JSON. Filter history by goal ID or lane,
+then expand a row for highlighted QUESTIONS/DECISIONS, goal and report.
+Times are relative with absolute dates on hover.
+History rows stack on phones without splitting badge, lane or duration words.
+Badge colours come from the server's `badge` field, never from the label text:
+green = working or finished normally (including a resumed run), amber = needs
+a look (no report, cancelled, timed out, `stuck?`), red = failed. Idle and
+interrupted badges stay plain.
+Tab counts show running agents, unread owner notes and runs with open questions.
+
+Polling runs every two seconds; hidden panels update when shown. Stable cards and rows keep focus and expansion;
+reading an open tail, report or audit log pauses its content updates. Sections
+pause briefly after interaction and while focused or selected. A visible banner
+reports refresh failures while retaining the last data. All assets are embedded,
+offline; data and actions stay authenticated. CSP permits only same-origin scripts/styles, with no
+inline code. All report and note text is inserted as text. Output stays redacted;
+raw tool results, session IDs and stderr are not dashboard data.
+
+Send a message to an ended session, queue one message for delivery after a
+running run ends, or choose “Stop and send”. The pending message is private and
+durable. Freeze suppresses delivery. Duplicate queued messages are refused.
+Cancel, Freeze, Unfreeze and owner-note entry are local owner actions.
+
+
+## Narrow screens and ETA
+
+At widths of 480px or less, per-agent history scrolls horizontally with
+unsplit cells. Other wide tables scroll within their panel; the main History
+view retains its stacked rows. Long paths in live tails wrap. ETA keeps its
+short text, with provenance in its title and on tap. Tests use the offline
+DOM and stylesheet with a 390px predicate; visual review belongs to the owner.

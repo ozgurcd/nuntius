@@ -236,7 +236,7 @@ func (m *Manager) Agents() ([]AgentStatus, error) {
 			return nil, e
 		}
 		model, effort := effectiveIdentity(l)
-		if v.State == "running" {
+		if v.State == "running" || (v.Model == model+" (configured)" && v.Effort == effort+" (configured)") {
 			model, effort = v.Model, v.Effort
 		}
 		out = append(out, AgentStatus{Name: v.Lane, Kind: l.Kind, Model: model, Effort: effort, StartMode: l.mode(), Flags: l.ExtraArgs, State: v.State, Goal: v.GoalID, DisplayState: v.DisplayState})

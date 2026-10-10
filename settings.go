@@ -1,13 +1,60 @@
 package nuntius
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 )
 
-// Only pool sizes are writable by set. Other config keys remain owner-edited.
+// settingsSnapshot exposes display values only, never recipients or launch argv.
+func settingsSnapshot(c Config) map[string]any {
+	pools := map[string]int{"claude": 0, "codex": 0, "opencode": 0}
+	lanes := []map[string]string{}
+	for _, l := range c.Lanes {
+		pools[l.Kind]++
+		model, effort := effectiveIdentity(l)
+		lanes = append(lanes, map[string]string{"name": cell(l.Name), "model": model, "effort": effort})
+	}
+	for kind, p := range c.Pools {
+		pools[kind] = p.Size
+	}
+	return map[string]any{"pools": pools, "notify_imessage": c.imessageEnabled(), "tailnet": false, "reports_dir": cell(c.ReportsDir), "max_runtime": c.MaxRuntime, "auto_resume": c.AutoResume == nil || *c.AutoResume, "lanes": lanes}
+}
+
+func (m *Manager) SetIMessage(path string, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	guard, err := m.controlLock()
+	if err != nil {
+		return err
+	}
+	defer guard.Close()
+	c, err := LoadConfig(path)
+	if err != nil {
+		return err
+	}
+	if enabled && c.NotifyIMessage == "" {
+		return errors.New("configure notify_imessage in the settings file first")
+	}
+	c.NotifyIMessageEnabled = &enabled
+	// Preserve the owner's pools representation rather than serializing expanded lanes.
+	if c.Pools != nil {
+		c.Lanes = nil
+	}
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err = atomicPrivate(path, append(b, '\n')); err != nil {
+		return err
+	}
+	return m.audit("notify_imessage_config", "", "", "", "updated")
+}
+
+// Pool sizes and iMessage on/off are writable. Other keys remain owner-edited.
 func writeSettings(out io.Writer, c Config, key string) bool {
 	found := false
 	for _, kind := range []string{"claude", "codex", "opencode"} {
@@ -30,7 +77,12 @@ func writeSettings(out io.Writer, c Config, key string) bool {
 		found = true
 	}
 	if key == "" {
-		fmt.Fprintln(out, "read-only config: lanes, pools templates, max_runtime, reports_dir, notifications, auto_resume, oversight_path, notify_imessage (default: off); tailnet defaults: off (CLI only)")
+		fmt.Fprintf(out, "notify-imessage = %t (recipient configured: %t)\n", c.imessageEnabled(), c.NotifyIMessage != "")
+		fmt.Fprintln(out, "read-only config: lanes, pools templates, max_runtime, reports_dir, notifications, auto_resume, oversight_path; tailnet defaults: off (CLI only)")
+	}
+	if key == "notify-imessage" {
+		fmt.Fprintf(out, "notify-imessage = %t\n", c.imessageEnabled())
+		found = true
 	}
 	return found
 }

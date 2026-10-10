@@ -1,9 +1,15 @@
 # Changelog
 
-## Unreleased
+## v0.3.1 — 2026-10-10
 
-- Preserve attention and the missing-report lane indicator when a resumed
-  run's readable display label says Ended. This correction follows v0.3.0.
+- Rewrite newcomer README and preserve measured references in docs with
+  compatibility anchors; update configuration, CLI and dashboard details.
+- Add --version/-v aliases, structured ETA provenance and hover/tap explanation.
+- Mark template fallback for legacy run identity as configured.
+- Contain narrow history tables and long live-tail paths; verify offline at 390px.
+- Add safe set --json snapshot, atomic notification on/off preserving recipient,
+  and confirmed menu-bar settings through existing CLI validation.
+- Include the post-v0.3.0 resumed missing-report attention fix.
 
 ## v0.3.0 — 2026-10-10
 

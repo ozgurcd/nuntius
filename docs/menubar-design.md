@@ -1,4 +1,4 @@
-# Menu bar helper (v0.3.0)
+# Menu bar helper (v0.3.1)
 
 The main `nuntius` binary remains CGO_ENABLED=0. The separate `menubar/`
 module builds `nuntius-menubar` with fyne.io/systray, maintained by the Fyne
@@ -42,3 +42,10 @@ No tests load a launchd job, start a GUI, or access the owner's services.
 GoReleaser's prebuilt builder requires Pro. Use ordinary archive file entries
 to include CI-built helpers and the Darwin bundle; validate each archive and
 cask before publishing. The main release remains on ubuntu-24.04.
+
+Settings reads a bounded, safe `set --json` snapshot through the main CLI.
+It lists current display values and configured lane identity, not recipients or
+flags. A change remains pending until Confirm; Discard clears it. Only pool
+sizes, notification on/off and helper-only start-at-login can change.
+Open settings file uses Finder reveal on macOS. Settings work while the
+dashboard is stopped. Fake-tray tests prove confirmation and CLI argv routing.

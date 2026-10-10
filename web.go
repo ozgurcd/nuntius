@@ -310,6 +310,15 @@ func (w *Web) data() (any, error) {
 	}
 	for _, entry := range groupedHistory(groups) {
 		r := index[entry.RunID]
+		if r.Model == "" && r.Effort == "" {
+			for _, l := range config.Lanes {
+				if l.Name == r.Lane {
+					model, effort := effectiveIdentity(l)
+					r.Model, r.Effort = model+" (configured)", effort+" (configured)"
+					break
+				}
+			}
+		}
 		relation, chain, depth := runRelation(r, index)
 		report := ""
 		if m.reportExists(r) {

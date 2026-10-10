@@ -28,11 +28,17 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	fs.SetOutput(io.Discard)
 	config := fs.String("config", "", "owner configuration file")
 	store := fs.String("store", "", "private data directory")
+	version := fs.Bool("version", false, "show version")
+	fs.BoolVar(version, "v", false, "show version")
 	if e = fs.Parse(args); e != nil {
 		fmt.Fprintln(errOut, "invalid command flags; use nuntius help")
 		return 2
 	}
 	rest := fs.Args()
+	if *version && len(rest) == 0 {
+		fmt.Fprintln(out, "nuntius "+Version)
+		return 0
+	}
 	if len(rest) == 0 {
 		rest = []string{"help"}
 	}
@@ -41,6 +47,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	if len(rest) == 1 && rest[0] == "help" {
+		fmt.Fprintln(out, "Version: version | --version | -v. Settings: set [--json] lists display values; set notify-imessage on|off toggles an existing recipient. Menu-bar Settings confirms changes through these CLI commands.")
 		fmt.Fprintln(out, "Audit: nuntius audit [--since 1h] [--json] lists recent redacted actions, newest first.")
 		fmt.Fprintln(out, "Menu bar: web start launches the installed helper in a GUI session; --no-menubar skips it. web stop closes both. menubar --at-login on|off manages helper-only startup at the next macOS login (off by default).")
 		fmt.Fprintln(out, "Phone access: web start --tailnet [--tailnet-optional] [--tailnet-keep] [--notify-imessage HANDLE] runs in the background and survives terminal closure. web stop | status | link [--notify]; start --replace restarts. web without a subcommand stays in the foreground; use web start to free the terminal. web --allow-host HOST is the manual route. Loopback binding only.")
@@ -48,7 +55,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	command := strings.Join(rest, " ")
-	if command != "recover" && command != "config check" && command != "config convert" && command != "mcp" && rest[0] != "status" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && rest[0] != "history" && rest[0] != "audit" && rest[0] != "menubar" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(rest[0] == "set" && (len(rest) == 1 || (len(rest) <= 3 && poolSetting(rest[1])))) {
+	if command != "recover" && command != "config check" && command != "config convert" && command != "mcp" && rest[0] != "status" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && rest[0] != "history" && rest[0] != "audit" && rest[0] != "menubar" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(rest[0] == "set" && (len(rest) == 1 || (len(rest) <= 3 && (poolSetting(rest[1]) || rest[1] == "notify-imessage")) || command == "set --json")) {
 		fmt.Fprintln(errOut, "unknown command; use nuntius help")
 		return 2
 	}
@@ -90,6 +97,10 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	}
 	if command == "config check" {
 		fmt.Fprintln(out, "configuration valid")
+		return 0
+	}
+	if command == "set --json" {
+		fmt.Fprintln(out, toolText(settingsSnapshot(c)))
 		return 0
 	}
 	if rest[0] == "set" && len(rest) < 3 {
@@ -161,6 +172,18 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 			return 1
 		}
 	case "config", "set":
+		if rest[0] == "set" && rest[1] == "notify-imessage" {
+			if len(rest) != 3 || (rest[2] != "on" && rest[2] != "off") {
+				fmt.Fprintln(errOut, "use set notify-imessage on|off")
+				return 2
+			}
+			if e = m.SetIMessage(*config, rest[2] == "on"); e != nil {
+				fmt.Fprintln(errOut, Redact(e.Error()))
+				return 1
+			}
+			fmt.Fprintln(out, "iMessage setting updated")
+			return 0
+		}
 		kind := ""
 		size := 0
 		convert := rest[0] == "config"
