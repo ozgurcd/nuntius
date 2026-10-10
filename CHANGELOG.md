@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.8 — 2026-10-10
+
+- Colour dashboard badges from a server `badge` tone (green, amber, red) in
+  status and history JSON instead of matching label text; a resumed run that
+  is running or finished normally is green, and a failed, cancelled or
+  timed-out resumed run keeps that outcome's colour.
+- Read finished resumed runs as outcomes — `Ended · resumed 1/2`,
+  `Failed · resumed 1/2`, `Cancelled · resumed 1/2`, `Timed out · resumed 1/2` —
+  in status, status --long, history, MCP status/history and the dashboard.
+- Document the dashboard colours: green = working or finished normally,
+  amber = needs a look, red = failed.
+
 ## v0.2.7 — 2026-10-10
 
 - Inherit the dispatching process's startup umask in transient launchd jobs,

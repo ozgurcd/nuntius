@@ -37,6 +37,7 @@ type HistoryEntry struct {
 	ContinueRunID   string    `json:"continue_run_id,omitempty"`
 	ResumeCount     int       `json:"resume_count,omitempty"`
 	DisplayState    string    `json:"display_state,omitempty"`
+	Badge           string    `json:"badge,omitempty"`
 }
 
 func (m *Manager) History(f HistoryFilter) ([]HistoryEntry, error) {
@@ -63,7 +64,7 @@ func (m *Manager) History(f HistoryFilter) ([]HistoryEntry, error) {
 		if r.State == "running" || r.Ended == nil || (f.Lane != "" && r.Lane != f.Lane) || (f.GoalID != "" && r.GoalID != f.GoalID) || r.Ended.Before(since) {
 			continue
 		}
-		rows = append(rows, HistoryEntry{RunID: r.ID, Lane: r.Lane, GoalID: r.GoalID, Ended: *r.Ended, Outcome: runOutcome(r), DurationSeconds: max(0, int64(r.Ended.Sub(r.Started).Seconds())), ReportExists: m.reportExists(r.GoalID), Exit: r.Exit, ParentRunID: r.ParentRunID, ContinueRunID: r.ContinueRunID, ResumeCount: r.ResumeCount, DisplayState: terminalDisplay(r, runOutcome(r))})
+		rows = append(rows, HistoryEntry{RunID: r.ID, Lane: r.Lane, GoalID: r.GoalID, Ended: *r.Ended, Outcome: runOutcome(r), DurationSeconds: max(0, int64(r.Ended.Sub(r.Started).Seconds())), ReportExists: m.reportExists(r.GoalID), Exit: r.Exit, ParentRunID: r.ParentRunID, ContinueRunID: r.ContinueRunID, ResumeCount: r.ResumeCount, DisplayState: terminalDisplay(r, runOutcome(r)), Badge: badgeTone(r, r.State)})
 		row := &rows[len(rows)-1]
 		row.Kind, row.Model = r.Kind, r.Model
 		row.ShortRunID = shortRunID(r.ID)
@@ -237,14 +238,20 @@ func terminalDisplay(r Run, fallback string) string {
 		return "interrupted"
 	}
 	if r.RecoveryRun {
+		// A resumed run reads as its outcome, never as a bare resume state.
+		label := fmt.Sprintf(" · resumed %d/2", r.ResumeCount)
 		if r.State == "running" {
-			return fmt.Sprintf("Running · resumed %d/2", r.ResumeCount)
+			return "Running" + label
 		}
-		label := fmt.Sprintf("resumed (%d/2)", r.ResumeCount)
-		if outcome := runOutcome(r); r.State != "running" && (outcome == "cancelled" || outcome == "timed_out") {
-			return outcome + "; " + label
+		switch runOutcome(r) {
+		case "cancelled":
+			return "Cancelled" + label
+		case "timed_out":
+			return "Timed out" + label
+		case "failed":
+			return "Failed" + label
 		}
-		return label
+		return "Ended" + label
 	}
 	if r.State != "running" {
 		if outcome := runOutcome(r); outcome == "cancelled" || outcome == "timed_out" {
@@ -252,4 +259,28 @@ func terminalDisplay(r Run, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+// badgeTone names the dashboard colour of a run's badge, resumed or not:
+// green is working or finished normally, amber needs a look, red failed, and
+// an empty tone is plain (idle, interrupted, unknown outcome).
+func badgeTone(r Run, state string) string {
+	if r.State == "running" {
+		return "green"
+	}
+	if r.State == "interrupted" {
+		return ""
+	}
+	switch runOutcome(r) {
+	case "cancelled", "timed_out":
+		return "amber"
+	case "failed":
+		return "red"
+	case "completed":
+		if state == "ended_no_report" {
+			return "amber"
+		}
+		return "green"
+	}
+	return ""
 }

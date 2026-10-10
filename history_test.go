@@ -473,3 +473,94 @@ func TestHistoryTextSafetyAndTypes(t *testing.T) {
 		t.Fatal("unknown exit must be null")
 	}
 }
+
+// A resumed run reads as an outcome, and every view carries the server's badge
+// tone so the dashboard never derives colour from label text.
+func TestResumedOutcomeWordingAndBadge(t *testing.T) {
+	m, c, store := manager(t)
+	base := time.Date(2026, 10, 10, 1, 4, 0, 0, time.Local)
+	ended := base.Add(time.Minute)
+	zero, one := 0, 1
+	runs := []Run{
+		{ID: "11111111" + strings.Repeat("a", 24), Lane: "codex", GoalID: "RESUME-1", State: "ended", Started: base.Add(time.Hour), Ended: &ended, Exit: &zero, RecoveryRun: true, ResumeCount: 1},
+		{ID: "22222222" + strings.Repeat("b", 24), Lane: "claude", GoalID: "RESUME-2", State: "ended", Started: base.Add(time.Hour), Ended: &ended, Exit: &one, RecoveryRun: true, ResumeCount: 2},
+		{ID: "33333333" + strings.Repeat("c", 24), Lane: "codex", GoalID: "RESUME-3", State: "ended", Started: base, Ended: &ended, StopReason: "cancelled", RecoveryRun: true, ResumeCount: 1},
+		{ID: "44444444" + strings.Repeat("d", 24), Lane: "codex", GoalID: "RESUME-4", State: "timed_out", Started: base, Ended: &ended, StopReason: "timed_out", RecoveryRun: true, ResumeCount: 1},
+		{ID: "55555555" + strings.Repeat("e", 24), Lane: "codex", GoalID: "RESUME-5", State: "interrupted", Started: base, Ended: &ended, WaitingToResume: true},
+		{ID: "66666666" + strings.Repeat("f", 24), Lane: "claude", GoalID: "PLAIN-6", State: "ended", Started: base, Ended: &ended, Exit: &zero},
+	}
+	for i := range runs {
+		if err := privateDir(filepath.Join(store, "runs", runs[i].ID)); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.save(&runs[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(c.ReportsDir, "RESUME-1.txt"), []byte("done"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][2]string{
+		"RESUME-1": {"Ended · resumed 1/2", "green"},
+		"RESUME-2": {"Failed · resumed 2/2", "red"},
+		"RESUME-3": {"Cancelled · resumed 1/2", "amber"},
+		"RESUME-4": {"Timed out · resumed 1/2", "amber"},
+		"RESUME-5": {"interrupted; waiting to resume", ""},
+		"PLAIN-6":  {"completed", "green"},
+	}
+	rows, err := m.History(HistoryFilter{Limit: 20})
+	if err != nil || len(rows) != len(want) {
+		t.Fatal("history rows")
+	}
+	for _, row := range rows {
+		if w := want[row.GoalID]; row.DisplayState != w[0] || row.Badge != w[1] {
+			t.Fatalf("history %s: %q %q", row.GoalID, row.DisplayState, row.Badge)
+		}
+	}
+	status, err := m.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range status {
+		w, state := want["RESUME-2"], "ended_no_report"
+		if s.Lane == "codex" {
+			w, state = want["RESUME-1"], "ended"
+		}
+		if s.State != state || s.DisplayState != w[0] || s.Badge != w[1] {
+			t.Fatalf("status %s: %q %q %q", s.Lane, s.State, s.DisplayState, s.Badge)
+		}
+	}
+	w, err := NewWeb(m, "127.0.0.1:8123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := w.data()
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := toolText(data)
+	for _, goal := range []string{"RESUME-1", "RESUME-2", "RESUME-3", "RESUME-4"} {
+		if !strings.Contains(web, `"display_state":"`+want[goal][0]+`"`) || !strings.Contains(web, `"badge":"`+want[goal][1]+`"`) {
+			t.Fatalf("web wording or badge missing: %s", goal)
+		}
+	}
+	if strings.Contains(web, "resumed (") || strings.Count(web, `"badge":"green"`) < 3 {
+		t.Fatal("web history and lanes must carry outcome wording and green tones")
+	}
+	cliFixture(t, c, store)
+	for _, flags := range [][]string{{"status"}, {"status", "--long"}, {"history"}} {
+		var out, diagnostic bytes.Buffer
+		if CLI(context.Background(), flags, strings.NewReader(""), &out, &diagnostic) != 0 || !strings.Contains(out.String(), "Ended · resumed 1/2") || !strings.Contains(out.String(), "Failed · resumed 2/2") || strings.Contains(out.String(), "resumed (") {
+			t.Fatalf("human wording missing: %v", flags)
+		}
+		if flags[0] == "history" && (!strings.Contains(out.String(), "Cancelled · resumed 1/2") || !strings.Contains(out.String(), "Timed out · resumed 1/2")) {
+			t.Fatal("history outcome wording missing")
+		}
+	}
+	for _, name := range []string{"nuntius_status", "nuntius_history"} {
+		v, err := call(m, name, []byte(`{}`))
+		if err != nil || !strings.Contains(toolText(v), "Ended · resumed 1/2") || !strings.Contains(toolText(v), "Failed · resumed 2/2") || !strings.Contains(toolText(v), `"badge":"green"`) {
+			t.Fatalf("MCP wording missing: %s", name)
+		}
+	}
+}

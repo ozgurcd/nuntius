@@ -98,9 +98,10 @@ function timeText(n, value, prefix = '') {
   n.title = value ? new Date(value).toLocaleString() : '';
   if (n.tagName === 'TIME' && value) n.dateTime = value;
 }
-function stateBadge(n, state) {
-  const known = ['running', 'idle', 'ended', 'ended_no_report', 'cancelled', 'timed_out', 'stuck?', 'failed', 'frozen', 'enabled'];
-  n.className = 'badge ' + (/^Running · resumed [12]\/2$/.test(state) ? 'running' : known.includes(state) ? state : '');
+// The server names the colour (badge: green, amber, red or none); the label is
+// never parsed, so wording changes cannot change a colour.
+function stateBadge(n, state, tone = '') {
+  n.className = tone ? 'badge ' + tone : 'badge';
   setText(n, state === 'ended_no_report' ? 'Ended · no report' :
     state === 'timed_out' ? 'Timed out' : state.charAt(0).toUpperCase() + state.slice(1));
 }
@@ -166,7 +167,7 @@ function makeCard(s) {
 function updateCard(v, s) {
   if (busy(v.root)) return;
   setText(v.kind, [s.kind || 'Agent', s.model].filter(Boolean).join(' · '));
-  stateBadge(v.badge, s.display_state || s.state);
+  stateBadge(v.badge, s.display_state || s.state, s.badge);
   v.goal.className = s.goal_id ? 'goal' : 'goal goal-placeholder';
   setText(v.goal, s.goal_id || 'Ready for the next goal');
   setText(v.fields.Elapsed, s.goal_id ? duration(s.elapsed_seconds) : '—');
@@ -233,7 +234,7 @@ function updateRun(v, r) {
   v.toggle.className = r.chain_depth > 0 ? 'run-toggle chain-child' : 'run-toggle';
   setText(v.toggle, (v.detail.hidden ? '▸ ' : '▾ ') + r.goal_id);
   const state = r.display_state || r.state;
-  stateBadge(v.badge, state === 'ended' && r.exit != null && r.exit !== 0 ? 'failed' : state);
+  stateBadge(v.badge, state === 'ended' && r.exit != null && r.exit !== 0 ? 'failed' : state, r.badge);
   timeText(v.timestamp, r.started);
   const end = r.ended ? Date.parse(r.ended) : Date.now();
   setText(v.elapsed, duration((end - Date.parse(r.started)) / 1000));
@@ -259,7 +260,7 @@ function makeNote(n) {
 function render(d) {
   lastData = d;
   const frozen = !!d.freeze;
-  stateBadge(el('freeze'), frozen ? 'frozen' : 'enabled');
+  stateBadge(el('freeze'), frozen ? 'frozen' : 'enabled', frozen ? 'red' : 'green');
   if (frozen) {
     timeText(el('freeze'), d.freeze.since, 'Frozen since ');
     setText(el('freeze'), el('freeze').textContent + ' — ' + d.freeze.reason);

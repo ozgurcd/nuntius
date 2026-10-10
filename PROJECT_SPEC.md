@@ -1,11 +1,11 @@
-# Nuntius v0.2.7 — specification as built
+# Nuntius v0.2.8 — specification as built
 
 ## Boundary
 
 Nuntius is a Go stdio MCP server for an owner-approved
 judge on macOS or Linux. Linux CI tests the same process and file contracts. The module
 is `github.com/ozgurcd/nuntius`. It has no network client, LLM or shell runner.
-Version v0.2.7 is compiled in; publication is a separate release workflow.
+Version v0.2.8 is compiled in; publication is a separate release workflow.
 Terminal QR encoding uses rsc.io/qr v0.2.0, with no transitive modules.
 
 Do not register it for coding agents. The MCP host owns approval. The server
@@ -162,8 +162,11 @@ restart note precedes the brief. A busy lane keeps its goal waiting; MCP polls
 retry when it frees. Child and parent links repair a crash between their writes.
 Signals raise lane.goal.resumed and persist acknowledgement-safe delivery flags.
 Status, agents, history and web show interrupted, waiting to resume and resumed
-counts. Active recovery reads `Running · resumed n/2`; finished recovery keeps
-its terminal labels. History exposes chain IDs and count, never the private session ID.
+counts. Active recovery reads `Running · resumed n/2`; finished recovery reads
+its outcome with the count (`Ended`, `Failed`, `Cancelled` or `Timed out`
+` · resumed n/2`). Status and history JSON carry an optional `badge` tone
+(green = working or finished normally, amber = needs a look, red = failed) that
+the dashboard applies without parsing label text. History exposes chain IDs and count, never the private session ID.
 Interrupted records beyond the limit stay visible for owner action. Nothing of
 nuntius runs while all nuntius processes are stopped. The Mac decides sleep;
 reboot/power loss recovery occurs at the next MCP startup or recover command.

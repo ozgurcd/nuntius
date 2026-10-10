@@ -210,10 +210,21 @@ function rendered(h, id) {
   check(fresh.ids.runs.textContent.includes('Cancelled'), 'history cancellation badge');
   vm.runInContext("lastData.history[0].display_state = 'timed_out'; render(lastData)", fresh.context);
   check(fresh.ids.runs.textContent.includes('Timed out'), 'history timeout badge');
-  vm.runInContext("selectTab('agents'); lastData.lanes[0].display_state = 'interrupted; waiting to resume'; lastData.lanes[1].display_state = 'Running · resumed 1/2'; render(lastData)", fresh.context);
-  check(fresh.ids.lanes.textContent.includes('waiting to resume') && fresh.ids.lanes.textContent.includes('Running · resumed 1/2') && fresh.ids.lanes.children[1].querySelector('.badge').classList.contains('running'), 'cards expose active recovery and count with running badge');
-  vm.runInContext("lastData.history[0].display_state = 'resumed (1/2)'; lastData.history[0].resume_count = 1; lastData.history[0].relation = 'resumed 1/2 after interruption at 23:31; resumed by the 23:40 run'; lastData.history[0].chain_depth = 1; selectTab('runs')", fresh.context);
-  check(fresh.ids.runs.textContent.includes('Resumed (1/2)') && fresh.ids.runs.textContent.includes('resumed 1/2 after interruption at 23:31') && fresh.ids.runs.textContent.includes('resumed by the 23:40 run') && !fresh.ids.runs.textContent.includes('Previous run:'), 'history exposes readable recovery relations');
+  // Badge colour is the server's tone field; the label text is never parsed.
+  const tones = [['Running · resumed 1/2', 'green'], ['Ended · resumed 2/2', 'green'], ['Failed · resumed 1/2', 'red'], ['Cancelled · resumed 1/2', 'amber'], ['Timed out · resumed 1/2', 'amber'], ['interrupted; waiting to resume', ''], ['interrupted', '']];
+  for (const [label, tone] of tones) {
+    const shown = label.charAt(0).toUpperCase() + label.slice(1), className = tone ? 'badge ' + tone : 'badge';
+    vm.runInContext("selectTab('agents'); lastData.lanes[1].display_state = " + JSON.stringify(label) + "; lastData.lanes[1].badge = " + JSON.stringify(tone) + "; render(lastData)", fresh.context);
+    const card = fresh.ids.lanes.children[1].querySelector('.badge');
+    check(card.textContent === shown && card.className === className, 'card badge tone from server: ' + label);
+    vm.runInContext("lastData.history[0].display_state = " + JSON.stringify(label) + "; lastData.history[0].badge = " + JSON.stringify(tone) + "; selectTab('runs'); render(lastData)", fresh.context);
+    const row = fresh.ids.runs.querySelector('.badge');
+    check(row.textContent === shown && row.className === className, 'history badge tone from server: ' + label);
+  }
+  vm.runInContext("selectTab('agents'); lastData.lanes[1].display_state = 'Running · resumed 1/2'; delete lastData.lanes[1].badge; render(lastData)", fresh.context);
+  check(fresh.ids.lanes.children[1].querySelector('.badge').className === 'badge', 'label text alone never colours a badge');
+  vm.runInContext("lastData.history[0].display_state = 'Ended · resumed 1/2'; lastData.history[0].badge = 'green'; lastData.history[0].resume_count = 1; lastData.history[0].relation = 'resumed 1/2 after interruption at 23:31; resumed by the 23:40 run'; lastData.history[0].chain_depth = 1; selectTab('runs'); render(lastData)", fresh.context);
+  check(fresh.ids.runs.textContent.includes('Ended · resumed 1/2') && fresh.ids.runs.textContent.includes('resumed 1/2 after interruption at 23:31') && fresh.ids.runs.textContent.includes('resumed by the 23:40 run') && !fresh.ids.runs.textContent.includes('Previous run:'), 'history exposes readable recovery relations');
   check(fresh.ids.runs.querySelector('.chain-child') !== null, 'history indents descendants');
   check(fresh.ids.runs.textContent.includes(input.data.history[0].run_id), 'history shows the short run ID');
   vm.runInContext("selectTab('agents'); lastData.lanes[0].current_action = {summary: 'go test ./...', age_seconds: 42, age_source: 'observed', running_seconds: 42}; render(lastData)", fresh.context);
@@ -233,6 +244,41 @@ function rendered(h, id) {
   check(!vm.runInContext("busy(el('runs'))", fresh.context), 'panel target itself does not create a hold');
 })().catch(() => { process.stderr.write(predicate); process.exitCode = 1; });
 `
+
+// Badge tones resolve to theme variables that both colour schemes define, and
+// the script never maps label text to a colour.
+func TestDashboardBadgeTonesInBothThemes(t *testing.T) {
+	css, err := dashboardAssets.ReadFile("app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := dashboardAssets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(script), "resumed [12]") || strings.Contains(string(script), "known.includes(state)") {
+		t.Fatal("badge colour must come from the server badge field, not label text")
+	}
+	light, dark, found := strings.Cut(string(css), "@media(prefers-color-scheme:dark)")
+	if !found {
+		t.Fatal("dark theme missing")
+	}
+	for _, tone := range []string{"green", "amber", "red"} {
+		if !strings.Contains(string(css), ".badge."+tone+"{color:var(--"+tone+");background:var(--"+tone+"-soft)}") {
+			t.Fatalf("badge tone rule missing: %s", tone)
+		}
+		for _, name := range []string{"--" + tone + ":", "--" + tone + "-soft:"} {
+			if !strings.Contains(light, name) || !strings.Contains(dark, name) {
+				t.Fatalf("theme variable missing: %s", name)
+			}
+			lightValue, _, _ := strings.Cut(strings.SplitN(light, name, 2)[1], ";")
+			darkValue, _, _ := strings.Cut(strings.SplitN(dark, name, 2)[1], ";")
+			if lightValue == darkValue {
+				t.Fatalf("theme variable identical in both schemes: %s", name)
+			}
+		}
+	}
+}
 
 // Strict decoding binds the screenshot fixture to actual card/status types and
 // the existing history, notes and freeze JSON shape, including optional fields.
@@ -255,6 +301,7 @@ func TestDashboardFixtureMatchesData(t *testing.T) {
 		Report        string            `json:"report"`
 		Sections      map[string]string `json:"sections"`
 		ResumeCount   int               `json:"resume_count"`
+		Badge         string            `json:"badge"`
 		ParentRunID   string            `json:"parent_run_id"`
 		ContinueRunID string            `json:"continue_run_id"`
 	}

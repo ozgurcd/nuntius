@@ -66,6 +66,7 @@ type Status struct {
 	AskedInteractively  bool           `json:"asked_interactively"`
 	Outcome             string         `json:"outcome,omitempty"`
 	DisplayState        string         `json:"display_state,omitempty"`
+	Badge               string         `json:"badge,omitempty"`
 }
 type activeRun struct {
 	done chan struct{}
@@ -599,10 +600,11 @@ func (m *Manager) Status() ([]Status, error) {
 				s.State = "ended_no_report"
 			}
 			s.DisplayState = terminalDisplay(*r, s.State)
+			s.Badge = badgeTone(*r, s.State)
 			if stuck, err := m.checkStuck(r, time.Now()); err != nil {
 				return nil, err
 			} else if stuck {
-				s.DisplayState = "stuck?"
+				s.DisplayState, s.Badge = "stuck?", "amber"
 			}
 			if s.DisplayState == s.State {
 				s.DisplayState = ""

@@ -20,7 +20,8 @@
         "age_seconds": 8,
         "age_source": "observed",
         "running_seconds": 8
-      }
+      },
+      "badge": "green"
     },
     {
       "lane": "codex-1",
@@ -46,7 +47,8 @@
       "report_exists": true,
       "asked_interactively": false,
       "eta": "-",
-      "activity": "reading files"
+      "activity": "reading files",
+      "badge": "green"
     },
     {
       "lane": "claude-2",
@@ -62,7 +64,8 @@
       "report_exists": false,
       "asked_interactively": false,
       "eta": "-",
-      "activity": "editing files"
+      "activity": "editing files",
+      "badge": "red"
     }
   ],
   "tails": {
@@ -100,7 +103,8 @@
       },
       "chain_id": "sample02",
       "chain_depth": 0,
-      "relation": "first run"
+      "relation": "first run",
+      "badge": "green"
     },
     {
       "run_id": "sample03",
@@ -120,7 +124,8 @@
       },
       "chain_id": "sample03",
       "chain_depth": 0,
-      "relation": "first run"
+      "relation": "first run",
+      "badge": "red"
     },
     {
       "run_id": "sample04",
@@ -140,7 +145,8 @@
       },
       "chain_id": "sample04",
       "chain_depth": 0,
-      "relation": "first run"
+      "relation": "first run",
+      "badge": "amber"
     }
   ],
   "notes": [

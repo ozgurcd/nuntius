@@ -1,6 +1,6 @@
 # nuntius
 
-Nuntius v0.2.7 is a small local Go MCP server for a judge using Claude Desktop.
+Nuntius v0.2.8 is a small local Go MCP server for a judge using Claude Desktop.
 It starts and follows configured Claude Code, Codex and OpenCode agent pools on macOS or Linux.
 It contains no LLM and makes no network requests of its own. Agent programs may
 use the network under their existing settings.
@@ -235,9 +235,13 @@ MCP dispatch/reply responses use the same short run ID; actions still target lan
 
 Human status, agents and the dashboard distinguish `timed_out` and `cancelled`.
 An active recovery run reads `Running · resumed 1/2` (or `2/2`), so the
-resume count does not hide that the agent is running.
+resume count does not hide that the agent is running. A finished recovery run
+reads as its outcome: `Ended · resumed 1/2`, `Failed · resumed 1/2`,
+`Cancelled · resumed 1/2` or `Timed out · resumed 1/2`, in status,
+`status --long`, history, MCP status/history and the dashboard.
 Existing status/agents JSON `state` values remain compatible; an optional
-`display_state` supplies those labels and `stuck?`. A running run is `stuck?`
+`display_state` supplies those labels and `stuck?`, and an optional `badge`
+names the dashboard colour (`green`, `amber`, `red`; absent for plain). A running run is `stuck?`
 when its regular report file's modification time is over five minutes old,
 or its last event is over fifteen minutes old. With no event file, age starts
 at run start. Checks use strict thresholds and never automatically cancel.
@@ -355,7 +359,8 @@ It prepends a restart note requiring the agent to re-measure previous work.
 Repeating part of the work is acceptable; no periodic work journal is required.
 Each goal chain permits at most two automatic recovery attempts. Each attempt
 emits `<lane>.<goal>.resumed`; interrupted goals beyond the limit stay visible
-for the owner. History links the chain and displays `resumed (n/2)`.
+for the owner. History links the chain and displays `Ended · resumed 1/2`
+(or the failed, cancelled or timed-out outcome with the same count).
 
 A busy lane leaves the interrupted goal `waiting to resume`. The running MCP
 server retries when the lane frees. Freeze prevents launching; cancellation
@@ -483,6 +488,10 @@ the latest 50 runs and the bounded audit log. Filter history by goal ID or lane,
 then expand a row for highlighted QUESTIONS/DECISIONS, goal and report.
 Times are relative with absolute dates on hover.
 History rows stack on phones without splitting badge, lane or duration words.
+Badge colours come from the server's `badge` field, never from the label text:
+green = working or finished normally (including a resumed run), amber = needs
+a look (no report, cancelled, timed out, `stuck?`), red = failed. Idle and
+interrupted badges stay plain.
 Tab counts show running agents, unread owner notes and runs with open questions.
 
 Polling runs every two seconds; hidden panels update when shown. Stable cards and rows keep focus and expansion;
