@@ -151,7 +151,7 @@ The judge's MCP tools are `nuntius_status`, `nuntius_history`, `nuntius_signals`
 `nuntius_signals_ack`, `nuntius_dispatch`, `nuntius_reply`, `nuntius_tail`,
 `nuntius_report`, `nuntius_cancel`, `nuntius_freeze`, `nuntius_unfreeze`,
 `nuntius_owner_notes`, `nuntius_owner_notes_ack` and `nuntius_web_ensure`.
-The new ensure tool is unreleased. Keep it set to Ask in the coordinator host.
+The ensure tool is available in v0.3.2. Keep it set to Ask in the coordinator host.
 
 ## Check from your phone
 
@@ -165,7 +165,7 @@ Use your own iMessage email or E.164 phone number. Nuntius finds the Mac's tailn
 
 For prerequisites, cleanup, manual setup and private-link storage, see [phone access](docs/dashboard.md#phone-access-over-tailscale).
 
-With the unreleased `nuntius_web_ensure({})`, the judge can ask the owner-launched
+With `nuntius_web_ensure({})`, the judge can ask the owner-launched
 MCP server to restore the dashboard. It keeps a healthy process and sign-in,
 repairs a missing Serve mapping, or starts/replaces one verified dashboard.
 The chat receives state only. New sign-in goes to your configured iMessage
@@ -176,7 +176,7 @@ workflow. This needs the Mac awake, Tailscale connected and MCP available.
 
 Nuntius listens only on `127.0.0.1`. Phone access uses tailnet-only HTTPS through Tailscale Serve. It refuses an existing conflicting Serve mapping or enabled Funnel. **Never enable Funnel for this dashboard.** Tailscale access rules and the private dashboard credential both matter; someone with reachability and that credential can control agents.
 
-Every dashboard start creates a new sign-in credential. Links and QR codes are private. Sign-in stays in the current browser tab; a background start also saves access in an owner-only file that normal shutdown removes. Raw run folders contain briefs and full agent output, may contain private material, and must not be shared. Displayed output is bounded and redacted, but redaction cannot promise that arbitrary prose is safe to publish.
+Every dashboard start creates a new sign-in credential. Links and QR codes are private. Sign-in is remembered for seven days in the current browser profile and origin. A background start also saves access in an owner-only file that normal shutdown removes. Raw run folders contain briefs and full agent output, may contain private material, and must not be shared. Displayed output is bounded and redacted, but redaction cannot promise that arbitrary prose is safe to publish.
 
 Nuntius starts configured executables with argument lists, without a shell. It preserves normal agent settings and environment, and reads no agent credential files. It permits selected model/effort flags, Claude permission modes `auto`, `acceptEdits`, `plan`, `manual`, and Codex sandboxes `read-only`, `workspace-write`. It refuses permission/sandbox bypasses, hook/settings overrides, working-directory overrides and caller-chosen sessions. OpenCode requires an explicit provider/model and permits only `--agent` and `--variant` extra flags. See [the exact allow-list](docs/configuration.md).
 

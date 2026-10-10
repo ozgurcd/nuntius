@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.2 — 2026-10-10
 
 - Protect test-fixture manager configuration updates with the existing mutex;
   preserve launch-identity assertions and production locking.

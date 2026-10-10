@@ -35,7 +35,7 @@ JSON-RPC over stdio and MCP 2025-11-25. Stdout carries protocol messages only.
 References: [stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 and [MCP tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
 
-`nuntius_web_ensure({})` is judge-only and unreleased. It accepts only an empty
+`nuntius_web_ensure({})` is judge-only. It accepts only an empty
 object (at most 4096 bytes), with no caller-selected path, host, port, recipient,
 PID or command. It is state-changing and idempotent; host approval remains Ask
 for every invocation. Refusals return stable state/reason codes. An unavailable

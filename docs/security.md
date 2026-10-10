@@ -1,6 +1,6 @@
 # Dashboard security notes
 
-## Remembered phone sign-in (Unreleased)
+## Remembered phone sign-in (v0.3.2)
 
 The public, data-free shell removes the first-load credential query from the
 address bar before storage or API work. It remembers the grant in localStorage
@@ -46,7 +46,7 @@ change that solves that loss while preserving existing server guards.
 
 ## Judge-only recovery
 
-The unreleased `nuntius_web_ensure` capability belongs only to the existing
+The `nuntius_web_ensure` capability belongs only to the existing
 owner-launched stdio MCP server in the judge's host. Set approval to Ask on
 each call. MCP annotations are descriptive; they provide no caller identity
 or approval enforcement. Never register the server in coding-agent lanes or

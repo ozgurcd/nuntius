@@ -5,12 +5,12 @@ User-facing changes and upgrade actions are listed newest first. See the
 restart an existing server. Choose when to upgrade through the Homebrew tap
 and restart your MCP server or background dashboard to load the new binary.
 
-## Unreleased
+## v0.3.2 — 2026-10-10
 
 Sign out stays available while a dashboard action is waiting for a response.
 It forgets this browser's sign-in immediately and reloads the public page.
 A late action response cannot sign you back in or restore dashboard data.
-This fix is unreleased; no upgrade or restart is automatic.
+No upgrade or restart is automatic.
 
 If dashboard startup fails after creating its Tailscale HTTPS mapping, Nuntius
 now removes that mapping only when it still points exactly to its own port.
@@ -28,7 +28,7 @@ or `nuntius web link --notify` for a fresh sign-in link after expiry or restart.
 Use only a trusted private browser profile; anyone using that unlocked profile
 can access the bookmark. Cleared/disabled storage or private browsing may
 require the original link again. Tailnet-only access and API guards are unchanged.
-This change is unreleased; no upgrade or restart is automatic.
+No upgrade or restart is automatic.
 
 The judge can use `nuntius_web_ensure` to ask the owner-launched MCP server to
 restore phone dashboard access. Set this tool to Ask for each call in the host.
@@ -42,7 +42,7 @@ and reports that sign-in is needed. Existing sign-in is not resent.
 Keep the Mac awake and Tailscale connected. This does not add automatic login
 startup, restart supervision or a recovery HTTP endpoint, and does not change
 Funnel, VPN settings or coding-agent permissions. It cannot recover a stopped
-owner MCP. This tool is awaiting owner-approved release and installation;
+owner MCP. Upgrade through the Homebrew tap only when you choose;
 no upgrade or restart is automatic.
 
 OpenCode work that ends its final turn but fails to write the report now shows
@@ -50,7 +50,11 @@ OpenCode work that ends its final turn but fails to write the report now shows
 questions in the tail. Nuntius does not replay that work automatically or treat
 the missing report as success. Interrupted work still uses the existing bounded
 recovery policy; recovery notes say when the process exit cause is unknown.
-No configuration change is needed. This change is awaiting the next release.
+No configuration change is needed.
+
+Offline checks also cover safe mapping readback and the expected recovery tool.
+Test-only maintenance shortens a temporary working directory and synchronizes
+fixture settings; runtime behavior is unchanged.
 
 ## v0.3.1 — 2026-10-10
 

@@ -2,7 +2,7 @@
 
 ### Judge-only dashboard recovery
 
-Unreleased: `nuntius_web_ensure({})` runs inside the existing owner-launched
+Since v0.3.2: `nuntius_web_ensure({})` runs inside the existing owner-launched
 stdio MCP server. Register that server for the judge only and set this tool to
 Ask for each call. It takes no configuration or executable arguments.
 
@@ -56,7 +56,7 @@ nuntius web
 Open the private URL printed by that invocation. It contains a new random
 credential each start; do not share or log the URL. The page removes it from
 the address bar after loading and remembers it in `localStorage` for this
-origin and browser profile for seven days (Unreleased). Reload and opening a
+origin and browser profile for seven days (since v0.3.2). Reload and opening a
 bookmark after the phone discards the tab keep sign-in and the selected view.
 They do not extend the expiry. If storage is disabled or cleared, the start
 link works for the current load, but reload needs that link again. Without a credential the page
