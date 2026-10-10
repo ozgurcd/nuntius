@@ -1,8 +1,6 @@
 package nuntius
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -36,22 +34,7 @@ func (m *Manager) SetIMessage(path string, enabled bool) error {
 	if err != nil {
 		return err
 	}
-	if enabled && c.NotifyIMessage == "" {
-		return errors.New("configure notify_imessage in the settings file first")
-	}
-	c.NotifyIMessageEnabled = &enabled
-	// Preserve the owner's pools representation rather than serializing expanded lanes.
-	if c.Pools != nil {
-		c.Lanes = nil
-	}
-	b, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err = atomicPrivate(path, append(b, '\n')); err != nil {
-		return err
-	}
-	return m.audit("notify_imessage_config", "", "", "", "updated")
+	return m.commitSettings(c, path, settingsChanges{Notify: &enabled}, false)
 }
 
 // Pool sizes and iMessage on/off are writable. Other keys remain owner-edited.

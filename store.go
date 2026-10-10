@@ -180,12 +180,20 @@ func (m *Manager) recoverEnded(r *Run) error {
 	return m.endRun(r)
 }
 func (m *Manager) audit(tool, lane, goal, digest, result string, reasons ...string) error {
+	return m.appendAudit(false, tool, lane, goal, digest, result, reasons...)
+}
+
+func (m *Manager) appendAudit(nonblocking bool, tool, lane, goal, digest, result string, reasons ...string) error {
 	f, e := privateFile(filepath.Join(m.store, "audit.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND)
 	if e != nil {
 		return e
 	}
 	defer f.Close()
-	if e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX); e != nil {
+	lockMode := syscall.LOCK_EX
+	if nonblocking {
+		lockMode |= syscall.LOCK_NB
+	}
+	if e = syscall.Flock(int(f.Fd()), lockMode); e != nil {
 		return errors.New("cannot lock audit")
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)

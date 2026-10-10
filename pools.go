@@ -139,6 +139,9 @@ func (m *Manager) SetPool(path, kind string, size int, convert bool) error {
 	if e != nil {
 		return e
 	}
+	if !convert && c.Pools != nil {
+		return m.commitSettings(c, path, settingsChanges{Pools: map[string]int{kind: size}}, false)
+	}
 	next, e := c.poolConfig()
 	if e != nil {
 		return e

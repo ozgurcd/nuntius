@@ -45,9 +45,15 @@ GoReleaser's prebuilt builder requires Pro. Use ordinary archive file entries
 to include CI-built helpers and the Darwin bundle; validate each archive and
 cask before publishing. The main release remains on ubuntu-24.04.
 
-Settings reads a bounded, safe `set --json` snapshot through the main CLI.
-It lists current display values and configured lane identity, not recipients or
-flags. A change remains pending until Confirm; Discard clears it. Only pool
-sizes, notification on/off and helper-only start-at-login can change.
-Open settings file uses Finder reveal on macOS. Settings work while the
-dashboard is stopped. Fake-tray tests prove confirmation and CLI argv routing.
+**Settings…** is one menu item. Its fixed private-socket POST opens the running
+dashboard's validated loopback address, including its nondefault port, with
+`/#settings`. No grant or query is added. A signed-out local browser uses the
+existing sign-in flow; tailnet browser grants are not copied to localhost.
+If the dashboard is stopped, the helper says to start it locally; it does not
+start or ensure a service, send a link or rotate a grant.
+**Local status & login** retains a compact agent count and the helper-only
+start-at-login toggle. It reads only existence of the known helper login file;
+failure is Unknown, and non-macOS platforms are unavailable. The local toggle
+still calls `nuntius menubar --at-login on|off`. Preset pool/notification actions,
+pending confirmation, discard and raw configuration-file reveal are removed.
+Fake trays/openers prove routing and refusal without a browser or launchd.

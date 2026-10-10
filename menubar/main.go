@@ -197,7 +197,7 @@ func main() {
 	systray.Run(func() {
 		setRelayIcon()
 		tray := &nativeTray{actions: map[string]*systray.MenuItem{}}
-		tray.settingsMenu = systray.AddMenuItem("Settings", "Inspect settings and confirm changes")
+		tray.settingsMenu = systray.AddMenuItem("Local status & login", "Agent counts and local helper login toggle")
 		tray.choose = func(index string) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -206,7 +206,7 @@ func main() {
 				controller.Action(tray.settingsActions[i])
 			}
 		}
-		actions := []struct{ key, title string }{{"open", "Open dashboard"}, {"phone", "Send phone link"}, {"qr", "Show phone QR"}, {"start", "Start dashboard"}, {"stop", "Stop dashboard"}, {"quit", "Quit menu bar"}}
+		actions := []struct{ key, title string }{{"settings", "Settings…"}, {"open", "Open dashboard"}, {"phone", "Send phone link"}, {"qr", "Show phone QR"}, {"start", "Start dashboard"}, {"stop", "Stop dashboard"}, {"quit", "Quit menu bar"}}
 		controller = &Controller{tray: tray, client: client, quit: cancel, run: func(a string) error {
 			args := []string{"--config", *config, "--store", *store, "web", a}
 			if a == "start" {
@@ -242,14 +242,8 @@ func main() {
 			home, _ := os.UserHomeDir()
 			_, loginErr := os.Stat(filepath.Join(home, "Library", "LaunchAgents", "io.nuntius.menubar.plist"))
 			value.AtLogin = loginErr == nil
+			value.LoginKnown = runtime.GOOS == "darwin" && (loginErr == nil || os.IsNotExist(loginErr))
 			return value, err
-		}
-		controller.reveal = func() {
-			if runtime.GOOS == "darwin" {
-				runCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
-				defer done()
-				_ = exec.CommandContext(runCtx, "/usr/bin/open", "-R", *config).Run()
-			}
 		}
 		for _, a := range actions {
 			item := systray.AddMenuItem(a.title, a.title)

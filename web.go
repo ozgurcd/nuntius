@@ -23,6 +23,7 @@ import (
 )
 
 type Web struct {
+	settingsState  webSettings
 	manager        *Manager
 	address, token string
 	allowHost      string
@@ -66,6 +67,11 @@ func NewWeb(m *Manager, address string, allowHost ...string) (*Web, error) {
 		return nil, errors.New("invalid web port")
 	}
 	b := make([]byte, 32)
+	// A busy manager/control lock defers recovery until the next scalar write;
+	// it must not make otherwise healthy dashboard construction intermittent.
+	if e = m.recoverSettings(); e != nil && !errors.Is(e, errBusy) {
+		return nil, errors.New("settings recovery unavailable")
+	}
 	if _, e = rand.Read(b); e != nil {
 		return nil, e
 	}
@@ -159,6 +165,10 @@ func (w *Web) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost && r.Header.Get("Origin") != origin {
 		http.Error(out, "forbidden", http.StatusForbidden)
+		return
+	}
+	if r.URL.Path == "/settings" {
+		w.settings(out, r)
 		return
 	}
 	if r.URL.Path == "/action" {

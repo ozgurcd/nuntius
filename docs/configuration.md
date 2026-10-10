@@ -149,4 +149,6 @@ Set your own recipient in notify_imessage in the owner file. Then use
 The optional notify_imessage_enabled boolean records this choice; omitted means
 enabled when a recipient exists. Enabling with no recipient is refused.
 `set --json` exposes display settings without recipient or template arguments.
-The menu-bar Settings submenu uses these same CLI paths after confirmation.
+The dashboard Settings page uses the same Manager policy and private writer as
+these CLI setters. It can change existing pool sizes and this boolean only.
+Templates, recipients, paths and execution options remain local-only.

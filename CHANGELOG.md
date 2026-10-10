@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add the approved dashboard Settings tab with existing pool-size and iMessage
+  preference editing, current/draft review, atomic Save, Cancel and phone layout.
+- Share CLI validation/writing, guard Settings with exact Host/token/Origin,
+  bound framing/rates/revisions and record durable safe audit intent/outcomes.
+  Keep templates, paths, recipients, execution and startup options local-only.
+- Replace menu-bar presets and file reveal with credential-free Settings…;
+  keep minimal counts and the local helper start-at-login toggle.
+- Cover conflicts, partial-save refusal, failure recovery, draft retention and
+  sign-out during pending settings saves with offline fixtures.
+
 - Hide read-only dashboard audit rows by default, with a browser-remembered
   Show reads checkbox, matching-entry count and combined text/lane/action filters.
 - Derive read classification from existing MCP tool annotations; keep unknown

@@ -7,6 +7,16 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+**Settings** is now a dashboard tab. Review current and pending pool sizes and
+iMessage preference, then Save the batch or Cancel your draft. Other settings
+remain read-only or local-only. Busy agents keep running, and a stale draft
+cannot overwrite a CLI or another tab's change. Sign out stays available during
+Save. If a save cannot be confirmed, reload current values before trying again.
+The menu-bar **Settings…** item opens this tab in the running local dashboard
+without a credential URL; it does not start a stopped dashboard. Helper login
+startup stays local in **Local status & login**. Anyone using a signed-in phone
+profile can change these persistent preferences; protect that profile.
+
 The dashboard Audit list hides read-only polling and inspection entries by
 default. Check **Show reads** to include them again; your browser remembers
 the choice. Text, lane and action filters still combine, and the count shows

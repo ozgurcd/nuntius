@@ -4,13 +4,306 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 )
+
+func settingsFixture(t *testing.T) (*Manager, *Web, string) {
+	t.Helper()
+	m, c, _ := manager(t)
+	c, err := c.poolConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.NotifyIMessage = "fixture@example.invalid"
+	c.Pools["codex"] = AgentPool{Size: 2, Template: c.Pools["codex"].Template}
+	p := filepath.Join(t.TempDir(), "config.json")
+	b, _ := json.Marshal(c)
+	if os.WriteFile(p, b, 0600) != nil {
+		t.Fatal("config fixture")
+	}
+	m.mu.Lock()
+	m.config.SourcePath = p
+	m.mu.Unlock()
+	w, err := NewWeb(m, "127.0.0.1:8123", "fixture.ts.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m, w, p
+}
+func settingsHTTP(t *testing.T, w *Web, method, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(method, "http://localhost:8123/settings", strings.NewReader(body))
+	r.Header.Set("X-Nuntius-Token", w.token)
+	r.Header.Set("Origin", "http://localhost:8123")
+	r.Header.Set("Content-Type", "application/json")
+	out := httptest.NewRecorder()
+	w.ServeHTTP(out, r)
+	return out
+}
+func settingsRevision(t *testing.T, w *Web) string {
+	t.Helper()
+	out := settingsHTTP(t, w, "GET", "")
+	var value struct{ Revision string }
+	if out.Code != 200 || json.Unmarshal(out.Body.Bytes(), &value) != nil || value.Revision == "" {
+		t.Fatal("settings read failed")
+	}
+	return value.Revision
+}
+func settingsBody(revision, changes string) string {
+	return fmt.Sprintf(`{"schema_version":1,"expected_revision":%q,"changes":%s}`, revision, changes)
+}
+
+func TestSettingsStrictFraming(t *testing.T) {
+	m, w, p := settingsFixture(t)
+	revision := settingsRevision(t, w)
+	before, _ := os.ReadFile(p)
+	for _, change := range []string{`{}`, `{"pools":{"claude":null}}`, `{"pools":{"claude":"2"}}`, `{"pools":{"claude":1.5}}`, `{"pools":{"claude":1,"claude":2}}`, `{"notify_imessage_enabled":null}`, `{"reports_dir":"ignored"}`, `{"pools":{"claude":2},"pools":{"codex":2}}`, `{"notify_imessage_enabled":true,"notify_imessage_enabled":false}`, `{"Pools":{"claude":2}}`, `{"Notify_imessage_enabled":false}`} {
+		w.settingsState.post = settingsBucket{}
+		if settingsHTTP(t, w, "POST", settingsBody(revision, change)).Code != 400 {
+			t.Fatal("malformed batch accepted")
+		}
+	}
+	for _, body := range []string{settingsBody(revision, `{"pools":{"claude":2}}`) + `{}`, strings.Repeat(" ", 8193), `{"schema_version":1,"schema_version":1,"expected_revision":"ignored","changes":{"pools":{"claude":2}}}`, strings.Replace(settingsBody(revision, `{"pools":{"claude":2}}`), `"changes"`, `"Changes"`, 1)} {
+		w.settingsState.post = settingsBucket{}
+		if settingsHTTP(t, w, "POST", body).Code != 400 {
+			t.Fatal("invalid framing accepted")
+		}
+	}
+	for _, change := range []string{`{"pools":{"other":2}}`, `{"pools":{"opencode":1}}`, `{"pools":{"claude":-1}}`, `{"pools":{"claude":9}}`, `{"pools":{"claude":1}}`} {
+		w.settingsState.post = settingsBucket{}
+		if settingsHTTP(t, w, "POST", settingsBody(revision, change)).Code != 422 {
+			t.Fatal("invalid setting accepted")
+		}
+	}
+	after, _ := os.ReadFile(p)
+	if !bytes.Equal(before, after) {
+		t.Fatal("invalid request wrote config")
+	}
+	data, _ := os.ReadFile(filepath.Join(m.store, "audit.jsonl"))
+	if strings.Contains(string(data), "committed") {
+		t.Fatal("invalid request recorded commit")
+	}
+	r := httptest.NewRequest("POST", "http://localhost:8123/settings", strings.NewReader(settingsBody(revision, `{"pools":{"claude":2}}`)))
+	r.Header.Set("X-Nuntius-Token", w.token)
+	r.Header.Set("Origin", "http://localhost:8123")
+	r.Header.Set("Content-Type", "text/plain")
+	w.settingsState.post = settingsBucket{}
+	out := httptest.NewRecorder()
+	w.ServeHTTP(out, r)
+	if out.Code != 400 {
+		t.Fatal("non JSON accepted")
+	}
+}
+
+func TestSettingsConflictLocksAndParity(t *testing.T) {
+	m, w, p := settingsFixture(t)
+	revision := settingsRevision(t, w)
+	c, err := LoadConfig(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := NewManager(c, m.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	if other.SetPool(p, "claude", 3, false) != nil {
+		t.Fatal("CLI writer failed")
+	}
+	if settingsHTTP(t, w, "POST", settingsBody(revision, `{"pools":{"codex":1}}`)).Code != 409 {
+		t.Fatal("stale revision overwrote CLI")
+	}
+	revision = settingsRevision(t, w)
+	lock, err := m.controlLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settingsHTTP(t, w, "POST", settingsBody(revision, `{"pools":{"codex":1}}`)).Code != 503 {
+		t.Fatal("held control lock accepted")
+	}
+	lock.Close()
+	m.mu.Lock()
+	if settingsHTTP(t, w, "GET", "").Code != 503 {
+		t.Fatal("manager lock accepted")
+	}
+	_, startupErr := NewWeb(m, "127.0.0.1:8123")
+	m.mu.Unlock()
+	if startupErr != nil {
+		t.Fatal("busy settings recovery prevented dashboard construction")
+	}
+	// Lock the removed lane, as another manager/surviving agent would do.
+	busy, err := m.lock("codex-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	w.settingsState.post = settingsBucket{}
+	before, _ := os.ReadFile(p)
+	if settingsHTTP(t, w, "POST", settingsBody(revision, `{"pools":{"claude":4,"codex":0}}`)).Code != 409 || other.SetPool(p, "codex", 0, false) == nil {
+		t.Fatal("busy shrink parity")
+	}
+	after, _ := os.ReadFile(p)
+	if !bytes.Equal(before, after) {
+		t.Fatal("busy batch partially applied")
+	}
+	_ = syscall.Flock(int(busy.Fd()), syscall.LOCK_UN)
+	auditLock, err := privateFile(filepath.Join(m.store, "audit.jsonl"), os.O_RDWR|os.O_CREATE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if syscall.Flock(int(auditLock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		t.Fatal("audit lock fixture")
+	}
+	w.settingsState.post = settingsBucket{}
+	if settingsHTTP(t, w, "POST", settingsBody(revision, `{"pools":{"claude":4}}`)).Code != 503 {
+		t.Fatal("held audit lock accepted")
+	}
+	auditLock.Close()
+	after, _ = os.ReadFile(p)
+	if !bytes.Equal(before, after) {
+		t.Fatal("audit refusal mutated config")
+	}
+	for _, n := range []int{-1, 9} {
+		if other.SetPool(p, "codex", n, false) == nil {
+			t.Fatal("CLI size policy loosened")
+		}
+	}
+	w.settingsState.post = settingsBucket{}
+	if settingsHTTP(t, w, "POST", settingsBody(revision, `{"pools":{"claude":4,"codex":0},"notify_imessage_enabled":false}`)).Code != 200 {
+		t.Fatal("good batch refused")
+	}
+	loaded, err := LoadConfig(p)
+	if err != nil || loaded.Pools["claude"].Size != 4 || loaded.Pools["codex"].Size != 0 || loaded.NotifyIMessage != c.NotifyIMessage || !reflect.DeepEqual(loaded.Pools["codex"].Template, c.Pools["codex"].Template) {
+		t.Fatal("untouched template/recipient not retained")
+	}
+	if other.reload() != nil || other.config.Pools["claude"].Size != 4 {
+		t.Fatal("sibling did not reload")
+	}
+}
+
+func TestSettingsAuditFailureRecovery(t *testing.T) {
+	for _, stage := range []string{"intent", "before_rename", "after_rename", "outcome"} {
+		t.Run(stage, func(t *testing.T) {
+			m, w, p := settingsFixture(t)
+			revision := settingsRevision(t, w)
+			before, _ := os.ReadFile(p)
+			m.settingsIO = &settingsIO{audit: func(tool, lane, goal, digest, result string, reasons ...string) error {
+				if stage == "intent" && result == "intent" || stage == "outcome" && result == "committed" {
+					return errors.New("injected audit failure")
+				}
+				return m.audit(tool, lane, goal, digest, result, reasons...)
+			}, write: func(path string, b []byte) error {
+				if stage == "before_rename" {
+					return errors.New("injected rename failure")
+				}
+				if err := atomicPrivate(path, b); err != nil {
+					return err
+				}
+				if stage == "after_rename" {
+					return errors.New("injected directory fsync failure")
+				}
+				return nil
+			}}
+			out := settingsHTTP(t, w, "POST", settingsBody(revision, `{"pools":{"claude":2},"notify_imessage_enabled":false}`))
+			if out.Code != 503 {
+				t.Fatal("write failure hidden")
+			}
+			after, _ := os.ReadFile(p)
+			committed := stage == "outcome" || stage == "after_rename"
+			if bytes.Equal(before, after) == committed {
+				t.Fatal("incorrect commit state")
+			}
+			if stage == "outcome" && !strings.Contains(out.Body.String(), "committed_audit_failed") {
+				t.Fatal("commit falsely reported rollback")
+			}
+			if committed && !strings.Contains(out.Body.String(), `"revision"`) {
+				t.Fatal("committed or uncertain response lacks current revision")
+			}
+			m.settingsIO = nil
+			if settingsRevision(t, w) == revision && committed {
+				t.Fatal("revision not changed after visible commit")
+			}
+			if _, err := os.Stat(filepath.Join(m.store, "settings-intent.json")); err != nil {
+				t.Fatal("GET unexpectedly reconciled intent")
+			}
+			if _, err := NewWeb(m, "127.0.0.1:8123"); err != nil {
+				t.Fatal("local web construction did not reconcile intent")
+			}
+			if _, err := os.Stat(filepath.Join(m.store, "settings-intent.json")); !os.IsNotExist(err) {
+				t.Fatal("intent not reconciled")
+			}
+			log, err := os.ReadFile(filepath.Join(m.store, "audit.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(log), "fixture@example.invalid") || strings.Contains(string(log), p) || strings.Contains(string(log), "extra_args") {
+				t.Fatal("private config entered audit")
+			}
+			result := "not_committed"
+			if committed {
+				result = "committed"
+			}
+			if strings.Count(string(log), `"result":"`+result+`"`) != 2 {
+				t.Fatal("per-field recovered outcomes missing")
+			}
+		})
+	}
+}
+
+func TestSettingsLegacyRecipientTemplateAndLimits(t *testing.T) {
+	m, w, p := settingsFixture(t)
+	c, _ := LoadConfig(p)
+	c.NotifyIMessage = ""
+	c.NotifyIMessageEnabled = new(bool)
+	c.Lanes = nil
+	b, _ := json.Marshal(c)
+	_ = os.WriteFile(p, b, 0600)
+	revision := settingsRevision(t, w)
+	if settingsHTTP(t, w, "POST", settingsBody(revision, `{"notify_imessage_enabled":true}`)).Code != 422 || m.SetIMessage(p, true) == nil {
+		t.Fatal("missing recipient policy")
+	}
+	c.Pools["codex"] = AgentPool{Size: 0, Template: Lane{}}
+	b, _ = json.Marshal(c)
+	_ = os.WriteFile(p, b, 0600)
+	if settingsHTTP(t, w, "GET", "").Code != 503 {
+		t.Fatal("invalid disabled template exposed")
+	}
+	_, legacy, _ := manager(t)
+	b, _ = json.Marshal(legacy)
+	_ = os.WriteFile(p, b, 0600)
+	w.settingsState.post = settingsBucket{}
+	revision = settingsRevision(t, w)
+	if settingsHTTP(t, w, "POST", settingsBody(revision, `{"pools":{"claude":2}}`)).Code != 422 {
+		t.Fatal("implicit legacy conversion")
+	}
+	w.settingsState.get = settingsBucket{}
+	for i := 0; i < 10; i++ {
+		if settingsHTTP(t, w, "GET", "").Code != 200 {
+			t.Fatal("GET burst control")
+		}
+	}
+	if out := settingsHTTP(t, w, "GET", ""); out.Code != 429 || out.Header().Get("Retry-After") == "" {
+		t.Fatal("GET limiter missing")
+	}
+	w.settingsState.post = settingsBucket{}
+	for i := 0; i < 3; i++ {
+		if settingsHTTP(t, w, "POST", "{}").Code != 400 {
+			t.Fatal("POST burst control")
+		}
+	}
+	if settingsHTTP(t, w, "POST", "{}").Code != 429 {
+		t.Fatal("POST limiter missing")
+	}
+}
 
 func TestPoolsConversionResizeAndAgents(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

@@ -27,8 +27,6 @@ type Controller struct {
 	quit     func()
 	settings func() (Settings, error)
 	apply    func([]string) error
-	reveal   func()
-	pending  []string
 }
 
 func (c *Controller) Refresh() {
@@ -77,9 +75,13 @@ func (c *Controller) Action(a string) {
 		return
 	}
 	switch a {
-	case "open", "phone", "qr":
+	case "open", "phone", "qr", "settings":
 		if c.client.Action(a) != nil {
-			c.tray.Update("●", "Nuntius · action unavailable; check dashboard configuration", nil, true)
+			message := "Nuntius · action unavailable; check dashboard configuration"
+			if a == "settings" {
+				message = "Dashboard stopped. Start it locally, then open Settings."
+			}
+			c.tray.Update("●", message, nil, true)
 		}
 	case "start", "stop":
 		if c.run(a) != nil {

@@ -1,6 +1,7 @@
 package nuntius
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,149 @@ import (
 	"testing"
 	"time"
 )
+
+// Real mux, synthetic grants, scratch configuration; no network or owner files.
+func TestSettingsGuardsAndBatch(t *testing.T) {
+	m, c, _ := manager(t)
+	c, err := c.poolConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.NotifyIMessage = "fixture@example.invalid"
+	p := filepath.Join(t.TempDir(), "config.json")
+	b, _ := json.Marshal(c)
+	if os.WriteFile(p, b, 0600) != nil {
+		t.Fatal("fixture write")
+	}
+	m.mu.Lock()
+	m.config.SourcePath = p
+	m.mu.Unlock()
+	w, err := NewWeb(m, "127.0.0.1:8123", "fixture.ts.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(method, host, origin, body string, auth bool) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(method, "http://"+host+"/settings", strings.NewReader(body))
+		if auth {
+			r.Header.Set("X-Nuntius-Token", w.token)
+		}
+		r.Header.Set("Origin", origin)
+		r.Header.Set("Content-Type", "application/json")
+		out := httptest.NewRecorder()
+		w.ServeHTTP(out, r)
+		return out
+	}
+	for _, host := range []string{"localhost:8123", "127.0.0.1:8123", "fixture.ts.net", "fixture.ts.net:443"} {
+		if request("GET", host, "", "", true).Code != 200 {
+			t.Fatal("valid settings GET refused")
+		}
+	}
+	for _, host := range []string{"localhost:8124", "fixture.ts.net:444", "other.ts.net", "localhost"} {
+		if request("GET", host, "", "", true).Code != 403 {
+			t.Fatal("wrong settings host accepted")
+		}
+	}
+	if request("GET", "localhost:8123", "", "", false).Code != 403 {
+		t.Fatal("unsigned settings accepted")
+	}
+	for _, method := range []string{"PUT", "PATCH", "DELETE", "OPTIONS"} {
+		if request(method, "localhost:8123", "", "{}", true).Code != 405 {
+			t.Fatal("method accepted")
+		}
+	}
+	for _, origin := range []string{"", "null", "https://localhost:8123", "http://other:8123"} {
+		if request("POST", "localhost:8123", origin, "{}", true).Code != 403 {
+			t.Fatal("origin accepted")
+		}
+	}
+	get := request("GET", "localhost:8123", "", "", true)
+	var current struct {
+		Revision string `json:"revision"`
+	}
+	if json.Unmarshal(get.Body.Bytes(), &current) != nil || current.Revision == "" {
+		t.Fatal("revision missing")
+	}
+	post := func(changes string) *httptest.ResponseRecorder {
+		return request("POST", "localhost:8123", "http://localhost:8123", `{"schema_version":1,"expected_revision":"`+current.Revision+`","changes":`+changes+`}`, true)
+	}
+	before, _ := os.ReadFile(p)
+	if post(`{"pools":{"claude":2,"codex":9}}`).Code != 422 {
+		t.Fatal("invalid batch not refused")
+	}
+	after, _ := os.ReadFile(p)
+	if !bytes.Equal(before, after) {
+		t.Fatal("partial save")
+	}
+	if post(`{"pools":{"claude":2},"notify_imessage_enabled":false}`).Code != 200 {
+		t.Fatal("valid batch refused")
+	}
+	actual, err := LoadConfig(p)
+	if err != nil || actual.Pools["claude"].Size != 2 || actual.imessageEnabled() || actual.NotifyIMessage != c.NotifyIMessage {
+		t.Fatal("batch preservation")
+	}
+	if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != 0600 {
+		t.Fatal("private config mode")
+	}
+}
+
+func TestSettingsTailnetAndHeaderOnly(t *testing.T) {
+	_, w, _ := settingsFixture(t)
+	for _, host := range []string{"fixture.ts.net", "fixture.ts.net:443"} {
+		get := httptest.NewRequest("GET", "https://"+host+"/settings", nil)
+		get.Header.Set("X-Nuntius-Token", w.token)
+		out := httptest.NewRecorder()
+		w.ServeHTTP(out, get)
+		var value struct{ Revision string }
+		if out.Code != 200 || json.Unmarshal(out.Body.Bytes(), &value) != nil {
+			t.Fatal("valid tailnet read control")
+		}
+		for _, origin := range []string{"http://fixture.ts.net", "https://fixture.ts.net:443", "https://other.ts.net", "null", ""} {
+			r := httptest.NewRequest("POST", "https://"+host+"/settings", strings.NewReader(settingsBody(value.Revision, `{"pools":{"claude":2}}`)))
+			r.Header.Set("X-Nuntius-Token", w.token)
+			r.Header.Set("Origin", origin)
+			r.Header.Set("Content-Type", "application/json")
+			out = httptest.NewRecorder()
+			w.ServeHTTP(out, r)
+			if out.Code != 403 {
+				t.Fatal("tailnet origin guard")
+			}
+		}
+		r := httptest.NewRequest("POST", "https://"+host+"/settings", strings.NewReader(settingsBody(value.Revision, `{"pools":{"claude":2}}`)))
+		r.Header.Set("X-Nuntius-Token", w.token)
+		r.Header.Set("Origin", "https://fixture.ts.net")
+		r.Header.Set("Content-Type", "application/json")
+		out = httptest.NewRecorder()
+		w.ServeHTTP(out, r)
+		if out.Code != 200 && out.Code != 422 {
+			t.Fatal("valid tailnet POST control")
+		}
+	}
+	for _, header := range []string{"", "wrong"} {
+		r := httptest.NewRequest("GET", "http://localhost:8123/settings?token="+w.token, nil)
+		r.Header.Set("X-Nuntius-Token", header)
+		r.Header.Set("X-Forwarded-Host", "fixture.ts.net")
+		out := httptest.NewRecorder()
+		w.ServeHTTP(out, r)
+		if out.Code != 403 {
+			t.Fatal("query or forwarded auth accepted")
+		}
+	}
+	get := httptest.NewRequest("GET", "http://localhost:8123/settings", strings.NewReader(`{"changes":{"pools":{"claude":8}}}`))
+	get.Header.Set("X-Nuntius-Token", w.token)
+	before := settingsRevision(t, w)
+	out := httptest.NewRecorder()
+	w.ServeHTTP(out, get)
+	if out.Code != 200 || settingsRevision(t, w) != before {
+		t.Fatal("GET mutated settings")
+	}
+	if out.Header().Get("Access-Control-Allow-Origin") != "" || !strings.Contains(out.Header().Get("Content-Security-Policy"), "script-src 'self'") {
+		t.Fatal("CORS/CSP widened")
+	}
+	if strings.Contains(out.Body.String(), "fixture@example.invalid") || strings.Contains(out.Body.String(), "extra_args\": [") {
+		t.Fatal("private fields returned")
+	}
+}
 
 func TestReportSectionForms(t *testing.T) {
 	for _, r := range []string{"QUESTIONS:\nchoose\nDECISIONS:\nkept\nIDS:\nexcluded", "QUESTIONS: choose\nDECISIONS: kept\nIDS: excluded", "## QUESTIONS\nchoose\n## DECISIONS\nkept\n## IDS\nexcluded"} {

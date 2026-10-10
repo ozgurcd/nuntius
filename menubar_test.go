@@ -13,6 +13,32 @@ import (
 	"time"
 )
 
+func TestMenubarSettingsLink(t *testing.T) {
+	m, _, _ := manager(t)
+	w, err := NewWeb(m, "127.0.0.1:9127")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := menubarOpenFile
+	defer func() { menubarOpenFile = old }()
+	opened := ""
+	menubarOpenFile = func(_ context.Context, target string) error { opened = target; return nil }
+	for _, method := range []string{"GET", "POST"} {
+		out := httptest.NewRecorder()
+		w.menubarHandler().ServeHTTP(out, httptest.NewRequest(method, "http://unix/settings", nil))
+		want := 405
+		if method == "POST" {
+			want = 200
+		}
+		if out.Code != want {
+			t.Fatal("settings transport unavailable or method guard missing")
+		}
+	}
+	if opened != "http://127.0.0.1:9127/#settings" {
+		t.Fatal("settings must open fixed local origin and hash without a query")
+	}
+}
+
 func TestMenubarAPI(t *testing.T) {
 	m, _, _ := manager(t)
 	w, err := NewWeb(m, "127.0.0.1:0")

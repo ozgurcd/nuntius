@@ -47,7 +47,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	if len(rest) == 1 && rest[0] == "help" {
-		fmt.Fprintln(out, "Version: version | --version | -v. Settings: set [--json] lists display values; set notify-imessage on|off toggles an existing recipient. Menu-bar Settings confirms changes through these CLI commands.")
+		fmt.Fprintln(out, "Version: version | --version | -v. Settings: set [--json] lists display values; set notify-imessage on|off toggles an existing recipient. Menu-bar Settings… opens the running local dashboard Settings tab; sign in there to save pool sizes and iMessage preference.")
 		fmt.Fprintln(out, "Audit: nuntius audit [--since 1h] [--json] lists recent redacted actions, newest first.")
 		fmt.Fprintln(out, "Menu bar: web start launches the installed helper in a GUI session; --no-menubar skips it. web stop closes both. menubar --at-login on|off manages helper-only startup at the next macOS login (off by default).")
 		fmt.Fprintln(out, "Phone access: web start --tailnet [--tailnet-optional] [--tailnet-keep] [--notify-imessage HANDLE] runs in the background and survives terminal closure. web stop | status | link [--notify]; start --replace restarts. web without a subcommand stays in the foreground; use web start to free the terminal. web --allow-host HOST is the manual route. Loopback binding only.")

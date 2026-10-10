@@ -59,15 +59,16 @@ func TestDashboardAssetsBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := string(page)
-	if strings.Count(html, `role="tablist"`) != 2 || strings.Count(html, `role="tab"`) != 5 || strings.Count(html, `role="tabpanel"`) != 5 || strings.Count(html, `aria-selected="true"`) != 1 {
-		t.Fatal("dashboard needs five accessible tabs and one initial selection")
+	panels := []string{"agents", "messages", "digest", "runs", "auditSection", "settings"}
+	if strings.Count(html, `role="tablist"`) != 2 || strings.Count(html, `role="tab"`) != len(panels) || strings.Count(html, `role="tabpanel"`) != len(panels) || strings.Count(html, `aria-selected="true"`) != 1 {
+		t.Fatal("dashboard needs every accessible tab and one initial selection")
 	}
-	for _, id := range []string{"agents", "messages", "digest", "runs", "auditSection"} {
+	for _, id := range panels {
 		if !strings.Contains(html, `id="tab-`+id+`"`) || !strings.Contains(html, `aria-controls="`+id+`"`) || !strings.Contains(html, `aria-labelledby="tab-`+id+`"`) {
 			t.Fatal("tab and panel association missing")
 		}
 	}
-	if !strings.Contains(html, `id="tab-agents" role="tab" aria-selected="true" tabindex="0"`) || strings.Count(html, `role="tabpanel" hidden`) != 4 {
+	if !strings.Contains(html, `id="tab-agents" role="tab" aria-selected="true" tabindex="0"`) || strings.Count(html, `role="tabpanel" hidden`) != len(panels)-1 {
 		t.Fatal("Agents must be the only initially visible panel")
 	}
 	script, err := dashboardAssets.ReadFile("app.js")
@@ -120,6 +121,7 @@ const vm = require('node:vm');
 const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
 let predicate = 'harness initialization';
 function check(ok, label) { predicate = label; if (!ok) throw new Error(); }
+const exampleSettings={schema_version:1,revision:'example-revision',format:'pools',pools:{claude:{size:1,configured:true,editable:true},codex:{size:2,configured:true,editable:true},opencode:{size:0,configured:false,editable:false}},notify_imessage_enabled:true,notify_effective:true,recipient_configured:true,max_runtime:'8h',auto_resume:true,notifications:true,reports_dir:'/example/reports',oversight_path:'',lanes:[{name:'codex pool template',kind:'codex',model:'default',effort:'default',workdir:'/example/workspace',binary:'/example/bin/fake',start_mode:'as_is',extra_args:'Configured locally',continuation_configured:true}],lane_names:['claude-1','codex-1','codex-2'],at_login:'Unavailable · check locally',tailnet_default:'Off · launch option',local_only_reason:'Edit locally; run nuntius config check'};
 class Element {
   constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.attrs = {}; this.value = ''; this.hidden = false; this.disabled = false; this.open = false; this.checked = false; this.dataset = {}; this.listeners = {}; this.className = ''; this.text = ''; }
   get textContent() { return this.text + this.children.map(n => n.textContent).join(''); }
@@ -143,7 +145,7 @@ class Element {
   click() { if (!this.disabled) return this.listeners.click?.(); }
   focus() { this.document.activeElement = this; }
 }
-function start(hash, store = new Map(), query = '', blocked = false, clock = {now: 1791658800000}, status = 200, pending = null, pendingAction = null) {
+function start(hash, store = new Map(), query = '', blocked = false, clock = {now: 1791658800000}, status = 200, pending = null, pendingAction = null, settingsControl = {status:200,current:exampleSettings}) {
   const root = new Element('html'), ids = {}, stack = [root];
   // Parse the real static shell's element tree; no HTML renderer is involved.
   for (const match of input.page.matchAll(/<\/?([a-z][a-z0-9]*)([^>]*)>/gi)) {
@@ -162,9 +164,9 @@ function start(hash, store = new Map(), query = '', blocked = false, clock = {no
   // Each start is a fresh tab: only origin localStorage survives discard.
   const session = new Map();
   class ClockDate extends Date { static now() { return clock.now; } }
-  const context = vm.createContext({Date: ClockDate, document: doc, window: win, location, URL, history: {pushState: (_, __, path) => { location.hash = path.slice(path.indexOf('#')); }, replaceState: (_, __, path) => { location.href = 'http://localhost:8123' + path; location.hash = path.includes('#') ? path.slice(path.indexOf('#')) : ''; location.search = ''; }}, localStorage: storage, sessionStorage: {getItem: k => session.get(k) || null, setItem: (k,v) => session.set(k,v), removeItem: k => session.delete(k)}, fetch: async (path, options) => { calls.push({path, options}); if (path === '/action' && pendingAction) return await pendingAction; if (pending) await pending; return {ok: status === 200, status, json: async () => input.data}; }, setInterval: fn => { timers.push(fn); }, setTimeout: () => 1, clearTimeout: () => {}});
+  const context = vm.createContext({Date: ClockDate, document: doc, window: win, location, URL, history: {pushState: (_, __, path) => { location.hash = path.slice(path.indexOf('#')); }, replaceState: (_, __, path) => { location.href = 'http://localhost:8123' + path; location.hash = path.includes('#') ? path.slice(path.indexOf('#')) : ''; location.search = ''; }}, localStorage: storage, sessionStorage: {getItem: k => session.get(k) || null, setItem: (k,v) => session.set(k,v), removeItem: k => session.delete(k)}, fetch: async (path, options) => { calls.push({path, options}); if(path==='/settings'){if(options.method==='POST' && settingsControl.post)return await settingsControl.post; if(settingsControl.reject)throw new Error(); return {ok:settingsControl.status===200,status:settingsControl.status,json:async()=>JSON.parse(JSON.stringify(settingsControl.current))};} if (path === '/action' && pendingAction) return await pendingAction; if (pending) await pending; return {ok: status === 200, status, json: async () => input.data}; }, setInterval: fn => { timers.push(fn); }, setTimeout: () => 1, clearTimeout: () => {}});
   vm.runInContext(input.script, context);
-  return {context, ids, calls, timers, doc, win, location};
+  return {context, ids, calls, timers, doc, win, location, settingsControl};
 }
 async function settle() { for (let i = 0; i < 8; i++) await Promise.resolve(); }
 function rendered(h, id) {
@@ -174,6 +176,54 @@ function rendered(h, id) {
   return h.ids.auditRows.children.length === input.data.audit.length;
 }
 (async () => {
+	check(input.page.includes('aria-controls="settings"') && input.page.includes('id="settingsForm"'), 'approved Settings tab and form exist');
+  const settingsClock={now:1791658800000}, settingsStore=new Map();
+  const settings=start('#settings',settingsStore,'?token=fixture-auth',false,settingsClock); await settle();
+  check(!settings.ids.settings.hidden && settings.calls.filter(c=>c.path==='/settings').length===1 && settings.ids['setting-codex'].value==='2','settings hash loads authenticated current values once');
+  check(settings.ids['setting-opencode'].disabled && !settings.ids['setting-codex'].disabled && settings.ids.settingsSave.disabled,'unconfigured pool disabled and unchanged save disabled');
+  check(settings.ids.settingsModels.textContent.includes('read-only') && settings.ids.settingsMachine.textContent.includes('local only'),'read-only template and machine disposition');
+  const edit=(h,value)=>{h.ids['setting-codex'].value=value;h.ids['setting-codex'].listeners.input();};
+  edit(settings,'3'); settings.ids['setting-codex'].focus();
+  check(!settings.ids.settingsSave.disabled && !settings.ids.settingsPending.hidden && settings.ids['pending-codex'].textContent.includes('2 → 3'),'valid draft has current/pending summary');
+  await vm.runInContext('refresh()',settings.context); await settle();
+  check(settings.ids['setting-codex'].value==='3' && settings.doc.activeElement===settings.ids['setting-codex'],'operational polling retains input and focus');
+  vm.runInContext("selectTab('runs');selectTab('settings')",settings.context); await settle();
+  check(settings.ids['setting-codex'].value==='3' && settings.calls.filter(c=>c.path==='/settings').length===1,'reentry preserves draft and throttles reads');
+  for(const value of ['', '-1', '1.5', '9','1e0']){edit(settings,value);await vm.runInContext('saveSettings()',settings.context);check(settings.ids.settingsSave.disabled && settings.doc.activeElement===settings.ids['setting-codex'] && !settings.ids['error-codex'].hidden,'integer validation focuses inline error');}
+  settings.ids.settingsCancel.click();
+  check(settings.ids['setting-codex'].value==='2' && settings.ids.settingsSave.disabled && settings.ids['error-codex'].hidden,'Cancel restores baseline and clears errors');
+  edit(settings,'3'); settings.ids['setting-notify'].checked=false; settings.ids['setting-notify'].listeners.change();
+  settings.settingsControl.current={...exampleSettings,revision:'next-revision',pools:{...exampleSettings.pools,codex:{size:3,configured:true,editable:true}},notify_imessage_enabled:false,notify_effective:false};
+  await settings.ids.settingsForm.listeners.submit({preventDefault(){}}); await settle();
+  const savedSettings=settings.calls.find(c=>c.path==='/settings' && c.options.method==='POST'), batch=JSON.parse(savedSettings.options.body);
+  check(batch.changes.pools.codex===3 && batch.changes.notify_imessage_enabled===false && Object.keys(batch.changes).length===2 && batch.expected_revision==='example-revision','Save submits allowlisted atomic batch');
+  check(settings.ids.settingsSave.disabled && settings.ids.settingsBanner.textContent.startsWith('Saved.'),'success updates baseline');
+  for(const result of [409,422,429,503,'reject']){
+    const h=start('#settings',new Map(),'?token=fixture-auth');await settle();edit(h,'3');
+    if(result==='reject')h.settingsControl.reject=true;else{h.settingsControl.status=result;h.settingsControl.current={code:result===409?'busy_agent':result===429?'rate_limited':'invalid_configuration',field:'pools.codex'};}
+    await h.ids.settingsForm.listeners.submit({preventDefault(){}});await settle();
+    check(h.ids['setting-codex'].value==='3' && !h.ids.settingsBanner.hidden,'failure preserves draft: '+result);
+    if(result===422 || result===409)check(!h.ids['error-codex'].hidden && h.doc.activeElement===h.ids['setting-codex'],'server error remains inline after save');
+  }
+  settingsClock.now+=10000;edit(settings,'4');settings.settingsControl.current={...exampleSettings,revision:'external-revision'};
+  await settings.ids.settingsReload.click();await settle();
+  check(settings.ids['setting-codex'].value==='4' && settings.ids['current-codex'].textContent.includes('2') && settings.ids.settingsBanner.textContent.includes('draft is kept'),'Reload updates baseline without discarding draft');
+  const legacy=start('#settings',new Map(),'?token=fixture-auth',false,undefined,200,null,null,{status:200,current:{...exampleSettings,format:'legacy',recipient_configured:false,pools:Object.fromEntries(Object.entries(exampleSettings.pools).map(([k,v])=>[k,{...v,editable:false}]))}});await settle();
+  check(legacy.ids['setting-codex'].disabled && legacy.ids['setting-notify'].disabled && legacy.ids.settingsPoolHelp.textContent.includes('config convert'),'legacy and missing recipient local-only');
+  for(const result of [200,403,503,'reject']){
+    let finish,reject;const post=new Promise((ok,no)=>{finish=ok;reject=no;});const store=new Map();
+    const h=start('#settings',store,'?token=fixture-auth');await settle();edit(h,'3');h.settingsControl.post=post;
+    const save=h.ids.settingsForm.listeners.submit({preventDefault(){}});
+    check(!h.ids.signOut.disabled && h.ids.settingsSave.disabled && h.ids.settingsCancel.disabled,'pending save keeps Sign out usable');
+    h.ids.signOut.click();
+    check(!store.has('nuntius.web.credential') && h.ids['setting-codex'].value==='' && h.ids.settingsModels.children.length===0 && h.ids.settingsReview.children.length===0,'sign-out immediately clears settings and drafts');
+    const calls=h.calls.length;if(result==='reject')reject(new Error());else finish({ok:result===200,status:result,json:async()=>exampleSettings});await save;await settle();
+    check(h.calls.length===calls && h.ids['setting-codex'].value==='' && h.ids.settingsBanner.hidden && !store.has('nuntius.web.credential'),'late settings response cannot resurrect private state: '+result);
+  }
+  const storageSettings=start('#settings',new Map(),'?token=fixture-auth');await settle();edit(storageSettings,'3');storageSettings.win.storage({key:'nuntius.web.credential',storageArea:vm.runInContext('localStorage',storageSettings.context)});
+  check(storageSettings.ids['setting-codex'].value==='' && storageSettings.ids.settingsPending.hidden,'cross-tab settings draft clearing');
+  const expiryClock={now:1791658800000}, expirySettings=start('#settings',new Map(),'?token=fixture-auth',false,expiryClock);await settle();edit(expirySettings,'3');expiryClock.now+=7*24*60*60*1000;await vm.runInContext('saveSettings()',expirySettings.context);
+  check(expirySettings.ids['setting-codex'].value==='' && expirySettings.calls.filter(c=>c.path==='/settings').length===1,'expiry clears settings without a write');
   const phoneFailures = [];
   function phoneCheck(ok, label) { if (!ok) phoneFailures.push(label); }
   const clock = {now: 1791658800000}, sevenDays = 7 * 24 * 60 * 60 * 1000;

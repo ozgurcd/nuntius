@@ -116,7 +116,7 @@ func (w *Web) menubarHandler() http.Handler {
 			_ = json.NewEncoder(out).Encode(map[string]any{"lanes": rows})
 			return
 		}
-		if r.URL.Path != "/open" && r.URL.Path != "/qr" && r.URL.Path != "/phone" {
+		if r.URL.Path != "/open" && r.URL.Path != "/qr" && r.URL.Path != "/phone" && r.URL.Path != "/settings" {
 			out.WriteHeader(404)
 			return
 		}
@@ -127,7 +127,10 @@ func (w *Web) menubarHandler() http.Handler {
 		ctx, cancel := context.WithTimeout(r.Context(), 95*time.Second)
 		defer cancel()
 		var err error
-		if r.URL.Path == "/phone" {
+		if r.URL.Path == "/settings" {
+			// NewWeb validates the loopback address; never copy a grant into this URL.
+			err = menubarOpenFile(ctx, "http://"+w.address+"/#settings")
+		} else if r.URL.Path == "/phone" {
 			if _, err := w.manager.Status(); err != nil {
 				out.WriteHeader(503)
 				return

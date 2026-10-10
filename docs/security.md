@@ -1,5 +1,51 @@
 # Dashboard security notes
 
+## Dashboard Settings (Unreleased)
+
+A valid dashboard grant now authorizes persistent pool-size and iMessage-enable
+changes. Anyone with that grant and network reachability, including a person
+using an unlocked remembered phone profile, can change future agent capacity
+and notification preference. Turning notifications off can hide future sign-in
+delivery. Pool increases permit later dispatch within existing templates; they
+cannot supply new executables or permission bypasses. Settings remain saved
+after browser expiry, sign-out or grant rotation. Sign out neither undoes
+settings nor revokes another device's grant.
+
+GET/POST `/settings` use exact Host/port and header-token guards; POST additionally
+requires exact Origin and JSON content type. No query grant, cookie auth, CORS,
+generic config editor, service control or credential handoff is added. Paths,
+models/effort, templates and execution options remain read-only/local-only.
+Recipients, raw arguments and continuation text never enter the DTO or audit.
+All dynamic content uses text nodes; CSP is unchanged.
+
+Requests are limited to 8 KiB and four allowed changes. Unknown/duplicate keys,
+nulls, coerced/string/fractional sizes, trailing JSON and read-only keys are
+refused. Configuration stays at most 64 KiB; the explicit response is capped
+at 32 KiB (oversize means unavailable, not a truncated complete snapshot).
+Authenticated server-wide token buckets allow GET 60/minute, burst 10 and
+POST 10/minute, burst 3, with Retry-After. There is no forwarded-IP limiter map.
+Body reads have a five-second deadline. Settings, manager, control and audit
+lock acquisition is nonblocking; normal private-filesystem operations still
+depend on the OS completing I/O.
+
+Save uses CLI policy, cooperating control locks and one atomic mode-0600 write.
+An opaque random revision maps to private config-byte identity; a stale client
+gets 409. All fields validate before mutation; busy/surviving agents refuse
+shrink. Legacy conversion remains local. Locks protect cooperating CLI writers,
+not arbitrary owner-file editors that ignore the lock.
+
+A private durable intent records byte identities and safe scalar fields before
+mutation; an audit intent must also sync successfully. Each changed field gets
+a durable outcome. Intent reconciliation at local dashboard construction or
+the next Settings/CLI scalar write records committed, not_committed or uncertain
+by current byte identity. HTTP GET has no write side effects. Config and audit
+are separate files, so they are not one transaction.
+After rename/directory-sync uncertainty the response says save_unconfirmed;
+after an outcome failure it says committed_audit_failed. Both include a current
+opaque revision when readable and require re-reading before retry. No rollback
+is claimed or attempted. A crash during outcome append can produce repeated
+reconciled outcomes; exactly-once audit delivery is not claimed.
+
 ## Remembered phone sign-in (v0.3.2)
 
 The public, data-free shell removes the first-load credential query from the

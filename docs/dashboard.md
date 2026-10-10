@@ -1,5 +1,43 @@
 ## Local oversight dashboard
 
+### Settings (Unreleased)
+
+Open **Settings** or bookmark `/#settings` after signing in. Pool sizes for
+Claude, Codex and OpenCode accept whole numbers 0–8; zero disables an existing
+pool without deleting its template. Unconfigured pools cannot be enabled here.
+Legacy lanes require local `nuntius config convert` when idle. The iMessage
+switch changes only the enabled preference, never the private recipient.
+Enabling requires a recipient already configured on the Mac.
+
+Current values, pending deltas and a review list precede **Save changes**.
+Save validates every field and busy/surviving agents before one atomic private
+config write. Busy shrink refuses the entire batch. New runs use new settings;
+running agents and historical launch identities keep theirs. Cancel restores
+the last received values. Drafts stay in memory across tabs and operational
+polling; they are never saved in browser storage. Re-entry/focus refreshes use
+at most one read per ten seconds. Reload updates current values but keeps a
+draft for review. A stale revision cannot overwrite another tab or CLI change.
+
+Runtime, resume, desktop notification, paths, models/effort, lane identities,
+template execution options, helper login status and startup/network options
+are marked read-only or local-only. Raw arguments, continuation text and the
+iMessage recipient are never sent to the browser. Config/store paths and
+listener/host/notification overrides are chosen at startup. There is no file
+opener, generic config editor, model discovery or restart control.
+The start-at-login toggle stays local in **Local status & login** in the menu.
+
+iMessage preference is used when notification settings are next loaded.
+An existing dashboard's captured delivery settings/CLI override may require a
+local restart; saving sends no link and performs no restart. Settings… opens
+the running local dashboard without a credential URL; a signed-out browser
+uses the existing sign-in flow. A stopped dashboard must be started locally.
+
+Sign out stays usable during Save, clears private settings/drafts immediately,
+and ignores late responses. Expiry and cross-tab sign-out do the same.
+Failures preserve drafts. An unconfirmed save or committed-audit failure asks
+you to reload current values before retrying; never assume a rollback.
+See [the persistent-write threat model and audit limits](security.md#dashboard-settings-unreleased).
+
 ### Judge-only dashboard recovery
 
 Since v0.3.2: `nuntius_web_ensure({})` runs inside the existing owner-launched
@@ -67,7 +105,7 @@ is enabled. The static shell (`index.html`, `app.css`, `app.js`) is available
 without sign-in and contains no private data or credential. Every request still
 checks the allowed Host and port, method and security headers; POST Origin must
 match the request's local origin, or the exact opted-in HTTPS origin below. `/data` and `/action` require the
-`X-Nuntius-Token` header; a query parameter cannot authenticate either API.
+`X-Nuntius-Token` header; a query parameter cannot authenticate an API.
 Actions accept only POST.
 
 Use **Sign out** in the top bar to forget sign-in in this browser and clear
@@ -210,7 +248,7 @@ See the official [Serve command reference](https://tailscale.com/docs/reference/
 The dashboard adapts to laptop and phone-width windows and your system's light
 or dark mode. The sticky top bar shows dispatch/freeze controls, running, idle
 and ended counts, and refresh freshness on every tab. Agents opens by default;
-Messages & notes, Digest, History and Audit have their own panels. Arrow keys
+Messages & notes, Digest, History, Audit and Settings have their own panels. Arrow keys
 and Home/End navigate tabs. The URL hash selects the view on start and reload.
 The phone header uses two lines: brand and freeze controls, then counts and
 update age. Its pill shows `Enabled` / `Frozen` at narrow widths, with full

@@ -29,6 +29,7 @@ if (!token) {
 function signOut(removeStored = true) {
   if (!token) return;
   token = ''; expiresAt = 0; authEpoch++;
+  clearSettings();
   if (removeStored) {
     try { localStorage.removeItem(credentialKey); } catch {}
   }
@@ -58,6 +59,11 @@ const renderedPanels = new Set();
 const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
 const agentTabs = new Map(), laneRuns = new Map(), audits = new Map();
 let laneSelection = '';
+const settingsKinds = ['claude', 'codex', 'opencode'];
+let settingsCurrent = null, settingsDraft = null, settingsLoading = false, settingsSaving = false;
+let settingsReadAt = 0, settingsConfirmed = false;
+let settingsErrors = {};
+let settingsReadonlyID = 0;
 const auditReadsKey = 'nuntius.web.audit.showReads';
 try {
   el('auditReads').checked = localStorage.getItem(auditReadsKey) === 'true';
@@ -81,6 +87,10 @@ function selectTab(id, focus = false, push = true) {
   if (location.hash !== hash) history[push ? 'pushState' : 'replaceState'](null, '', '/' + hash);
   if (focus) active.focus();
   if (lastData) renderPanels(lastData, shown);
+  if (panelID === 'settings') {
+    active.scrollIntoView?.({block:'nearest', inline:'nearest'});
+    loadSettings();
+  }
 }
 for (const tab of tabs) {
   tab.addEventListener('click', () => selectTab(tab.getAttribute('aria-controls')));
@@ -544,7 +554,7 @@ async function action(name, lane = '', text = '', stop = false) {
     setText(el('error'), 'Action could not be completed. Check the current state and try again.');
     el('error').hidden = false;
   } finally {
-    acting = false; buttons.forEach(b => { b.disabled = false; });
+    acting = false; buttons.forEach(b => { b.disabled = false; }); settingsUpdate();
   }
   if (ok) await refresh();
   return ok;
@@ -571,7 +581,150 @@ el('auditReads').addEventListener('change', () => {
   filterAudit();
 });
 el('followTail').addEventListener('change', () => { if (lastData) renderLane(lastData); });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); if (!el('settings').hidden) loadSettings(); } });
+window.addEventListener('focus', () => { if (!el('settings').hidden) loadSettings(); });
+window.addEventListener('beforeunload', event => { if (token && settingsDiff().length) { event.preventDefault(); event.returnValue = ''; } });
+
+function settingsDiff() {
+  if (!settingsCurrent || !settingsDraft) return [];
+  const changes = settingsKinds.filter(k => settingsDraft[k] !== String(settingsCurrent.pools[k].size)).map(k => [k, settingsDraft[k]]);
+  if (settingsDraft.notify !== settingsCurrent.notify_imessage_enabled) changes.push(['notify', settingsDraft.notify]);
+  return changes;
+}
+function settingsBanner(text, error = false) {
+  setText(el('settingsBanner'), text); el('settingsBanner').hidden = !text;
+  el('settingsBanner').className = error ? 'error' : 'notice';
+  el('settingsBanner').setAttribute('role', error ? 'alert' : 'status');
+}
+function settingsFieldError(k, text) {
+  setText(el('error-' + k), text); el('error-' + k).hidden = !text;
+  el('setting-' + k).setAttribute('aria-invalid', String(!!text));
+}
+function settingsUpdate() {
+  const pending = settingsDiff(); let valid = true;
+  for (const k of settingsKinds) {
+    const pool = settingsCurrent?.pools[k], value = settingsDraft?.[k] ?? '';
+    const error = pool?.editable && (!/^\d+$/.test(value) || Number(value) > 8) ? 'Enter a whole number from 0 to 8.' : '';
+    settingsFieldError(k, error || settingsErrors[k] || ''); if (error) valid = false;
+    el('setting-' + k).disabled = !pool?.editable || settingsSaving || settingsLoading || acting;
+    setText(el('current-' + k), pool ? 'Current: ' + pool.size + ' agents' + (!pool.editable ? ' · ' + (settingsCurrent.format === 'legacy' ? 'Legacy · local conversion required' : 'Not configured') : '') : '');
+    setText(el('pending-' + k), pool && value !== String(pool.size) ? 'Pending: ' + pool.size + ' → ' + (value || 'empty') : '');
+  }
+  const on = b => b ? 'On' : 'Off';
+  el('setting-notify').disabled = !settingsCurrent || !settingsCurrent.recipient_configured || settingsSaving || settingsLoading || acting;
+  setText(el('current-notify'), settingsCurrent ? 'Current: ' + on(settingsCurrent.notify_imessage_enabled) + ' · effective ' + on(settingsCurrent.notify_effective) : '');
+  setText(el('pending-notify'), settingsCurrent && settingsDraft.notify !== settingsCurrent.notify_imessage_enabled ? 'Pending: ' + on(settingsCurrent.notify_imessage_enabled) + ' → ' + on(settingsDraft.notify) : '');
+  settingsFieldError('notify', settingsErrors.notify || '');
+  el('settingsReview').replaceChildren();
+  for (const [k,value] of pending) {
+    const li = node('li'), label = k === 'notify' ? 'iMessage' : k.charAt(0).toUpperCase() + k.slice(1) + ' pool';
+    li.append(node('strong','',label),node('span','',k === 'notify' ? on(settingsCurrent.notify_imessage_enabled) + ' → ' + on(value) : settingsCurrent.pools[k].size + ' → ' + (value || 'empty'))); el('settingsReview').append(li);
+  }
+  el('settingsReviewEmpty').hidden = !!pending.length; el('settingsPending').hidden = !pending.length;
+  el('settingsSave').disabled = !token || !settingsConfirmed || settingsLoading || settingsSaving || acting || !pending.length || !valid;
+  el('settingsCancel').disabled = !token || !pending.length || settingsSaving || settingsLoading || acting;
+  el('settingsReload').disabled = !token || settingsSaving || settingsLoading;
+  setText(el('settingsSave'), settingsSaving ? 'Saving…' : 'Save changes');
+  setText(el('settingsSaveStatus'), settingsSaving ? 'Save pending · Sign out stays available' : !settingsCurrent ? 'Sign in to load settings' : !pending.length ? 'No pending changes' : !valid ? 'Check the highlighted fields' : pending.length + ' pending changes');
+}
+function settingsResetDraft() {
+  if (!settingsCurrent) return;
+  settingsErrors = {};
+  settingsDraft = {notify:settingsCurrent.notify_imessage_enabled};
+  for (const k of settingsKinds) { settingsDraft[k] = String(settingsCurrent.pools[k].size); el('setting-' + k).value = settingsDraft[k]; }
+  el('setting-notify').checked = settingsDraft.notify; settingsFieldError('notify',''); settingsUpdate();
+}
+function settingsReadonly(parent, label, value) {
+  const field = node('div','field'), id = 'readonly-' + ++settingsReadonlyID;
+  const title = node('label','',label + ' · read-only'); title.setAttribute('for',id);
+  const input = node('input'); input.id = id; input.value = String(value || 'Default'); input.readOnly = true;
+  input.setAttribute('readonly',''); field.append(title,input); parent.append(field);
+}
+function settingsReadOnlyView(c) {
+  setText(el('settingsConnection'), location.href.startsWith('https:') ? 'HTTPS session' : 'Local session');
+  setText(el('settingsRecipient'), c.recipient_configured ? 'Recipient configured' : 'Not configured');
+  setText(el('settingsPoolHelp'), c.format === 'legacy' ? 'Legacy lanes are read-only. Run nuntius config convert locally when idle.' : 'Use whole numbers from 0 to 8. Increasing a pool does not start work.');
+  const pref = el('settingsPreferences'); pref.replaceChildren();
+  for (const [label,value] of [['Maximum runtime',c.max_runtime],['Resume interrupted goals',c.auto_resume?'On':'Off'],['Desktop notifications',c.notifications?'On':'Off']]) settingsReadonly(pref,label,value);
+  const models = el('settingsModels'); models.replaceChildren();
+  for (const l of c.lanes) {
+    const lane = node('div','settings-lane'); lane.append(node('h3','',l.name));
+    settingsReadonly(lane,l.kind + ' model',l.model === 'default' ? 'Default (agent configuration)' : l.model);
+    settingsReadonly(lane,l.kind + ' effort',l.effort === 'default' ? 'Default (agent configuration)' : l.effort);
+    if (l.kind === 'codex') lane.append(node('p','hint','Nuntius does not set Codex effort. Agent permissions stay unchanged.'));
+    const details = node('details'); details.append(node('summary','','Template & execution settings · local only'));
+    for (const [label,value] of [['Workspace',l.workdir],['Executable',l.binary],['Kind',l.kind],['Start mode',l.start_mode|| (l.kind==='claude'?'goal_then_continue':'as_is')],['Extra arguments',l.extra_args],['Continuation text',l.continuation_configured?'Configured locally':'Default continuation']]) details.append(node('p','',label + ': ' + value));
+    lane.append(details); models.append(lane);
+  }
+  models.append(node('p','hint','Expanded lanes: ' + (c.lane_names.join(', ') || 'All pools disabled')));
+  const machine = el('settingsMachine'); machine.replaceChildren();
+  for (const [label,value] of [['Reports folder',c.reports_dir],['Oversight file',c.oversight_path || 'Default · beside reports folder'],['Start menu-bar helper at login',c.at_login],['Tailnet default',c.tailnet_default]]) settingsReadonly(machine,label,value);
+  const options = node('details'); options.append(node('summary','','Startup & connection options · local only'),node('p','','Config/store locations, loopback port, allowed host, tailnet options and notification overrides are chosen locally at startup. This page cannot change or restart services.'));
+  machine.append(options,node('p','hint',c.local_only_reason));
+}
+async function loadSettings(force = false) {
+  if (!authenticated() || settingsLoading || settingsSaving || (!force && settingsReadAt && Date.now() - settingsReadAt < 10000)) return;
+  settingsLoading = true; settingsReadAt = Date.now(); const epoch = authEpoch;
+  settingsUpdate();
+  try {
+    const response = await fetch('/settings',{headers:{'X-Nuntius-Token':token},cache:'no-store'});
+    if (epoch !== authEpoch || !authenticated()) return;
+    if (response.status === 403) { signOut(); return; }
+    if (!response.ok) throw new Error();
+    const c = await response.json();
+    if (epoch !== authEpoch || !authenticated()) return;
+    const dirty = settingsDiff().length > 0;
+    settingsCurrent = c; settingsConfirmed = true; settingsReadOnlyView(c);
+    if (!dirty) settingsResetDraft();
+    settingsBanner(dirty ? 'Current values refreshed. Your draft is kept; review it before saving.' : '');
+  } catch {
+    if (epoch !== authEpoch || !authenticated()) return;
+    settingsConfirmed = false;
+    settingsBanner('Settings unavailable. Your draft is kept. Reload current values before saving; check nuntius config check locally if needed.',true);
+  } finally { if (epoch === authEpoch) { settingsLoading=false; settingsUpdate(); } }
+}
+async function saveSettings(event) {
+  event?.preventDefault(); if (!authenticated()) return;
+  settingsUpdate();
+  const invalid = settingsKinds.find(k => el('setting-' + k).getAttribute('aria-invalid') === 'true');
+  if (invalid) { el('setting-' + invalid).focus(); return; }
+  if (el('settingsSave').disabled) return;
+  const changes = {}; for (const [k,value] of settingsDiff()) { if (k==='notify') changes.notify_imessage_enabled=value; else { changes.pools ||= {}; changes.pools[k]=Number(value); } }
+  const epoch = authEpoch; settingsSaving=true; settingsUpdate();
+  try {
+    const response = await fetch('/settings',{method:'POST',headers:{'X-Nuntius-Token':token,'Content-Type':'application/json'},body:JSON.stringify({schema_version:1,expected_revision:settingsCurrent.revision,changes})});
+    if (epoch !== authEpoch || !authenticated()) return;
+    if (response.status === 403) { signOut(); return; }
+    const c = await response.json(); if (epoch !== authEpoch || !authenticated()) return;
+    if (!response.ok) {
+      if (response.status===409 || response.status>=500) settingsConfirmed=false;
+      const messages = {busy_agent:'Nothing saved. A busy agent cannot be removed. Keep the pool large enough for running agents.',revision_conflict:'Nothing saved. Settings changed elsewhere. Reload current values and review your draft.',recipient_not_configured:'Configure an iMessage recipient locally before enabling notifications.',rate_limited:'Too many settings requests. Wait briefly, then reload current values.',committed_audit_failed:'Settings were committed, but audit completion failed. Check current values before trying again.'};
+      const text = (messages[c.code] || (response.status>=500?'Could not confirm save. Check current values before trying again.':'Nothing saved. Check the highlighted fields and current configuration.')) + (c.code==='busy_agent' && /^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$/.test(c.lane || '') ? ' Busy agent: ' + c.lane + '.' : '');
+      settingsBanner(text,true);
+      const field = c.field?.startsWith('pools.') ? c.field.slice(6) : c.field==='notify_imessage_enabled'?'notify':'';
+      if ([...settingsKinds,'notify'].includes(field)) { settingsErrors[field]=text; settingsFieldError(field,text); el('setting-' + field).focus(); } else el('settingsBanner').focus();
+      return;
+    }
+    settingsCurrent=c; settingsConfirmed=true; settingsReadOnlyView(c); settingsResetDraft(); settingsBanner('Saved. New runs use these settings.');
+  } catch {
+    if (epoch !== authEpoch || !authenticated()) return;
+    settingsConfirmed=false; settingsBanner('Could not confirm save. Check current values before trying again.',true);
+  } finally { if (epoch === authEpoch) { settingsSaving=false; settingsUpdate(); } }
+}
+function clearSettings() {
+  settingsCurrent=null; settingsDraft=null; settingsConfirmed=false; settingsLoading=false; settingsSaving=false; settingsReadAt=0;
+  settingsErrors={};
+  for (const k of settingsKinds) { el('setting-'+k).value=''; settingsFieldError(k,''); }
+  el('setting-notify').checked=false; settingsFieldError('notify','');
+  for (const id of ['settingsPreferences','settingsModels','settingsMachine']) el(id).replaceChildren();
+  for (const id of ['settingsConnection','settingsRecipient']) setText(el(id),'');
+  settingsBanner(''); settingsUpdate();
+}
+for (const k of settingsKinds) el('setting-' + k).addEventListener('input', () => { if (!settingsDraft || settingsSaving) return; settingsDraft[k]=el('setting-'+k).value; delete settingsErrors[k]; settingsBanner(''); settingsUpdate(); });
+el('setting-notify').addEventListener('change', () => { if (!settingsDraft || settingsSaving) return; settingsDraft.notify=el('setting-notify').checked; delete settingsErrors.notify; settingsBanner(''); settingsUpdate(); });
+el('settingsForm').addEventListener('submit',saveSettings);
+el('settingsCancel').addEventListener('click', () => { settingsResetDraft(); settingsBanner(''); });
+el('settingsReload').addEventListener('click', () => loadSettings());
 setInterval(() => {
   if (lastUpdate) setText(el('updated'), 'Updated ' + Math.floor((Date.now() - lastUpdate) / 1000) + 's ago');
 }, 1000);

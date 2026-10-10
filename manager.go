@@ -76,6 +76,7 @@ type activeRun struct {
 	stop chan string
 }
 type Manager struct {
+	settingsIO   *settingsIO
 	actionClocks map[string]actionObservation
 	mu           sync.Mutex
 	config       Config
