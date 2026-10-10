@@ -121,7 +121,7 @@ const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
 let predicate = 'harness initialization';
 function check(ok, label) { predicate = label; if (!ok) throw new Error(); }
 class Element {
-  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.attrs = {}; this.value = ''; this.hidden = false; this.open = false; this.checked = false; this.dataset = {}; this.listeners = {}; this.className = ''; this.text = ''; }
+  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.attrs = {}; this.value = ''; this.hidden = false; this.disabled = false; this.open = false; this.checked = false; this.dataset = {}; this.listeners = {}; this.className = ''; this.text = ''; }
   get textContent() { return this.text + this.children.map(n => n.textContent).join(''); }
   set textContent(value) { this.replaceChildren(); this.text = String(value); }
   get firstElementChild() { return this.children[0] || null; }
@@ -140,9 +140,10 @@ class Element {
   remove() { if (this.parentElement) { const a = this.parentElement.children; a.splice(a.indexOf(this), 1); this.parentElement = null; } }
   replaceChildren(...nodes) { [...this.children].forEach(n => n.remove()); this.text = ''; this.append(...nodes); }
   addEventListener(name, fn) { this.listeners[name] = fn; }
+  click() { if (!this.disabled) return this.listeners.click?.(); }
   focus() { this.document.activeElement = this; }
 }
-function start(hash, store = new Map(), query = '', blocked = false, clock = {now: 1791658800000}, status = 200, pending = null) {
+function start(hash, store = new Map(), query = '', blocked = false, clock = {now: 1791658800000}, status = 200, pending = null, pendingAction = null) {
   const root = new Element('html'), ids = {}, stack = [root];
   // Parse the real static shell's element tree; no HTML renderer is involved.
   for (const match of input.page.matchAll(/<\/?([a-z][a-z0-9]*)([^>]*)>/gi)) {
@@ -161,7 +162,7 @@ function start(hash, store = new Map(), query = '', blocked = false, clock = {no
   // Each start is a fresh tab: only origin localStorage survives discard.
   const session = new Map();
   class ClockDate extends Date { static now() { return clock.now; } }
-  const context = vm.createContext({Date: ClockDate, document: doc, window: win, location, URL, history: {pushState: (_, __, path) => { location.hash = path.slice(path.indexOf('#')); }, replaceState: (_, __, path) => { location.href = 'http://localhost:8123' + path; location.hash = path.includes('#') ? path.slice(path.indexOf('#')) : ''; location.search = ''; }}, localStorage: storage, sessionStorage: {getItem: k => session.get(k) || null, setItem: (k,v) => session.set(k,v), removeItem: k => session.delete(k)}, fetch: async (path, options) => { calls.push({path, options}); if (pending) await pending; return {ok: status === 200, status, json: async () => input.data}; }, setInterval: fn => { timers.push(fn); }, setTimeout: () => 1, clearTimeout: () => {}});
+  const context = vm.createContext({Date: ClockDate, document: doc, window: win, location, URL, history: {pushState: (_, __, path) => { location.hash = path.slice(path.indexOf('#')); }, replaceState: (_, __, path) => { location.href = 'http://localhost:8123' + path; location.hash = path.includes('#') ? path.slice(path.indexOf('#')) : ''; location.search = ''; }}, localStorage: storage, sessionStorage: {getItem: k => session.get(k) || null, setItem: (k,v) => session.set(k,v), removeItem: k => session.delete(k)}, fetch: async (path, options) => { calls.push({path, options}); if (path === '/action' && pendingAction) return await pendingAction; if (pending) await pending; return {ok: status === 200, status, json: async () => input.data}; }, setInterval: fn => { timers.push(fn); }, setTimeout: () => 1, clearTimeout: () => {}});
   vm.runInContext(input.script, context);
   return {context, ids, calls, timers, doc, win, location};
 }
@@ -198,7 +199,7 @@ function rendered(h, id) {
   const signoutStore = new Map();
   const signout = start('#agents', signoutStore, '?token=fixture-auth', false, clock); await settle();
   phoneCheck(signout.ids.signOut?.listeners.click !== undefined, 'explicit phone sign-out control exists');
-  if (signout.ids.signOut?.listeners.click) signout.ids.signOut.listeners.click();
+  signout.ids.signOut?.click();
   await vm.runInContext("action('unfreeze'); refresh()", signout.context); await settle();
   phoneCheck(!signoutStore.has('nuntius.web.credential') && signout.location.reloads === 1 && signout.calls.length === 1, 'sign-out clears grant and navigates away from private data without further requests');
   const secondTab = start('#agents', new Map(), '?token=fixture-auth', false, clock); await settle();
@@ -219,10 +220,34 @@ function rendered(h, id) {
   let release;
   const deferred = new Promise(resolve => { release = resolve; });
   const inflight = start('#runs',new Map(),'?token=fixture-auth',false,clock,200,deferred);
-  if (inflight.ids.signOut?.listeners.click) inflight.ids.signOut.listeners.click();
+  inflight.ids.signOut?.click();
   release(); await settle();
   phoneCheck(!rendered(inflight,'runs'), 'sign-out ignores a late authenticated response');
   if (phoneFailures.length) { predicate = phoneFailures.join('; '); throw new Error(); }
+  // User clicks respect disabled controls; action completion is held separately
+  // from the initial refresh, using only offline responses and fresh VM tabs.
+  for (const result of [200, 403, 503, 'reject']) {
+    let finish, reject;
+    const response = new Promise((resolve, fail) => { finish = resolve; reject = fail; });
+    const store = new Map();
+    const h = start('#runs', store, '?token=fixture-auth', false, clock, 200, null, response); await settle();
+    const before = h.ids.runs.textContent;
+    const pendingAction = h.ids.freezeButton.click();
+    check(h.calls.length === 2 && h.calls[1].path === '/action' && h.ids.freezeButton.disabled, 'action is pending and locks action controls');
+    h.ids.freezeButton.click();
+    check(h.calls.length === 2, 'disabled-aware click suppresses a locked action');
+    check(!h.ids.signOut.disabled, 'Sign out stays enabled during a pending action');
+    h.ids.signOut.click();
+    check(!store.has('nuntius.web.credential') && h.location.reloads === 1 && !vm.runInContext('authenticated()', h.context), 'pending-action Sign out clears stored and in-memory credentials immediately and reloads the shell');
+    const shell = start('#runs', store, '', false, clock); await settle();
+    check(shell.calls.length === 0 && !rendered(shell, 'runs') && shell.ids.signOut.hidden, 'signed-out shell has no private data or authenticated requests');
+    if (result === 'reject') reject(new Error());
+    else finish({ok: result === 200, status: result, json: async () => input.data});
+    check(await pendingAction === false, 'late signed-out action never reports success: ' + result);
+    await settle();
+    check(!store.has('nuntius.web.credential') && !vm.runInContext('authenticated()', h.context) && h.location.reloads === 1, 'late action cannot restore credentials or repeat sign-out: ' + result);
+    check(h.ids.notice.hidden && h.ids.error.hidden && h.ids.runs.textContent === before && h.calls.length === 2, 'late action cannot restore notices, private data or refresh requests: ' + result);
+  }
 	const phoneWidth = 390;
 	const phoneRules = [...input.css.matchAll(/@media\s*\(max-width:\s*(\d+)px\)\s*\{([^@]*?)(?=@media|$)/g)].filter(r => phoneWidth <= Number(r[1])).map(r => r[2]).join('\n');
 	check(/\.table-scroll\s*\{[^}]*overflow-x:\s*auto/.test(phoneRules) && /\.table-scroll td\s*\{[^}]*white-space:\s*nowrap/.test(phoneRules), '390px wide-table cells stay intact inside a scrolling wrapper');

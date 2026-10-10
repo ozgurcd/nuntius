@@ -519,7 +519,8 @@ async function action(name, lane = '', text = '', stop = false) {
   if (!authenticated()) { await refresh(); return false; }
   if (acting) return false;
   acting = true;
-  const buttons = Array.from(document.querySelectorAll('button'));
+  // Local sign-out must remain available even if an action never settles.
+  const buttons = Array.from(document.querySelectorAll('button')).filter(b => b !== el('signOut'));
   buttons.forEach(b => { b.disabled = true; });
   let ok = false;
   const epoch = authEpoch;
