@@ -247,7 +247,24 @@ func TestGoalIDAndSize(t *testing.T) {
 }
 
 func TestDispatchReplyArgvAndStore(t *testing.T) {
+	// Keep the fake command's complete cwd below the 120-rune summary cap,
+	// independent of TMPDIR and testing's long per-test directory names.
+	workdir, err := os.MkdirTemp(".", ".tail-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(workdir) })
+	workdir, err = filepath.Abs(workdir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	m, c, store := manager(t)
+	m.mu.Lock()
+	for i := range c.Lanes {
+		c.Lanes[i].Workdir = workdir
+		m.config.Lanes[i].Workdir = workdir
+	}
+	m.mu.Unlock()
 	for _, lane := range []string{"claude", "codex"} {
 		id, e := m.Dispatch(lane, "DEMO-1", "hello slow-finish")
 		if e != nil {
