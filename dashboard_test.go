@@ -59,7 +59,7 @@ func TestDashboardAssetsBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := string(page)
-	panels := []string{"agents", "messages", "digest", "runs", "auditSection", "settings"}
+	panels := []string{"agents", "queue", "messages", "digest", "runs", "auditSection", "settings"}
 	if strings.Count(html, `role="tablist"`) != 2 || strings.Count(html, `role="tab"`) != len(panels) || strings.Count(html, `role="tabpanel"`) != len(panels) || strings.Count(html, `aria-selected="true"`) != 1 {
 		t.Fatal("dashboard needs every accessible tab and one initial selection")
 	}
@@ -145,7 +145,11 @@ class Element {
   click() { if (!this.disabled) return this.listeners.click?.(); }
   focus() { this.document.activeElement = this; }
 }
-function start(hash, store = new Map(), query = '', blocked = false, clock = {now: 1791658800000}, status = 200, pending = null, pendingAction = null, settingsControl = {status:200,current:exampleSettings}) {
+const queueExample={status:'ok',version:1,updated:'2026-10-10T22:32:00Z',goals:[
+ {id:'B',title:'<b>text only</b>',size:'M',lane_kinds:['codex','claude'],lane:'codex-1',order:4,state:'blocked',needs_owner:true,owner_reason:'Make a decision',depends_on:['A','EXTERNAL'],reason:'Waiting',created:'2026-10-10T22:00:00Z',updated:'2026-10-10T22:01:00Z'},
+ {id:'A',title:'First goal',size:'L',lane_kinds:['opencode'],order:4,state:'ready',needs_owner:false,depends_on:[],created:'2026-10-10T22:00:00Z',updated:'2026-10-10T22:01:00Z'},
+ {id:'C',title:'Planned owner hold',size:'S',lane_kinds:['claude'],order:8,state:'planned',needs_owner:true,owner_reason:'Approve scope',depends_on:[],created:'2026-10-10T22:00:00Z',updated:'2026-10-10T22:01:00Z'}]};
+function start(hash, store = new Map(), query = '', blocked = false, clock = {now: 1791658800000}, status = 200, pending = null, pendingAction = null, settingsControl = {status:200,current:exampleSettings}, queueControl = {status:200,current:queueExample}) {
   const root = new Element('html'), ids = {}, stack = [root];
   // Parse the real static shell's element tree; no HTML renderer is involved.
   for (const match of input.page.matchAll(/<\/?([a-z][a-z0-9]*)([^>]*)>/gi)) {
@@ -164,11 +168,11 @@ function start(hash, store = new Map(), query = '', blocked = false, clock = {no
   // Each start is a fresh tab: only origin localStorage survives discard.
   const session = new Map();
   class ClockDate extends Date { static now() { return clock.now; } }
-  const context = vm.createContext({Date: ClockDate, document: doc, window: win, location, URL, history: {pushState: (_, __, path) => { location.hash = path.slice(path.indexOf('#')); }, replaceState: (_, __, path) => { location.href = 'http://localhost:8123' + path; location.hash = path.includes('#') ? path.slice(path.indexOf('#')) : ''; location.search = ''; }}, localStorage: storage, sessionStorage: {getItem: k => session.get(k) || null, setItem: (k,v) => session.set(k,v), removeItem: k => session.delete(k)}, fetch: async (path, options) => { calls.push({path, options}); if(path==='/settings'){if(options.method==='POST' && settingsControl.post)return await settingsControl.post; if(settingsControl.reject)throw new Error(); return {ok:settingsControl.status===200,status:settingsControl.status,json:async()=>JSON.parse(JSON.stringify(settingsControl.current))};} if (path === '/action' && pendingAction) return await pendingAction; if (pending) await pending; return {ok: status === 200, status, json: async () => input.data}; }, setInterval: fn => { timers.push(fn); }, setTimeout: () => 1, clearTimeout: () => {}});
+  const context = vm.createContext({Date: ClockDate, document: doc, window: win, location, URL, history: {pushState: (_, __, path) => { location.hash = path.slice(path.indexOf('#')); }, replaceState: (_, __, path) => { location.href = 'http://localhost:8123' + path; location.hash = path.includes('#') ? path.slice(path.indexOf('#')) : ''; location.search = ''; }}, localStorage: storage, sessionStorage: {getItem: k => session.get(k) || null, setItem: (k,v) => session.set(k,v), removeItem: k => session.delete(k)}, fetch: async (path, options) => { calls.push({path, options}); if(path==='/queue'){if(queueControl.pending)return await queueControl.pending;if(queueControl.reject)throw new Error();return {ok:queueControl.status===200,status:queueControl.status,json:async()=>JSON.parse(JSON.stringify(queueControl.current))};} if(path==='/settings'){if(options.method==='POST' && settingsControl.post)return await settingsControl.post; if(settingsControl.reject)throw new Error(); return {ok:settingsControl.status===200,status:settingsControl.status,json:async()=>JSON.parse(JSON.stringify(settingsControl.current))};} if (path === '/action' && pendingAction) return await pendingAction; if (pending) await pending; return {ok: status === 200, status, json: async () => input.data}; }, setInterval: fn => { timers.push(fn); }, setTimeout: () => 1, clearTimeout: () => {}});
   vm.runInContext(input.script, context);
-  return {context, ids, calls, timers, doc, win, location, settingsControl};
+  return {context, ids, calls, timers, doc, win, location, settingsControl,queueControl};
 }
-async function settle() { for (let i = 0; i < 8; i++) await Promise.resolve(); }
+async function settle() { for (let i = 0; i < 16; i++) await Promise.resolve(); }
 function rendered(h, id) {
   if (id === 'runs') return h.ids.runs.querySelectorAll('tbody').length === input.data.history.length;
   if (id === 'messages') return h.ids.notes.children.length === input.data.notes.length && h.ids.lane.options.length === input.data.lanes.length;
@@ -176,6 +180,53 @@ function rendered(h, id) {
   return h.ids.auditRows.children.length === input.data.audit.length;
 }
 (async () => {
+  check(input.page.includes('aria-controls="queue"') && input.page.includes('id="queueRows"'), 'approved Queue tab exists');
+  const qc={status:200,current:queueExample},qclock={now:Date.parse('2026-10-10T22:33:00Z')};
+  const q=start('#queue',new Map(),'?token=fixture-auth',false,qclock,200,null,null,undefined,qc);await settle();
+  const visible=()=>q.ids.queueRows.children.filter(r=>!r.hidden);
+  check(q.calls.filter(c=>c.path==='/queue').length===1 && q.ids.queueTabCount.textContent==='3','queue entry reads once and counts unfiltered snapshot');
+  check(visible().map(r=>r.children[1].children[1].textContent).join(',')==='A,B,C','queue order and ASCII ID tie');
+  const b=q.ids.queueRows.children[1],detail=b.children[1].children[2];detail.open=true;detail.children[0].focus();
+  check(b.textContent.includes('<b>text only</b>') && b.querySelectorAll('b').length===0 && b.textContent.includes('EXTERNAL · outside this queue'),'text injection and external references');
+  check(b.textContent.includes('Needs owner') && q.ids.queueRows.children[2].textContent.includes('Approve scope'),'owner holds independent of state');
+  q.ids.queueKind.value='claude';q.ids.queueKind.listeners.change();q.ids.queueOwner.checked=true;q.ids.queueOwner.listeners.change();
+  check(visible().length===2 && q.ids.queueTabCount.textContent==='3','multi-kind AND owner filter keeps total');
+  q.ids.queueState.value='planned';q.ids.queueState.listeners.change();check(visible().length===1 && visible()[0].children[0].textContent==='8','state filter preserves original priority');
+  q.ids.queueSearch.value='absent';q.ids.queueSearch.listeners.input();check(!q.ids.queueEmpty.hidden && q.ids.queueEmptyTitle.textContent==='No matching goals' && !q.ids.queueReset.hidden,'no matching goals with reset');
+  q.ids.queueReset.click();check(visible().length===3,'clear filters');
+  q.ids.queueSearch.value='First';q.ids.queueSearch.listeners.input();q.ids.queueSearch.focus();
+  await vm.runInContext('loadQueue()',q.context);await settle();check(q.ids.queueSearch.value==='First' && q.doc.activeElement===q.ids.queueSearch && detail.open,'poll preserves filters focus and expanded details');
+  q.ids.queueReset.click();detail.children[0].focus();await vm.runInContext('loadQueue()',q.context);check(q.doc.activeElement===detail.children[0],'focused details retain DOM identity');
+  qc.status=503;qc.current={status:'invalid',goals:[]};await vm.runInContext('loadQueue()',q.context);
+  check(q.ids.queueTabCount.textContent==='3' && !q.ids.queueBanner.hidden && q.ids.queueBanner.textContent.includes('Last known queue'),'failed refresh retains snapshot with banner');
+  qc.status=200;qc.current=queueExample;await vm.runInContext('loadQueue()',q.context);check(q.ids.queueBanner.hidden,'fresh retry clears failure');
+  q.ids.queueKind.value='claude';q.ids.queueKind.listeners.change();
+  qc.current={...queueExample,goals:[queueExample.goals[1]]};await vm.runInContext('loadQueue()',q.context);
+  check(q.ids.queueKind.value==='claude' && q.ids.queueRows.children.length===1 && q.ids.queueEmptyTitle.textContent==='No matching goals','disappearing kind preserves filter and removed focused goals disappear');
+  qc.current=queueExample;q.ids.queueReset.click();await vm.runInContext('loadQueue()',q.context);
+  qclock.now+=16*60*1000;await vm.runInContext('loadQueue()',q.context);check(q.ids.queueBanner.textContent.includes('snapshot is old'),'old publication warning');
+  vm.runInContext("selectTab('agents')",q.context);const beforeQueue=q.calls.filter(c=>c.path==='/queue').length;await vm.runInContext('loadQueue();refresh()',q.context);
+  check(q.calls.filter(c=>c.path==='/queue').length===beforeQueue && q.ids.lanes.children.length>0,'hidden queue has no poll and agents remain usable');
+  q.ids['tab-agents'].listeners.keydown({key:'ArrowRight',preventDefault(){}});await settle();check(!q.ids.queue.hidden && q.doc.activeElement===q.ids['tab-queue'],'keyboard navigation reaches Queue');
+  for(const state of ['not_configured','disabled','missing','invalid','unavailable','ok']){
+    const control={status:['missing','invalid','unavailable'].includes(state)?503:200,current:{status:state,goals:[],updated:queueExample.updated}},h=start('#queue',new Map(),'?token=fixture-auth',false,undefined,200,null,null,undefined,control);await settle();
+    check(!h.ids.queueEmpty.hidden && h.ids.queueRows.children.length===0,'isolated empty/error state '+state);
+    if(state==='ok')check(h.ids.queueTabCount.textContent==='0' && h.ids.queueEmptyTitle.textContent==='No planned goals','published empty differs from missing');
+    vm.runInContext("selectTab('agents')",h.context);check(h.ids.lanes.children.length>0,'queue error leaves Agents usable');
+  }
+  for(const ending of ['signout','storage','expiry'])for(const result of [200,403,503,'reject']){
+    let finish,reject;const pendingQueue=new Promise((ok,no)=>{finish=ok;reject=no;});const clock={now:qclock.now},store=new Map(),control={pending:pendingQueue,status:200,current:queueExample};
+    const h=start('#queue',store,'?token=fixture-auth',false,clock,200,null,null,undefined,control);await settle();
+    const count=h.calls.length;await vm.runInContext('loadQueue()',h.context);check(h.calls.length===count && !h.ids.signOut.disabled,'queue dedupe and immediate sign-out availability');
+    if(ending==='signout')h.ids.signOut.click();
+    if(ending==='storage'){store.delete('nuntius.web.credential');h.win.storage({key:'nuntius.web.credential',storageArea:vm.runInContext('localStorage',h.context)});}
+    if(ending==='expiry'){clock.now+=7*24*60*60*1000;vm.runInContext('authenticated()',h.context);}
+    if(result==='reject')reject(new Error());else finish({ok:result===200,status:result,json:async()=>queueExample});await settle();
+    await vm.runInContext('loadQueue()',h.context);check(h.ids.queueRows.children.length===0 && h.ids.queueTabCount.textContent==='—' && h.calls.length===count && !store.has('nuntius.web.credential'),'late queue '+result+' after '+ending);
+  }
+  const revokedQueue=start('#queue',new Map(),'?token=fixture-auth',false,undefined,200,null,null,undefined,{status:403,current:{}});await settle();check(revokedQueue.location.reloads===1,'queue revocation clears sign-in');
+  const publicQueue=start('#queue');await settle();check(publicQueue.calls.length===0 && publicQueue.ids.queueRows.children.length===0,'public queue never requests private data');
+  check(/queue-mobile-label/.test(input.css) && /max-width:760px/.test(input.css) && input.css.includes('min-height:44px'),'mobile labels and touch targets');
 	check(input.page.includes('aria-controls="settings"') && input.page.includes('id="settingsForm"'), 'approved Settings tab and form exist');
   const settingsClock={now:1791658800000}, settingsStore=new Map();
   const settings=start('#settings',settingsStore,'?token=fixture-auth',false,settingsClock); await settle();

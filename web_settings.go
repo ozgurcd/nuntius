@@ -529,8 +529,15 @@ func settingsView(c Config, revision string) map[string]any {
 		names = append(names, cell(l.Name))
 	}
 	format := "pools"
+	queueMode := "default"
+	if c.QueueFile != nil {
+		queueMode = "configured"
+		if *c.QueueFile == "" {
+			queueMode = "disabled"
+		}
+	}
 	if c.Pools == nil {
 		format = "legacy"
 	}
-	return map[string]any{"schema_version": 1, "revision": revision, "format": format, "pools": pools, "notify_imessage_enabled": c.NotifyIMessageEnabled == nil || *c.NotifyIMessageEnabled, "notify_effective": c.imessageEnabled(), "recipient_configured": c.NotifyIMessage != "", "max_runtime": c.MaxRuntime, "auto_resume": c.AutoResume == nil || *c.AutoResume, "notifications": c.Notifications == nil || *c.Notifications, "reports_dir": cell(bounded(Redact(c.ReportsDir), 1024)), "oversight_path": cell(bounded(Redact(c.OversightPath), 1024)), "lanes": lanes, "lane_names": names, "at_login": "Unavailable · check locally", "tailnet_default": "Off · launch option", "local_only_reason": "Edit on the Mac; run nuntius config check"}
+	return map[string]any{"schema_version": 1, "revision": revision, "format": format, "pools": pools, "queue_file_mode": queueMode, "notify_imessage_enabled": c.NotifyIMessageEnabled == nil || *c.NotifyIMessageEnabled, "notify_effective": c.imessageEnabled(), "recipient_configured": c.NotifyIMessage != "", "max_runtime": c.MaxRuntime, "auto_resume": c.AutoResume == nil || *c.AutoResume, "notifications": c.Notifications == nil || *c.Notifications, "reports_dir": cell(bounded(Redact(c.ReportsDir), 1024)), "oversight_path": cell(bounded(Redact(c.OversightPath), 1024)), "lanes": lanes, "lane_names": names, "at_login": "Unavailable · check locally", "tailnet_default": "Off · launch option", "local_only_reason": "Edit on the Mac; run nuntius config check"}
 }

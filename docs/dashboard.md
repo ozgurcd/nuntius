@@ -1,5 +1,32 @@
 ## Local oversight dashboard
 
+### Queue (Unreleased)
+
+Open **Queue** or bookmark `/#queue` after signing in. It displays planned
+goals in coordinator order, with size, eligible lane kinds, preferred lane,
+state and Waiting on. Needs owner is an independent amber hold with its reason;
+an absent prerequisite is labelled outside this queue, never completed.
+Ready uses a blue badge and does not mean an agent is free or work approved.
+There are no approval, planning, dispatch or repair controls.
+
+Search ID/title, lane kind, state and Needs owner filters combine. Clear filters
+restores the list; filtering preserves original priorities and the tab's total
+count. Phone rows become labelled cards with wrapping IDs and full waiting text.
+Keyboard Arrow/Home/End navigation works across tabs.
+
+Queue reads once on entry and every ten seconds while visible and signed in,
+independently of the two-second operational poll. Filters, focus and expanded
+details remain in memory through refreshes. Snapshot publication time and last
+successful fetch time are separate. Failed refreshes show the last valid queue
+with a Last known queue banner. Snapshots older than fifteen minutes show an
+old-snapshot warning. Missing default, disabled, missing override, invalid data,
+published-empty and no-match states are distinguished. Sign-out, expiry and
+cross-tab changes clear queue data; late responses cannot restore it. No queue
+data or filters enter browser storage.
+
+Any coordinator can publish the [portable snapshot format](queue-format.md).
+The local owner selects `queue_file`; the dashboard never exposes or edits it.
+
 ### Settings (Unreleased)
 
 Open **Settings** or bookmark `/#settings` after signing in. Pool sizes for

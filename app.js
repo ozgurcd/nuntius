@@ -30,6 +30,7 @@ function signOut(removeStored = true) {
   if (!token) return;
   token = ''; expiresAt = 0; authEpoch++;
   clearSettings();
+  clearQueue();
   if (removeStored) {
     try { localStorage.removeItem(credentialKey); } catch {}
   }
@@ -64,6 +65,8 @@ let settingsCurrent = null, settingsDraft = null, settingsLoading = false, setti
 let settingsReadAt = 0, settingsConfirmed = false;
 let settingsErrors = {};
 let settingsReadonlyID = 0;
+let queueData = null, queueFetched = 0, queueLoading = false, queueFailure = '';
+const queueRows = new Map();
 const auditReadsKey = 'nuntius.web.audit.showReads';
 try {
   el('auditReads').checked = localStorage.getItem(auditReadsKey) === 'true';
@@ -91,6 +94,7 @@ function selectTab(id, focus = false, push = true) {
     active.scrollIntoView?.({block:'nearest', inline:'nearest'});
     loadSettings();
   }
+  if (panelID === 'queue') loadQueue();
 }
 for (const tab of tabs) {
   tab.addEventListener('click', () => selectTab(tab.getAttribute('aria-controls')));
@@ -107,7 +111,6 @@ for (const tab of tabs) {
   });
 }
 window.addEventListener('hashchange', () => selectTab(location.hash.slice(1), false, false));
-selectTab(location.hash.slice(1), false, false);
 
 function node(tag, className, text) {
   const n = document.createElement(tag);
@@ -660,7 +663,7 @@ function settingsReadOnlyView(c) {
   const machine = el('settingsMachine'); machine.replaceChildren();
   for (const [label,value] of [['Reports folder',c.reports_dir],['Oversight file',c.oversight_path || 'Default · beside reports folder'],['Start menu-bar helper at login',c.at_login],['Tailnet default',c.tailnet_default]]) settingsReadonly(machine,label,value);
   const options = node('details'); options.append(node('summary','','Startup & connection options · local only'),node('p','','Config/store locations, loopback port, allowed host, tailnet options and notification overrides are chosen locally at startup. This page cannot change or restart services.'));
-  machine.append(options,node('p','hint',c.local_only_reason));
+  machine.append(options,node('p','hint','Queue file · '+(c.queue_file_mode||'default')+' · local only'),node('p','hint',c.local_only_reason));
 }
 async function loadSettings(force = false) {
   if (!authenticated() || settingsLoading || settingsSaving || (!force && settingsReadAt && Date.now() - settingsReadAt < 10000)) return;
@@ -728,5 +731,88 @@ el('settingsReload').addEventListener('click', () => loadSettings());
 setInterval(() => {
   if (lastUpdate) setText(el('updated'), 'Updated ' + Math.floor((Date.now() - lastUpdate) / 1000) + 's ago');
 }, 1000);
+if (!token) clearQueue();
+selectTab(location.hash.slice(1), false, false);
 refresh();
 setInterval(refresh, 2000);
+setInterval(loadQueue, 10000);
+
+function clearQueue() {
+  queueData=null; queueFetched=0; queueFailure=''; queueRows.clear();
+  el('queueRows').replaceChildren(); setText(el('queueTabCount'),'—');
+  setText(el('queueSnapshot'),''); setText(el('queueBanner'),''); el('queueBanner').hidden=true;
+  el('queueSearch').value=''; el('queueKind').value=''; el('queueState').value=''; el('queueOwner').checked=false;
+  for(const id of ['queueFilters','queueResults','queueSnapshot'])el(id).hidden=true;
+  queueEmpty('Sign in to view the queue','Open your private Nuntius sign-in link.');
+}
+function queueEmpty(title,text) {
+  el('queueEmpty').hidden=false; el('queueTable').hidden=true;
+  setText(el('queueEmptyTitle'),title);setText(el('queueEmptyText'),text);
+}
+function queueSafeLink(value) {
+  try {const u=new URL(value), h=u.hostname.toLowerCase().replace(/\.$/,'');
+    return u.protocol==='https:' && !u.username && !u.password && !u.search && !u.hash && !/[?#]/.test(value) &&
+      h.includes('.') && !/^[\d.]+$/.test(h) && !h.includes(':') && h!=='localhost' && !h.endsWith('.localhost') && !h.endsWith('.local');
+  } catch {return false;}
+}
+function makeQueueRow() {
+  const root=node('tr'), order=node('td','queue-order'), goal=node('td','queue-goal'), title=node('p','queue-title'), id=node('p','queue-id');
+  const detail=node('details'), dates=node('p','muted'), reason=node('p','muted'), digest=node('p','queue-id'), link=node('a','','Read brief');
+  link.rel='noreferrer noopener';link.target='_blank';detail.append(node('summary','','Details'),dates,reason,digest,link);goal.append(title,id,detail);
+  const lane=node('td','queue-lane'), state=node('td','queue-state'), badge=node('span','badge');state.append(badge);
+  const wait=node('td','queue-wait'), owner=node('div','queue-owner'), ownerReason=node('p'), deps=node('ul','queue-deps'), fallback=node('p','muted');
+  owner.append(node('span','badge amber','Needs owner'),ownerReason);wait.append(node('span','queue-mobile-label','Waiting on'),owner,deps,fallback);
+  root.append(order,goal,lane,state,wait);return {root,order,title,id,detail,dates,reason,digest,link,lane,badge,owner,ownerReason,deps,fallback};
+}
+function renderQueue() {
+  el('queueBanner').hidden=true;
+  const ok=queueData?.status==='ok';
+  el('queueFilters').hidden=!ok;el('queueResults').hidden=!ok;el('queueSnapshot').hidden=!ok;
+  setText(el('queueTabCount'),ok?queueData.goals.length:'—');
+  if (!ok) {
+    const copy={not_configured:['No queue has been published','Your coordinator can write queue.json in the Nuntius data folder. Queue only displays planned goals.'],disabled:['Queue is disabled','Queue is disabled in local configuration.'],missing:['Queue file is unavailable','Ask the local owner or coordinator to check the configured file.'],invalid:['Queue data could not be read','The coordinator must publish a valid snapshot.'],unavailable:['Queue file is unavailable','Ask the local owner or coordinator to check the configured file.']};
+    queueEmpty(...(copy[queueFailure || queueData?.status] || ['Loading queue','Waiting for the coordinator snapshot.']));return;
+  }
+  setText(el('queueSnapshot'),'Coordinator snapshot '+queueData.updated+' · Last successful fetch '+new Date(queueFetched).toISOString());
+  const old=Date.now()-Date.parse(queueData.updated)>15*60*1000;
+  if (queueFailure || old) {el('queueBanner').hidden=false;setText(el('queueBanner'),queueFailure?'Last known queue · refresh unavailable. These goals may have changed.':'Coordinator snapshot is old; check with the coordinator.');}
+  fillFilter(el('queueKind'),[...queueData.goals.flatMap(g=>g.lane_kinds),el('queueKind').value],'All kinds');
+  const search=el('queueSearch').value.trim().toLowerCase(),kind=el('queueKind').value,state=el('queueState').value,owner=el('queueOwner').checked;
+  const filtered=!!(search||kind||state||owner),items=queueData.goals.filter(g=>(!search||(g.id+' '+g.title).toLowerCase().includes(search))&&(!kind||g.lane_kinds.includes(kind))&&(!state||g.state===state)&&(!owner||g.needs_owner)).sort((a,b)=>a.order-b.order||(a.id<b.id?-1:a.id>b.id?1:0));
+  setText(el('queueCount'),items.length+' of '+queueData.goals.length+' planned goals');el('queueReset').hidden=!filtered;
+  const known=new Set(queueData.goals.map(g=>g.id));
+  const ordered=[...queueData.goals].sort((a,b)=>a.order-b.order||(a.id<b.id?-1:a.id>b.id?1:0));
+  reconcile(el('queueRows'),ordered,queueRows,makeQueueRow,(v,g)=>{
+    v.root.hidden=!items.includes(g);if(busy(v.root))return;
+    v.root.className=g.needs_owner?'queue-needs-owner':'';
+    setText(v.order,g.order);setText(v.title,g.title);setText(v.id,g.id);
+    setText(v.dates,'Created '+g.created+' · Updated '+g.updated);setText(v.reason,g.reason||'');setText(v.digest,g.brief_sha256?'Brief SHA-256 '+g.brief_sha256:'');
+    v.link.hidden=!g.brief_link||!queueSafeLink(g.brief_link);if(!v.link.hidden)v.link.href=g.brief_link;else v.link.removeAttribute?.('href');
+    setText(v.lane,g.size+' · '+g.lane_kinds.join(' / ')+(g.lane?' · Lane: '+g.lane:''));
+    stateBadge(v.badge,g.state,g.state==='ready'?'blue':'');v.owner.hidden=!g.needs_owner;setText(v.ownerReason,g.owner_reason||'');
+    const depText=g.depends_on.map(d=>d+(known.has(d)?'':' · outside this queue'));
+    if(v.deps.textContent!==depText.join(''))v.deps.replaceChildren(...depText.map(d=>node('li','',d)));
+    setText(v.fallback,!g.depends_on.length&&!g.needs_owner?(g.state==='ready'?'No recorded holds':g.reason||'Being prepared'):'');
+  },g=>g.id);
+  for(const [id,view] of queueRows)if(!known.has(id)){view.root.remove();queueRows.delete(id);}
+  el('queueEmpty').hidden=true;el('queueTable').hidden=false;
+  if(!items.length)queueEmpty(queueData.goals.length?'No matching goals':'No planned goals',queueData.goals.length?'Try another lane kind or state, or clear your filters.':'Running and finished work appears in Agents and History.');
+}
+async function loadQueue() {
+  if (!authenticated() || document.hidden || el('queue').hidden || queueLoading) return;
+  queueLoading=true;const epoch=authEpoch;
+  try {
+    const response=await fetch('/queue',{headers:{'X-Nuntius-Token':token},cache:'no-store'});
+    if(epoch!==authEpoch||!authenticated())return;
+    if(response.status===403){signOut();return;}
+    const data=await response.json();if(epoch!==authEpoch||!authenticated())return;
+    if(response.ok&&(data.status==='ok'||data.status==='disabled'||data.status==='not_configured')){
+      queueData=data;queueFailure='';queueFetched=Date.now();
+      if(data.status!=='ok'){queueRows.clear();el('queueRows').replaceChildren();}
+    } else queueFailure=['missing','invalid','unavailable'].includes(data.status)?data.status:'unavailable';
+    renderQueue();
+  } catch {if(epoch===authEpoch&&authenticated()){queueFailure='unavailable';renderQueue();}}
+  finally {queueLoading=false;}
+}
+for(const id of ['queueSearch','queueKind','queueState','queueOwner'])el(id).addEventListener(id==='queueSearch'?'input':'change',renderQueue);
+el('queueReset').addEventListener('click',()=>{el('queueSearch').value='';el('queueKind').value='';el('queueState').value='';el('queueOwner').checked=false;renderQueue();});

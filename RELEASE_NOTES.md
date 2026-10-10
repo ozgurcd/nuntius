@@ -7,6 +7,15 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+**Queue** displays your coordinator's planned goals in priority order, with
+Waiting on, Needs owner, search and lane/state filters. Phone rows show the
+full waiting details. Queue is read-only: starting work stays with your
+coordinator. Any coordinator can publish the documented portable snapshot.
+The local owner chooses its file; no dashboard file picker or editor exists.
+Failed refreshes clearly label the last known queue, and old snapshots show
+a warning. Sign-out clears the queue and ignores late replies. This change
+does not install or restart anything.
+
 **Settings** is now a dashboard tab. Review current and pending pool sizes and
 iMessage preference, then Save the batch or Cancel your draft. Other settings
 remain read-only or local-only. Busy agents keep running, and a stale draft

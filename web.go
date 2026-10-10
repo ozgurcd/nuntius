@@ -186,6 +186,20 @@ func (w *Web) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
+	case "/queue":
+		if r.URL.RawQuery != "" || r.URL.ForceQuery {
+			http.Error(out, "queue selectors are not supported", http.StatusBadRequest)
+			return
+		}
+		v := w.manager.queue()
+		out.Header().Set("Content-Type", "application/json")
+		if v.Status == "missing" || v.Status == "invalid" || v.Status == "unavailable" {
+			out.WriteHeader(http.StatusServiceUnavailable)
+		}
+		encoded, _ := json.Marshal(v)
+		var display map[string]any
+		_ = json.Unmarshal(encoded, &display)
+		_ = json.NewEncoder(out).Encode(safeValue(display))
 	case "/":
 		out.Header().Set("Content-Type", "text/html; charset=utf-8")
 		page, _ := dashboardAssets.ReadFile("index.html")

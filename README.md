@@ -214,6 +214,7 @@ The detailed reference remains available:
 - [Away from the Mac and crash/restart safety](docs/recovery.md)
 <a id="local-oversight-dashboard"></a><a id="phone-access-over-tailscale"></a>
 - [Dashboard and Tailscale phone access](docs/dashboard.md)
+- [Portable read-only Queue format](docs/queue-format.md)
 <a id="menu-bar"></a>
 - [Menu-bar design and platform limits](docs/menubar-design.md)
 

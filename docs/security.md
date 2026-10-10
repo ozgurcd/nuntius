@@ -145,3 +145,17 @@ authenticated phone access remain outside local readiness guarantees. Tests
 use temporary stores, fake processes and compiled fake transports. A live
 owner phone pilot requires separate approval and never disrupts owner services
 as a proof technique.
+# Queue metadata (Unreleased)
+
+The read-only Queue endpoint uses the existing Host/header-token/method/Origin
+guards and same-origin CSP. Browser queries cannot select files. Reads are
+bounded and descriptor-rooted with no-follow/nonblocking opens and regular-file
+checks; errors return fixed codes, with no source path, raw JSON or parser text.
+Only validated known fields enter the response, followed by existing redaction.
+Unknown v1 fields are ignored, never echoed; unsupported versions fail.
+Titles/reasons can still be sensitive. Coordinators must omit credentials,
+prompts, execution records and private access links, even in unknown fields.
+Redaction is not a complete secret detector. Brief links are optional validated
+external HTTPS links, opened only by a user with noreferrer/noopener; the server
+does not fetch them. Queue never approves, dispatches, writes or repairs a file.
+Sign-out and expiry clear private rows and reject late in-flight responses.

@@ -26,6 +26,7 @@ type Lane struct {
 }
 
 type Config struct {
+	QueueFile     *string              `json:"queue_file,omitempty"`
 	Lanes         []Lane               `json:"lanes,omitempty"`
 	Pools         map[string]AgentPool `json:"pools,omitempty"`
 	OversightPath string               `json:"oversight_path,omitempty"`
@@ -85,6 +86,18 @@ func LoadConfig(path string) (Config, error) {
 	return c, e
 }
 func (c Config) Validate() (time.Duration, error) {
+	if c.QueueFile != nil && *c.QueueFile != "" && !queuePathValid(*c.QueueFile) {
+		return 0, errors.New("queue_file must be a clean absolute local file path")
+	}
+	if c.QueueFile != nil && *c.QueueFile != "" {
+		file, err := openQueueFile(*c.QueueFile)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return 0, errors.New("queue_file must name an accessible regular file without links")
+		}
+		if file != nil {
+			_ = file.Close()
+		}
+	}
 	if c.OversightPath != "" && !filepath.IsAbs(c.OversightPath) {
 		return 0, errors.New("oversight_path must be absolute")
 	}

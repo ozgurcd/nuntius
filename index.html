@@ -24,6 +24,7 @@
   <main>
     <nav class="tabs" role="tablist" aria-label="Dashboard views">
       <button id="tab-agents" role="tab" aria-selected="true" tabindex="0" aria-controls="agents">Agents <span id="agentsTabCount" class="tab-count" aria-label="running agents">0</span></button>
+      <button id="tab-queue" role="tab" aria-selected="false" tabindex="-1" aria-controls="queue">Queue <span id="queueTabCount" class="tab-count" aria-label="planned goals">—</span></button>
       <button id="tab-messages" role="tab" aria-selected="false" tabindex="-1" aria-controls="messages">Messages &amp; notes <span id="notesTabCount" class="tab-count" aria-label="unread owner notes">0</span></button>
       <button id="tab-digest" role="tab" aria-selected="false" tabindex="-1" aria-controls="digest">Digest</button>
       <button id="tab-runs" role="tab" aria-selected="false" tabindex="-1" aria-controls="runs">History <span id="questionsTabCount" class="tab-count" aria-label="runs with open questions">0</span></button>
@@ -42,6 +43,22 @@
     <section class="panel" id="digest" role="tabpanel" hidden aria-labelledby="tab-digest" tabindex="0"><div class="section-heading"><h2>Owner digest</h2><span class="muted">From the judge</span></div><div id="oversight" class="prose"></div></section>
     <section class="panel" id="runs" role="tabpanel" hidden aria-labelledby="tab-runs" tabindex="0"><div class="section-heading"><h2>Run history</h2><span class="muted">Latest 50 runs</span></div><label for="filter">Filter by goal or lane</label><input id="filter" type="search" placeholder="Search goal ID or lane" autocomplete="off"><div class="table-scroll"><table><thead><tr><th scope="col">Lane</th><th scope="col">Run</th><th scope="col">Goal</th><th scope="col">State</th><th scope="col">Started</th><th scope="col">Duration</th><th scope="col">Relation</th><th scope="col">Model / effort</th></tr></thead><tbody id="history"></tbody></table></div><p id="historyEmpty" class="empty" hidden>No matching runs.</p></section>
     <section class="panel" id="auditSection" role="tabpanel" hidden aria-labelledby="tab-auditSection" tabindex="0"><div class="section-heading"><h2>Audit</h2><span class="muted">Latest 200 entries · newest first · redacted</span></div><div class="audit-filters"><div><label for="auditFilter">Filter audit</label><input id="auditFilter" type="search" placeholder="Search action, goal or result" autocomplete="off"></div><div><label for="auditLane">Lane</label><select id="auditLane"></select></div><div><label for="auditAction">Action</label><select id="auditAction"></select></div></div><label class="follow"><input id="auditReads" type="checkbox"> Show reads</label><p id="auditCount" class="muted" role="status"></p><div class="table-scroll"><table><thead><tr><th>Time</th><th>Action</th><th>Lane</th><th>Goal</th><th>Result</th><th>Brief digest</th></tr></thead><tbody id="auditRows"></tbody></table></div><p id="auditEmpty" class="empty" hidden>No matching audit events.</p></section>
+    <section id="queue" role="tabpanel" hidden aria-labelledby="tab-queue" tabindex="0">
+      <div class="section-heading"><div><h2>Queue</h2><p class="muted">Planned goals, in coordinator order.</p></div><span class="badge">Read only</span></div>
+      <p id="queueSnapshot" class="muted"></p><div id="queueBanner" class="queue-banner" role="status" hidden></div>
+      <div class="panel queue-panel">
+        <div id="queueFilters" class="queue-filters">
+          <div class="field"><label for="queueSearch">Find a goal</label><input id="queueSearch" type="search" placeholder="Goal ID or title" autocomplete="off"></div>
+          <div class="field"><label for="queueKind">Lane kind</label><select id="queueKind"><option value="">All kinds</option></select></div>
+          <div class="field"><label for="queueState">State</label><select id="queueState"><option value="">All states</option><option value="planned">Planned</option><option value="blocked">Blocked</option><option value="ready">Ready</option><option value="parked">Parked</option></select></div>
+          <label class="follow" for="queueOwner"><input id="queueOwner" type="checkbox"> Needs owner</label>
+        </div>
+        <div id="queueResults" class="queue-results"><span id="queueCount" role="status" aria-live="polite"></span><button id="queueReset" type="button" hidden>Clear filters</button></div>
+        <table id="queueTable" class="queue-table" aria-label="Planned goals ordered by priority"><thead><tr><th scope="col">Order</th><th scope="col">Goal</th><th scope="col">Size / lane</th><th scope="col">State</th><th scope="col">Waiting on</th></tr></thead><tbody id="queueRows"></tbody></table>
+        <div id="queueEmpty" class="empty" hidden><h3 id="queueEmptyTitle"></h3><p id="queueEmptyText"></p></div>
+      </div>
+      <p class="queue-legend muted">Ready is the coordinator’s state; an agent may still be busy. Owner decisions stay visible until the coordinator clears them. Starting work stays with the coordinator.</p>
+    </section>
     <section id="settings" role="tabpanel" hidden aria-labelledby="tab-settings" tabindex="0">
       <div class="section-heading"><div><h2>Settings</h2><p class="muted">Manage agent capacity and notifications.</p></div><span id="settingsConnection" class="badge"></span></div>
       <div id="settingsBanner" class="notice" role="status" tabindex="-1" hidden></div>

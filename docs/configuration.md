@@ -152,3 +152,10 @@ enabled when a recipient exists. Enabling with no recipient is refused.
 The dashboard Settings page uses the same Manager policy and private writer as
 these CLI setters. It can change existing pool sizes and this boolean only.
 Templates, recipients, paths and execution options remain local-only.
+
+`queue_file` (Unreleased) is local-only: omit it for `queue.json` under the
+resolved data directory, use an empty string to disable Queue, or supply a
+clean absolute regular-file path without symbolic links. An absent explicit
+file never falls back. Settings reports only default/configured/disabled;
+it cannot read back or edit the path. The coordinator publishes snapshots,
+and Nuntius only reads them. See [queue-format.md](queue-format.md).

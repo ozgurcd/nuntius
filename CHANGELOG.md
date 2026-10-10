@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add a read-only Queue tab for coordinator-published portable v1 snapshots,
+  ordered goals, independent owner/prerequisite holds, AND filters and mobile cards.
+- Add guarded GET /queue, a local-only queue_file override/disable, bounded
+  schema validation, descriptor-rooted no-follow reads and allowlisted redaction.
+- Preserve filters/focus/details during queue polls, warn on stale/failed reads,
+  and clear private rows on sign-out/expiry with offline regression proofs.
+
 - Add the approved dashboard Settings tab with existing pool-size and iMessage
   preference editing, current/draft review, atomic Save, Cancel and phone layout.
 - Share CLI validation/writing, guard Settings with exact Host/token/Origin,
