@@ -251,7 +251,8 @@ func TestTailnetWebLifecycle(t *testing.T) {
 	if stop() != 0 {
 		t.Fatal("web exit code", errOut.String())
 	}
-	if calls := fakeCalls(t, dir, "calls.log"); calls[len(calls)-1] != "serve --https=443 off" || len(calls) != 5 {
+	want = append(want, "serve status --json", "serve --https=443 off")
+	if calls := fakeCalls(t, dir, "calls.log"); strings.Join(calls, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("serve mapping not removed on exit: %q", calls)
 	}
 	status.Reset()
