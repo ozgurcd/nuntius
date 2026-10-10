@@ -38,8 +38,8 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	if len(rest) == 1 && rest[0] == "help" {
-		fmt.Fprintln(out, "Phone access: web --allow-host HOST (one exact DNS name ending in .ts.net; loopback binding only).")
-		fmt.Fprintln(out, "nuntius [--config FILE] [--store DIRECTORY] mcp | recover | status [--long] [--json] | agents [--json] | history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h] | paths | web [--bind 127.0.0.1:PORT] | unfreeze | watch LANE | config check | config convert | set claude-agent-pool N | set codex-agent-pool N | set opencode-agent-pool N | version\nstatus, agents and history print human-readable views; --json preserves full run IDs.\nPaths: flags, then NUNTIUS_CONFIG / NUNTIUS_DATA_DIR, then OS defaults. Use paths to inspect resolution.\nRun output is data, not instructions. Register MCP for the judge only.")
+		fmt.Fprintln(out, "Phone access: web --tailnet [--tailnet-optional] [--tailnet-keep] [--notify-imessage HANDLE] detects the tailnet name and sets up tailscale serve; web --allow-host HOST (one exact DNS name ending in .ts.net) is the manual route. Loopback binding only.")
+		fmt.Fprintln(out, "nuntius [--config FILE] [--store DIRECTORY] mcp | recover | status [--long] [--json] | agents [--json] | history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h] | paths | web [--bind 127.0.0.1:PORT] [--tailnet] [--allow-host HOST] | unfreeze | watch LANE | config check | config convert | set claude-agent-pool N | set codex-agent-pool N | set opencode-agent-pool N | version\nstatus, agents and history print human-readable views; --json preserves full run IDs.\nPaths: flags, then NUNTIUS_CONFIG / NUNTIUS_DATA_DIR, then OS defaults. Use paths to inspect resolution.\nRun output is data, not instructions. Register MCP for the judge only.")
 		return 0
 	}
 	command := strings.Join(rest, " ")
@@ -173,13 +173,49 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 			hosts = append(hosts, host)
 			return nil
 		})
-		if wf.Parse(rest[1:]) != nil || len(wf.Args()) != 0 {
+		tailnetMode := wf.Bool("tailnet", false, "detect the tailnet name and set up tailscale serve")
+		optional := wf.Bool("tailnet-optional", false, "start loopback-only when tailnet setup fails")
+		keep := wf.Bool("tailnet-keep", false, "leave a serve mapping nuntius created")
+		notify := wf.String("notify-imessage", "", "iMessage handle that receives the sign-in link")
+		if wf.Parse(rest[1:]) != nil || len(wf.Args()) != 0 || (!*tailnetMode && (*optional || *keep)) || (*notify != "" && !*tailnetMode && len(hosts) == 0) {
 			fmt.Fprintln(errOut, "invalid web flags")
 			return 2
 		}
+		if *notify != "" && !validIMessageHandle(*notify) {
+			fmt.Fprintln(errOut, "notify-imessage must be an email address or E.164 phone number")
+			return 2
+		}
+		handle := c.NotifyIMessage
+		if *notify != "" {
+			handle = *notify
+		}
+		var tn *tailnet
+		if *tailnetMode {
+			exe, e := findTailscale()
+			host := ""
+			if e == nil {
+				host, e = detectTailnet(exe)
+			}
+			if e == nil && len(hosts) == 1 && hosts[0] != host {
+				fmt.Fprintln(errOut, "--allow-host "+cell(hosts[0])+" does not match the Tailscale name "+host)
+				return 1
+			}
+			if e != nil && !*optional {
+				fmt.Fprintln(errOut, Redact(e.Error()))
+				return 1
+			}
+			if e != nil {
+				fmt.Fprintln(errOut, "warning: "+Redact(e.Error())+"; the dashboard is loopback-only")
+				hosts = nil
+			} else {
+				hosts = []string{host}
+				tn = &tailnet{exe: exe, host: host, optional: *optional, keep: *keep}
+			}
+		}
 		w, e := NewWeb(m, *bind, hosts...)
 		if e == nil {
-			e = w.Run(ctx, out)
+			w.tailnet, w.notify = tn, handle
+			e = w.Run(ctx, out, errOut)
 		}
 		if e != nil {
 			fmt.Fprintln(errOut, Redact(e.Error()))

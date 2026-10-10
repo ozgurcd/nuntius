@@ -25,6 +25,8 @@ type Web struct {
 	manager        *Manager
 	address, token string
 	allowHost      string
+	tailnet        *tailnet
+	notify         string
 }
 
 func NewWeb(m *Manager, address string, allowHost ...string) (*Web, error) {
@@ -316,29 +318,72 @@ type webLane struct {
 	Activity string `json:"activity"`
 }
 
-func (w *Web) Run(ctx context.Context, out io.Writer) error {
+// Run listens, then sets up Tailscale Serve, prints the sign-in links, serves
+// the dashboard and sends the optional iMessage. The summary line and every
+// warning omit the credential; only the link lines carry it.
+func (w *Web) Run(ctx context.Context, out, errOut io.Writer) error {
 	listener, e := net.Listen("tcp4", w.address)
 	if e != nil {
 		return errors.New("cannot listen on local web address")
 	}
+	defer listener.Close()
 	w.address = listener.Addr().String()
-	server := &http.Server{Handler: w, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}
-	if e = w.writeLinks(out); e != nil {
-		_ = listener.Close()
-		return e
+	_, port, _ := net.SplitHostPort(w.address)
+	serve := "none"
+	if w.tailnet != nil {
+		state, e := w.tailnet.ensure(port)
+		if e != nil {
+			// A mapping created but not confirmed is still ours to remove.
+			_ = w.tailnet.release()
+			if !w.tailnet.optional {
+				return e
+			}
+			fmt.Fprintln(errOut, "warning: "+e.Error()+"; the dashboard is loopback-only")
+			w.allowHost, w.tailnet = "", nil
+		} else {
+			serve = state
+		}
 	}
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		select {
-		case <-ctx.Done():
-			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = server.Shutdown(shutdown)
-		case <-done:
+	defer func() {
+		if w.tailnet.release() != nil {
+			fmt.Fprintln(errOut, "warning: the serve mapping was not removed; run: tailscale serve --https=443 off")
 		}
 	}()
-	e = server.Serve(listener)
+	if w.allowHost != "" {
+		if serve == "none" {
+			serve = "manual"
+		}
+		if e = w.manager.saveWebState(w.allowHost, serve); e != nil {
+			return e
+		}
+		defer func() { _ = w.manager.clearWebState() }()
+	}
+	if e = w.writeLinks(out); e != nil {
+		return e
+	}
+	server := &http.Server{Handler: w, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+	message, host := "off", "off"
+	if w.allowHost != "" {
+		host = w.allowHost
+	}
+	if w.notify != "" && w.allowHost != "" {
+		message = "sent"
+		if e := sendIMessage(ctx, w.notify, "nuntius dashboard ("+machineName(w.allowHost)+"): https://"+w.allowHost+"/?token="+w.token); e != nil {
+			message = "failed"
+			fmt.Fprintln(errOut, "warning: iMessage not sent: "+e.Error())
+		}
+	}
+	fmt.Fprintf(out, "summary: tailnet=%s serve=%s imessage=%s\n", host, serve, message)
+	select {
+	case <-ctx.Done():
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdown)
+		e = <-served
+	case e = <-served:
+	}
 	if errors.Is(e, http.ErrServerClosed) {
 		return nil
 	}

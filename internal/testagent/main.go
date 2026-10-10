@@ -7,12 +7,98 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 )
 
+// fakeTailscale records every invocation and answers from files in the
+// directory named by NUNTIUS_FAKE_TAILSCALE: status.json, serve.json (absent
+// means no serve config) and serve-fail (refuse to create a mapping).
+func fakeTailscale() {
+	dir := os.Getenv("NUNTIUS_FAKE_TAILSCALE")
+	if dir == "" {
+		os.Exit(3)
+	}
+	args := strings.Join(os.Args[1:], " ")
+	log, err := os.OpenFile(filepath.Join(dir, "calls.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+	if err != nil {
+		os.Exit(3)
+	}
+	fmt.Fprintln(log, args)
+	log.Close()
+	switch {
+	case args == "status --json":
+		b, err := os.ReadFile(filepath.Join(dir, "status.json"))
+		if err != nil {
+			os.Exit(1)
+		}
+		os.Stdout.Write(b)
+	case args == "serve status --json":
+		b, err := os.ReadFile(filepath.Join(dir, "serve.json"))
+		if err != nil {
+			b = []byte("null\n")
+		}
+		os.Stdout.Write(b)
+	case strings.HasPrefix(args, "serve --bg --https=443 localhost:"):
+		if _, err := os.Stat(filepath.Join(dir, "serve-fail")); err == nil {
+			fmt.Fprintln(os.Stderr, "fixture serve failure")
+			os.Exit(1)
+		}
+		var status struct {
+			Self struct{ DNSName string }
+		}
+		b, _ := os.ReadFile(filepath.Join(dir, "status.json"))
+		_ = json.Unmarshal(b, &status)
+		host := strings.TrimSuffix(status.Self.DNSName, ".")
+		port := strings.TrimPrefix(args, "serve --bg --https=443 localhost:")
+		config := map[string]any{"TCP": map[string]any{"443": map[string]any{"HTTPS": true}}, "Web": map[string]any{host + ":443": map[string]any{"Handlers": map[string]any{"/": map[string]any{"Proxy": "http://127.0.0.1:" + port}}}}}
+		b, _ = json.Marshal(config)
+		if err := os.WriteFile(filepath.Join(dir, "serve.json"), b, 0600); err != nil {
+			os.Exit(1)
+		}
+		fmt.Println("Available within your tailnet:")
+	case args == "serve --https=443 off":
+		if err := os.WriteFile(filepath.Join(dir, "serve.json"), []byte("null\n"), 0600); err != nil {
+			os.Exit(1)
+		}
+	default:
+		fmt.Fprintln(os.Stderr, "fixture tailscale: unexpected arguments")
+		os.Exit(2)
+	}
+}
+
+// fakeOsascript records its argv as one JSON line and never opens Messages.
+func fakeOsascript() {
+	dir := os.Getenv("NUNTIUS_FAKE_TAILSCALE")
+	if dir == "" {
+		os.Exit(3)
+	}
+	log, err := os.OpenFile(filepath.Join(dir, "osascript.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+	if err != nil {
+		os.Exit(3)
+	}
+	b, _ := json.Marshal(os.Args[1:])
+	fmt.Fprintln(log, string(b))
+	log.Close()
+	if _, err := os.Stat(filepath.Join(dir, "osascript-fail")); err == nil {
+		fmt.Fprintln(os.Stderr, "fixture osascript failure")
+		os.Exit(1)
+	}
+}
+
 func main() {
+	// Invoked through a symlink named like the real program, the fixture stands
+	// in for the Tailscale CLI or osascript. It never contacts either.
+	switch filepath.Base(os.Args[0]) {
+	case "tailscale":
+		fakeTailscale()
+		return
+	case "osascript":
+		fakeOsascript()
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "run" {
 		opencode()
 		return

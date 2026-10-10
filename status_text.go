@@ -192,6 +192,13 @@ func (m *Manager) writeStatus(out io.Writer, view any, long ...bool) error {
 		freeze = "yes"
 	}
 	fmt.Fprintf(out, "frozen=%s  data=%s\n", freeze, cell(m.store))
+	if len(long) > 0 && long[0] {
+		dashboard := "tailnet dashboard: inactive"
+		if ws := m.webDashboard(); ws != nil {
+			dashboard = fmt.Sprintf("tailnet dashboard: active (%s, serve %s)", cell(ws.Host), cell(ws.Serve))
+		}
+		fmt.Fprintln(out, dashboard)
+	}
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	heading := "AGENT\tSTATE\tRUN\tGOAL\tELAPSED\tETA\tEVENT AGE\tACTIVITY\tREPORT\tKIND\tMODEL"
 	if len(long) > 0 && long[0] {

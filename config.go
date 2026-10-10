@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const Version = "v0.2.8"
+const Version = "v0.2.9"
 
 type Lane struct {
 	Name         string   `json:"name"`
@@ -34,6 +34,9 @@ type Config struct {
 	ReportsDir    string               `json:"reports_dir"`
 	Notifications *bool                `json:"notifications,omitempty"`
 	AutoResume    *bool                `json:"auto_resume,omitempty"`
+	// NotifyIMessage is the owner's own iMessage handle (email or E.164 phone)
+	// that web --tailnet sends the sign-in link to; --notify-imessage overrides it.
+	NotifyIMessage string `json:"notify_imessage,omitempty"`
 }
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$`)
@@ -79,6 +82,9 @@ func LoadConfig(path string) (Config, error) {
 func (c Config) Validate() (time.Duration, error) {
 	if c.OversightPath != "" && !filepath.IsAbs(c.OversightPath) {
 		return 0, errors.New("oversight_path must be absolute")
+	}
+	if c.NotifyIMessage != "" && !validIMessageHandle(c.NotifyIMessage) {
+		return 0, errors.New("notify_imessage must be an email address or E.164 phone number")
 	}
 	if c.Pools != nil {
 		lanes, e := c.expanded()

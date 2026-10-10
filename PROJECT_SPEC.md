@@ -1,11 +1,11 @@
-# Nuntius v0.2.8 — specification as built
+# Nuntius v0.2.9 — specification as built
 
 ## Boundary
 
 Nuntius is a Go stdio MCP server for an owner-approved
 judge on macOS or Linux. Linux CI tests the same process and file contracts. The module
 is `github.com/ozgurcd/nuntius`. It has no network client, LLM or shell runner.
-Version v0.2.8 is compiled in; publication is a separate release workflow.
+Version v0.2.9 is compiled in; publication is a separate release workflow.
 Terminal QR encoding uses rsc.io/qr v0.2.0, with no transitive modules.
 
 Do not register it for coding agents. The MCP host owns approval. The server
@@ -251,7 +251,7 @@ shapes and Desktop permission interaction remain owner-pilot questions.
 
 Commands: mcp, status [--long] [--json], agents [--json],
 history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h],
-paths, web [--bind 127.0.0.1:PORT] [--allow-host HOST], unfreeze,
+paths, web [--bind 127.0.0.1:PORT] [--tailnet] [--tailnet-optional] [--tailnet-keep] [--notify-imessage HANDLE] [--allow-host HOST], unfreeze,
 recover, watch LANE, config check, config convert, set KIND-agent-pool N, version and help. Global config
 and store flags precede the command. Status and agents default to human views;
 --json preserves their machine shapes. MCP output stays JSON. Status columns
@@ -326,7 +326,26 @@ its POST Origin must be exactly https://HOST. Forwarded and X-Forwarded-* grant
 nothing. Binding stays loopback-only. Startup prints both private sign-in links
 and a terminal QR of the HTTPS link, with an explicit white quiet zone.
 The owner supplies tailnet-only HTTPS through Tailscale Serve, never Funnel;
-the Mac must be awake. Nuntius edits no Tailscale settings. Actions
+the Mac must be awake. With --tailnet, nuntius finds the Tailscale CLI (PATH,
+then the app bundle), requires BackendState Running, takes Self.DNSName without
+its trailing dot as the allow host and requires it in CertDomains; each failure
+is one sentence naming what to turn on, and --tailnet-optional falls back to
+loopback. It reads serve status, reuses an https:443 mapping that already
+proxies to the dashboard's loopback port, otherwise runs
+`tailscale serve --bg --https=443 localhost:PORT` and confirms it; anything
+else on 443 or Funnel anywhere on the node is refused with the exact command
+to run, and nuntius never enables or disables Funnel. On a normal exit it runs
+`tailscale serve --https=443 off` only for a mapping it created this run;
+--tailnet-keep leaves it. No other state-changing tailscale command is used.
+--notify-imessage HANDLE, or the notify_imessage config key, sends one message
+"nuntius dashboard (NAME): LINK" through osascript with a fixed AppleScript
+that reads handle and text from argv; handles are email or E.164 only; a failed
+send warns and the dashboard keeps running. The link is never written to a
+nuntius log, history or state file; web.json in the store records only the
+dashboard PID, process start, tailnet host and serve mode for status --long,
+which prints whether a tailnet dashboard is active. Start prints one summary
+line (tailnet host, serve none/reused/created/manual, iMessage off/sent/failed)
+without the credential. Tests use fixture tailscale and osascript programs. Actions
 accept only POST with the credential in a header. No CORS, external assets or
 access logs. The browser stores the start credential in sessionStorage for this
 tab, removes it from the address bar and reads storage on reload. Empty storage

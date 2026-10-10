@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.2.9 — 2026-10-10
+
+- Add `web --tailnet`: find the Tailscale CLI, require a running backend with a
+  MagicDNS name in the HTTPS certificate domains, use that name as the allow
+  host, and stop with one plain sentence naming what to turn on;
+  `--tailnet-optional` falls back to the loopback dashboard.
+- Set up Tailscale Serve itself: reuse an `https:443` mapping that already
+  proxies to the dashboard port, otherwise create one and confirm it; refuse
+  with the exact command when 443 serves anything else or Funnel is on; remove
+  only a mapping created this run on exit unless `--tailnet-keep` is given.
+- Send the HTTPS sign-in link by iMessage to the owner's own handle with
+  `--notify-imessage` or the `notify_imessage` config key, through a fixed
+  AppleScript that takes handle and text as arguments; a failed send warns and
+  the dashboard keeps running; the link never enters a log or state file.
+- Print one credential-free summary line (tailnet host, serve reused/created,
+  iMessage sent/failed) at start, and show whether a tailnet dashboard is active
+  in `status --long`.
+- Document the one-command phone path, the Messages permission prompt, what
+  nuntius changes in Tailscale and undoes, the Funnel refusal and the manual
+  fallback.
+
 ## v0.2.8 — 2026-10-10
 
 - Colour dashboard badges from a server `badge` tone (green, amber, red) in

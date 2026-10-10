@@ -1,6 +1,6 @@
 # nuntius
 
-Nuntius v0.2.8 is a small local Go MCP server for a judge using Claude Desktop.
+Nuntius v0.2.9 is a small local Go MCP server for a judge using Claude Desktop.
 It starts and follows configured Claude Code, Codex and OpenCode agent pools on macOS or Linux.
 It contains no LLM and makes no network requests of its own. Agent programs may
 use the network under their existing settings.
@@ -60,6 +60,10 @@ defaults to `continue`. Set Claude to `as_is` to disable automatic continuation.
 Codex and OpenCode support `as_is` only. The text and start mode cannot be supplied by MCP.
 `auto_resume` is optional and defaults to true. Set it to false to keep
 interrupted goals visible without automatically starting another agent.
+`notify_imessage` is optional: your own iMessage handle (an email address or an
+E.164 phone number such as `+15551234567`) that `nuntius web --tailnet` sends
+the phone sign-in link to. `--notify-imessage` on the command line overrides it.
+An invalid handle is refused at load. See "Phone access over Tailscale".
 
 Each kind has one template and a size from 0 to 8. Agents are named
 `claude-1` through `claude-N`, `codex-1` through `codex-N`, and `opencode-1` through `opencode-N`. A disabled
@@ -427,13 +431,63 @@ Actions accept only POST.
 ### Phone access over Tailscale
 
 Install and connect Tailscale on the Mac and iPhone with the same account.
-Enable MagicDNS and HTTPS certificates for the tailnet. Find the Mac's full
-DNS name in Tailscale, for example `mac.tail123.ts.net`. See the official
+Enable MagicDNS and HTTPS certificates for the tailnet. See the official
 [Serve guide](https://tailscale.com/docs/features/tailscale-serve) and
 [HTTPS setup](https://tailscale.com/docs/how-to/set-up-https-certificates).
 The Mac must stay awake, connected to Tailscale, and running `nuntius web`.
 
-Start the dashboard with that exact name (one `--allow-host` value):
+One command does the rest:
+
+```sh
+nuntius web --tailnet --notify-imessage you@icloud.com
+```
+
+`--tailnet` finds the Tailscale CLI (`tailscale` on PATH, else the one inside
+`/Applications/Tailscale.app`), reads `tailscale status --json`, and requires
+Tailscale to be running with a MagicDNS name for this Mac that is in its HTTPS
+certificate domains. Each missing piece stops the start with one sentence that
+says what to turn on (log in, MagicDNS, HTTPS certificates). Add
+`--tailnet-optional` to start the plain loopback dashboard instead when that
+check fails. `--allow-host` still works; when both are given the name must
+match the detected one.
+
+What nuntius changes in Tailscale, and undoes: it reads `tailscale serve
+status --json`. If `https:443` already proxies to this dashboard's loopback
+port, it reuses that mapping and leaves it alone. Otherwise it runs
+`tailscale serve --bg --https=443 localhost:PORT` with the dashboard's port and
+confirms the mapping with serve status. On a normal exit (Ctrl-C or SIGTERM)
+it removes only a mapping it created in this run with
+`tailscale serve --https=443 off`; `--tailnet-keep` leaves it in place. If 443
+serves anything else, nuntius does not touch it and prints the exact
+`tailscale serve --https=443 off` command you can run yourself. If Funnel is on
+for this Mac, nuntius refuses tailnet mode and prints the
+`tailscale funnel --https=PORT off` command; nuntius never enables or disables
+Funnel and calls no other tailscale command that changes state.
+
+`--notify-imessage HANDLE` (or the `notify_imessage` config key) sends one
+iMessage, `nuntius dashboard (mac): https://mac.tail123.ts.net/?token=…`, to
+your own Apple ID (an email address) or phone number (E.164) through
+`osascript` and the Messages app, after serve is confirmed. The handle and
+text are passed as arguments to a fixed AppleScript. The first run asks for
+macOS permission for your terminal to control Messages; allow it. If sending
+fails, nuntius prints a warning and the dashboard keeps running; the terminal
+link and QR code still print. The link is never written to any nuntius log,
+history or state file. The start prints one summary line without the
+credential, for example `summary: tailnet=mac.tail123.ts.net serve=created
+imessage=sent`, and `nuntius status --long` shows whether a tailnet dashboard
+is active.
+
+Security model: the dashboard stays tailnet-only. Nuntius listens only on
+`127.0.0.1`; Tailscale Serve supplies HTTPS to tailnet devices and nuntius
+does not validate tailnet membership, so Tailscale's access rules and the
+dashboard credential both matter. Every start mints a new credential, so an old
+link or message stops working when `nuntius web` restarts. Anyone who can reach
+the dashboard and has its credential can dispatch and cancel agents:
+**never enable Tailscale Funnel**, and keep the link and QR private.
+
+Manual fallback. Find the Mac's full DNS name in Tailscale, for example
+`mac.tail123.ts.net`, and start the dashboard with that exact name (one
+`--allow-host` value):
 
 ```sh
 nuntius web --allow-host mac.tail123.ts.net
@@ -453,14 +507,10 @@ per-start credential; keep both private. The plain loopback sign-in link also
 remains available. Sign-in still uses tab-scoped `sessionStorage`, with API
 credentials sent only in the `X-Nuntius-Token` header.
 
-The opt-in accepts only the exact configured DNS Host, with no port or `:443`,
-and exactly `https://mac.tail123.ts.net` as its POST Origin. Wildcards, other
-hosts and ports, HTTP origins, and forwarded headers grant no access.
-Keep this dashboard tailnet-only: **never enable Tailscale Funnel**. Anyone
-who can reach it and has its credential can dispatch and cancel agents.
-Tailscale access rules and the dashboard credential both matter. Serve supplies
-HTTPS; nuntius does not change Tailscale settings or validate tailnet membership.
-To turn off this Serve endpoint:
+The opt-in accepts only the exact DNS Host, with no port or `:443`, and exactly
+`https://mac.tail123.ts.net` as its POST Origin. Wildcards, other hosts and
+ports, HTTP origins, and forwarded headers grant no access. To turn off a
+manual Serve endpoint:
 
 ```sh
 tailscale serve --https=443 off
