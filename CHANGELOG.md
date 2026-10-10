@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Preserve attention and the missing-report lane indicator when a resumed
+  run's readable display label says Ended. This correction follows v0.3.0.
+
 ## v0.3.0 — 2026-10-10
 
 - Add a separate fyne.io/systray module: Cocoa template Relay icon, Linux

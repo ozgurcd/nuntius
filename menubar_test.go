@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMenubarAPI(t *testing.T) {
@@ -66,6 +67,39 @@ func TestMenubarAPI(t *testing.T) {
 	w.menubarHandler().ServeHTTP(out, httptest.NewRequest("GET", "http://unix/open", nil))
 	if out.Code != 405 {
 		t.Fatal("action accepted a GET")
+	}
+	// A resumed run keeps its readable display label even when no report exists.
+	// The attention flag must still come from the underlying terminal state.
+	ended, exit := time.Now().UTC(), 0
+	run := Run{ID: strings.Repeat("a", 32), Lane: "codex", GoalID: "ATTENTION-1", Started: ended.Add(-time.Minute), Ended: &ended, Exit: &exit, State: "ended", RecoveryRun: true, ResumeCount: 1}
+	if err := os.MkdirAll(filepath.Join(m.store, "runs", run.ID), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.save(&run); err != nil {
+		t.Fatal(err)
+	}
+	out = httptest.NewRecorder()
+	w.menubarHandler().ServeHTTP(out, httptest.NewRequest("GET", "http://unix/status", nil))
+	var resumed struct {
+		Lanes []struct {
+			Lane, State string
+			Failed      bool
+		}
+	}
+	if out.Code != 200 || json.Unmarshal(out.Body.Bytes(), &resumed) != nil {
+		t.Fatal("resumed status unavailable")
+	}
+	found := false
+	for _, row := range resumed.Lanes {
+		if row.Lane == "codex" {
+			found = true
+			if !strings.Contains(row.State, "resumed") || !row.Failed {
+				t.Fatal("resumed end without report lost attention")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("resumed fixture not loaded")
 	}
 }
 

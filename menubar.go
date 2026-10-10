@@ -108,7 +108,7 @@ func (w *Web) menubarHandler() http.Handler {
 						question = question || menubarReportQuestion(report)
 					}
 				}
-				rows = append(rows, map[string]any{"lane": cell(s.Lane), "goal_id": cell(s.GoalID), "state": state, "elapsed_seconds": s.ElapsedSeconds, "question": question, "failed": s.Badge == "red"})
+				rows = append(rows, map[string]any{"lane": cell(s.Lane), "goal_id": cell(s.GoalID), "state": state, "elapsed_seconds": s.ElapsedSeconds, "question": question, "failed": s.Badge == "red" || s.State == "ended_no_report"})
 			}
 			_ = json.NewEncoder(out).Encode(map[string]any{"lanes": rows})
 			return
