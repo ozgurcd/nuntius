@@ -185,6 +185,33 @@ func TestReadableAuditParsingAndCLI(t *testing.T) {
 	if got := d.(map[string]any)["audit"]; toolText(got) != toolText(rows) {
 		t.Fatal("dashboard structured audit parity")
 	}
+	// Classification is presentation metadata; reads remain in the complete log.
+	reads := map[string]bool{
+		"nuntius_status": true, "nuntius_report": true, "nuntius_signals": true,
+		"nuntius_history": true, "nuntius_tail": true, "nuntius_owner_notes": true,
+	}
+	actions := []string{"freeze", "unfreeze", "run_end", "automatic_continue", "future_action", "nuntius_status_changed"}
+	for _, tool := range tools() {
+		actions = append(actions, tool.Name)
+	}
+	for _, action := range actions {
+		b, _ := json.Marshal(map[string]any{"time": now, "tool": action, "result": "ok"})
+		parsed := parseAudit(b, time.Time{})
+		if len(parsed) != 1 || parsed[0].Action != action || parsed[0].Raw != string(b) {
+			t.Fatal("classification changed the audit record")
+		}
+		var presented []map[string]any
+		if json.Unmarshal([]byte(toolText(parsed)), &presented) != nil {
+			t.Fatal("classification JSON unavailable")
+		}
+		if got, ok := presented[0]["read_only"].(bool); !ok || got != reads[action] {
+			t.Errorf("audit read classification differs for %s", action)
+		}
+	}
+	stored, err := os.ReadFile(filepath.Join(store, "audit.jsonl"))
+	if err != nil || !bytes.Equal(stored, data.Bytes()) {
+		t.Fatal("audit presentation rewrote the stored log")
+	}
 }
 
 func TestLaneNotesAndAuditRefusals(t *testing.T) {

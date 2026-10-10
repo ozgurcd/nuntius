@@ -5,6 +5,15 @@ User-facing changes and upgrade actions are listed newest first. See the
 restart an existing server. Choose when to upgrade through the Homebrew tap
 and restart your MCP server or background dashboard to load the new binary.
 
+## Unreleased
+
+The dashboard Audit list hides read-only polling and inspection entries by
+default. Check **Show reads** to include them again; your browser remembers
+the choice. Text, lane and action filters still combine, and the count shows
+matching entries from the latest received audit rows. Global entries show
+**all lanes**, and missing goals or briefs show **n/a**. The complete audit
+log and dashboard access rules stay unchanged. No restart or upgrade is automatic.
+
 ## v0.3.2 — 2026-10-10
 
 Sign out stays available while a dashboard action is waiting for a response.

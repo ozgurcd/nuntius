@@ -192,6 +192,7 @@
     {
       "time": "2026-10-09T20:00:00Z",
       "action": "nuntius_dispatch",
+      "read_only": false,
       "summary": "Dispatched DASHBOARD-POLISH to claude-1",
       "lane": "claude-1",
       "goal_id": "DASHBOARD-POLISH",
@@ -203,6 +204,7 @@
     {
       "time": "2026-10-09T19:45:00Z",
       "action": "nuntius_report",
+      "read_only": true,
       "summary": "Read report REVIEW-RELEASE",
       "lane": "codex-2",
       "goal_id": "REVIEW-RELEASE",

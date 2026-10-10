@@ -17,19 +17,25 @@ import (
 
 // AuditEntry is a bounded, redacted presentation of one complete audit record.
 type AuditEntry struct {
-	Time    time.Time `json:"time"`
-	Action  string    `json:"action"`
-	Summary string    `json:"summary"`
-	Lane    string    `json:"lane"`
-	GoalID  string    `json:"goal_id"`
-	Result  string    `json:"result"`
-	Reason  string    `json:"reason"`
-	Digest  string    `json:"digest"`
-	Raw     string    `json:"raw"`
+	Time     time.Time `json:"time"`
+	Action   string    `json:"action"`
+	ReadOnly bool      `json:"read_only"`
+	Summary  string    `json:"summary"`
+	Lane     string    `json:"lane"`
+	GoalID   string    `json:"goal_id"`
+	Result   string    `json:"result"`
+	Reason   string    `json:"reason"`
+	Digest   string    `json:"digest"`
+	Raw      string    `json:"raw"`
 }
 
 func parseAudit(b []byte, since time.Time) []AuditEntry {
 	out := []AuditEntry{}
+	// Reuse the MCP registry; unknown and internal actions stay visible.
+	reads := make(map[string]bool)
+	for _, tool := range tools() {
+		reads[tool.Name], _ = tool.Annotations["readOnlyHint"].(bool)
+	}
 	for _, line := range bytes.Split(b, []byte("\n")) {
 		var v struct {
 			Time   time.Time `json:"time"`
@@ -44,6 +50,7 @@ func parseAudit(b []byte, since time.Time) []AuditEntry {
 			continue
 		}
 		entry := AuditEntry{Time: v.Time, Action: cell(bounded(Redact(v.Tool), 128)), Lane: cell(bounded(Redact(v.Lane), 128)), GoalID: cell(bounded(Redact(v.GoalID), 128)), Result: "ok", Reason: cell(bounded(Redact(v.Reason), 512)), Raw: bounded(Redact(string(line)), 16384)}
+		entry.ReadOnly = reads[entry.Action]
 		switch v.Result {
 		case "accepted", "pass", "started", "ended", "ok", "frozen", "unfrozen", "updated", "":
 		default:

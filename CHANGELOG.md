@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Hide read-only dashboard audit rows by default, with a browser-remembered
+  Show reads checkbox, matching-entry count and combined text/lane/action filters.
+- Derive read classification from existing MCP tool annotations; keep unknown
+  actions visible and preserve the complete stored audit log and request guards.
+- Replace empty audit lane/goal/brief cells with all lanes and muted n/a.
+  Cover classification, stored-log integrity and filtering with offline tests.
+
 ## v0.3.2 — 2026-10-10
 
 - Protect test-fixture manager configuration updates with the existing mutex;

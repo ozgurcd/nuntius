@@ -233,8 +233,18 @@ Messages & notes.
 The other tabs show messages and notes, the judge's `OVERSIGHT.md` digest next
 to the reports directory (or optional absolute `oversight_path` in config),
 the latest 50 runs and the bounded audit log. Audit rows show action, lane, goal,
-result/refusal reason and short brief digest, newest first. Filter by text, lane
-or action; each Raw toggle shows the original redacted JSON. Filter history by goal ID or lane,
+result/refusal reason and short brief digest, newest first. Read-only actions
+(status, report, signals, history, tail and owner-note reads) are hidden by
+default. Check **Show reads** to include them; this preference is remembered
+per browser origin and profile. If storage is disabled, the checkbox still
+works for the current page. State-changing and unknown actions stay visible.
+Filter by text, lane or action; filters combine with Show reads, and the count
+shows matching entries out of the latest bounded audit entries received.
+An empty lane shows **all lanes**; missing goals and brief digests show muted
+**n/a**. Each Raw toggle shows the original redacted JSON. Filtering changes
+only the display: the complete server audit log and its read entries remain
+unchanged. Read classification comes from the existing MCP tool annotations.
+Filter history by goal ID or lane,
 then expand a row for highlighted QUESTIONS/DECISIONS, goal and report.
 Times are relative with absolute dates on hover.
 History rows stack on phones without splitting badge, lane or duration words.

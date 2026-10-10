@@ -58,6 +58,10 @@ const renderedPanels = new Set();
 const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
 const agentTabs = new Map(), laneRuns = new Map(), audits = new Map();
 let laneSelection = '';
+const auditReadsKey = 'nuntius.web.audit.showReads';
+try {
+  el('auditReads').checked = localStorage.getItem(auditReadsKey) === 'true';
+} catch { /* Filtering still works when browser storage is disabled. */ }
 
 function selectTab(id, focus = false, push = true) {
   const parts = id.split('/');
@@ -391,20 +395,24 @@ function makeAudit(e) {
 }
 function updateAudit(v,e) {
   v.data = e; timeText(v.timestamp,e.time);
-  setText(v.summary,e.summary); setText(v.lane,e.lane || '—'); setText(v.goal,e.goal_id || '—');
-  setText(v.result,e.result + (e.reason ? ': ' + e.reason : '')); setText(v.digest,e.digest || '—'); setText(v.rawText,e.raw);
+  setText(v.summary,e.summary); setText(v.lane,e.lane || 'all lanes'); setText(v.goal,e.goal_id || 'n/a');
+  v.goal.className = e.goal_id ? '' : 'muted';
+  setText(v.result,e.result + (e.reason ? ': ' + e.reason : '')); setText(v.digest,e.digest || 'n/a'); setText(v.rawText,e.raw);
+  v.digest.className = e.digest ? '' : 'muted';
 }
 function filterAudit() {
   const query = el('auditFilter').value.toLowerCase().trim();
   let visible = 0;
   for (const v of audits.values()) {
     const e = v.data;
-    const match = (!el('auditLane').value || e.lane === el('auditLane').value) &&
+    const match = (el('auditReads').checked || e.read_only !== true) &&
+      (!el('auditLane').value || e.lane === el('auditLane').value) &&
       (!el('auditAction').value || e.action === el('auditAction').value) &&
       [e.summary,e.lane,e.goal_id,e.result,e.reason,e.digest].join(' ').toLowerCase().includes(query);
     v.root.hidden = !match; if (match) visible++;
   }
   el('auditEmpty').hidden = visible !== 0;
+  setText(el('auditCount'), visible + ' of ' + audits.size + ' entries');
 }
 function render(d) {
   lastData = d;
@@ -558,6 +566,10 @@ el('filter').addEventListener('input', filterRuns);
 el('auditFilter').addEventListener('input', filterAudit);
 el('auditLane').addEventListener('change', filterAudit);
 el('auditAction').addEventListener('change', filterAudit);
+el('auditReads').addEventListener('change', () => {
+  try { localStorage.setItem(auditReadsKey, String(el('auditReads').checked)); } catch {}
+  filterAudit();
+});
 el('followTail').addEventListener('change', () => { if (lastData) renderLane(lastData); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 setInterval(() => {
