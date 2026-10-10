@@ -142,7 +142,7 @@ class Element {
   addEventListener(name, fn) { this.listeners[name] = fn; }
   focus() { this.document.activeElement = this; }
 }
-function start(hash, store = new Map(), query = '', blocked = false) {
+function start(hash, store = new Map(), query = '', blocked = false, clock = {now: 1791658800000}, status = 200, pending = null) {
   const root = new Element('html'), ids = {}, stack = [root];
   // Parse the real static shell's element tree; no HTML renderer is involved.
   for (const match of input.page.matchAll(/<\/?([a-z][a-z0-9]*)([^>]*)>/gi)) {
@@ -156,8 +156,12 @@ function start(hash, store = new Map(), query = '', blocked = false) {
   const doc = {hidden: false, documentElement: root, activeElement: ids[hash.slice(1)] || root, currentScript: {src: 'http://localhost:8123/app.js' + query}, getElementById: id => ids[id], querySelectorAll: s => root.querySelectorAll(s), createElement: tag => { const n = new Element(tag); n.document = doc; return n; }, addEventListener: (n, fn) => { doc[n] = fn; }};
   function attach(n) { n.document = doc; n.children.forEach(attach); } attach(root);
   const calls = [], timers = [], win = {getSelection: () => ({isCollapsed: true}), addEventListener: (n, fn) => { win[n] = fn; }};
-  const location = {href: 'http://localhost:8123/' + query + hash, hash, search: query};
-  const context = vm.createContext({document: doc, window: win, location, URL, history: {pushState: (_, __, path) => { location.hash = path.slice(path.indexOf('#')); }, replaceState: (_, __, path) => { location.href = 'http://localhost:8123' + path; location.hash = path.includes('#') ? path.slice(path.indexOf('#')) : ''; location.search = ''; }}, sessionStorage: {getItem: k => { if (blocked) throw new Error(); return store.get(k) || null; }, setItem: (k, v) => { if (blocked) throw new Error(); store.set(k, v); }}, fetch: async (path, options) => { calls.push({path, options}); return {ok: true, json: async () => input.data}; }, setInterval: fn => { timers.push(fn); }, setTimeout: () => 1, clearTimeout: () => {}});
+  const location = {href: 'http://localhost:8123/' + query + hash, hash, search: query, reloads: 0, reload: () => { location.reloads++; }};
+  const storage = {getItem: k => { if (blocked) throw new Error(); return store.get(k) || null; }, setItem: (k, v) => { if (blocked) throw new Error(); store.set(k, v); }, removeItem: k => { if (blocked) throw new Error(); store.delete(k); }};
+  // Each start is a fresh tab: only origin localStorage survives discard.
+  const session = new Map();
+  class ClockDate extends Date { static now() { return clock.now; } }
+  const context = vm.createContext({Date: ClockDate, document: doc, window: win, location, URL, history: {pushState: (_, __, path) => { location.hash = path.slice(path.indexOf('#')); }, replaceState: (_, __, path) => { location.href = 'http://localhost:8123' + path; location.hash = path.includes('#') ? path.slice(path.indexOf('#')) : ''; location.search = ''; }}, localStorage: storage, sessionStorage: {getItem: k => session.get(k) || null, setItem: (k,v) => session.set(k,v), removeItem: k => session.delete(k)}, fetch: async (path, options) => { calls.push({path, options}); if (pending) await pending; return {ok: status === 200, status, json: async () => input.data}; }, setInterval: fn => { timers.push(fn); }, setTimeout: () => 1, clearTimeout: () => {}});
   vm.runInContext(input.script, context);
   return {context, ids, calls, timers, doc, win, location};
 }
@@ -169,6 +173,56 @@ function rendered(h, id) {
   return h.ids.auditRows.children.length === input.data.audit.length;
 }
 (async () => {
+  const phoneFailures = [];
+  function phoneCheck(ok, label) { if (!ok) phoneFailures.push(label); }
+  const clock = {now: 1791658800000}, sevenDays = 7 * 24 * 60 * 60 * 1000;
+  const device = new Map();
+  const signedIn = start('#agents', device, '?token=fixture-auth', false, clock); await settle();
+  let saved;
+  try { saved = JSON.parse(device.get('nuntius.web.credential')); } catch {}
+  phoneCheck(saved?.token === 'fixture-auth' && saved?.expiresAt === clock.now + sevenDays, 'phone saves an absolute bounded device grant');
+  phoneCheck(!device.has('nuntius.web.token'), 'legacy tab key is not persisted');
+  phoneCheck(!signedIn.location.search && !signedIn.location.href.includes('fixture-auth'), 'phone bootstrap removes grant from URL');
+  const discarded = start('#runs', device, '', false, clock); await settle();
+  phoneCheck(discarded.calls.length === 1 && rendered(discarded, 'runs'), 'bookmark survives discarded tab with fresh sessionStorage');
+  phoneCheck(device.get('nuntius.web.credential') === (saved && JSON.stringify(saved)), 'bookmark does not renew grant lifetime');
+  clock.now += sevenDays;
+  const expired = start('#agents', device, '', false, clock); await settle();
+  phoneCheck(expired.calls.length === 0 && !device.has('nuntius.web.credential') && !expired.ids.error.hidden, 'exact expiry clears stored grant and requests sign-in');
+  const invalidRecords = ['broken', '{}', 'null', JSON.stringify({token:'fixture-auth',expiresAt:clock.now + sevenDays + 1}), JSON.stringify({token:'fixture-auth',expiresAt:'later'})];
+  for (const record of invalidRecords) {
+    const store = new Map([['nuntius.web.credential',record]]);
+    const h = start('#agents', store, '', false, clock); await settle();
+    phoneCheck(h.calls.length === 0 && !store.has('nuntius.web.credential'), 'invalid or overlong stored grant fails closed');
+  }
+  const signoutStore = new Map();
+  const signout = start('#agents', signoutStore, '?token=fixture-auth', false, clock); await settle();
+  phoneCheck(signout.ids.signOut?.listeners.click !== undefined, 'explicit phone sign-out control exists');
+  if (signout.ids.signOut?.listeners.click) signout.ids.signOut.listeners.click();
+  await vm.runInContext("action('unfreeze'); refresh()", signout.context); await settle();
+  phoneCheck(!signoutStore.has('nuntius.web.credential') && signout.location.reloads === 1 && signout.calls.length === 1, 'sign-out clears grant and navigates away from private data without further requests');
+  const secondTab = start('#agents', new Map(), '?token=fixture-auth', false, clock); await settle();
+  if (secondTab.win.storage) secondTab.win.storage({key:'nuntius.web.credential', newValue:null, storageArea:vm.runInContext('localStorage',secondTab.context)});
+  await vm.runInContext("action('unfreeze'); refresh()", secondTab.context); await settle();
+  phoneCheck(secondTab.location.reloads === 1 && secondTab.calls.length === 1, 'storage event signs out other open tabs');
+  const revokedStore = new Map([['nuntius.web.credential',JSON.stringify({token:'fixture-auth',expiresAt:clock.now+sevenDays})]]);
+  const revoked = start('#runs', revokedStore, '', false, clock, 403); await settle();
+  phoneCheck(!revokedStore.has('nuntius.web.credential') && revoked.location.reloads === 1, 'server revocation removes remembered grant');
+  const transientStore = new Map([['nuntius.web.credential',JSON.stringify({token:'fixture-auth',expiresAt:clock.now+sevenDays})]]);
+  const transient = start('#runs', transientStore, '', false, clock, 503); await settle();
+  phoneCheck(transientStore.has('nuntius.web.credential') && transient.location.reloads === 0, 'temporary server failure retains remembered sign-in');
+  const activeClock = {now: clock.now}, activeStore = new Map();
+  const active = start('#agents',activeStore,'?token=fixture-auth',false,activeClock); await settle();
+  activeClock.now += sevenDays;
+  await vm.runInContext("action('unfreeze'); refresh()",active.context); await settle();
+  phoneCheck(active.calls.length === 1 && !activeStore.has('nuntius.web.credential') && active.location.reloads === 1, 'open page expiry blocks actions and polling');
+  let release;
+  const deferred = new Promise(resolve => { release = resolve; });
+  const inflight = start('#runs',new Map(),'?token=fixture-auth',false,clock,200,deferred);
+  if (inflight.ids.signOut?.listeners.click) inflight.ids.signOut.listeners.click();
+  release(); await settle();
+  phoneCheck(!rendered(inflight,'runs'), 'sign-out ignores a late authenticated response');
+  if (phoneFailures.length) { predicate = phoneFailures.join('; '); throw new Error(); }
 	const phoneWidth = 390;
 	const phoneRules = [...input.css.matchAll(/@media\s*\(max-width:\s*(\d+)px\)\s*\{([^@]*?)(?=@media|$)/g)].filter(r => phoneWidth <= Number(r[1])).map(r => r[2]).join('\n');
 	check(/\.table-scroll\s*\{[^}]*overflow-x:\s*auto/.test(phoneRules) && /\.table-scroll td\s*\{[^}]*white-space:\s*nowrap/.test(phoneRules), '390px wide-table cells stay intact inside a scrolling wrapper');
@@ -184,7 +238,7 @@ function rendered(h, id) {
     const first = start('#agents', store, '?token=fixture-auth'); await settle();
     const reloaded = start('#' + id, store); await settle();
     check(rendered(reloaded, id), 'reload retains hash and authentication: ' + id);
-    check(reloaded.calls.length === 1 && reloaded.calls[0].options.headers['X-Nuntius-Token'] === first.calls[0].options.headers['X-Nuntius-Token'], 'reload uses tab storage');
+    check(reloaded.calls.length === 1 && reloaded.calls[0].options.headers['X-Nuntius-Token'] === first.calls[0].options.headers['X-Nuntius-Token'], 'reload uses device storage');
     // A hidden panel can retain focus and a recent hold from a prior interaction.
     vm.runInContext("holds.set(el('" + id + "'), Date.now() + 5000)", h.context);
     vm.runInContext("selectTab('agents')", h.context);
@@ -235,7 +289,7 @@ function rendered(h, id) {
   check(rendered(blocked, 'runs') && !blocked.location.search, 'storage failure permits current sign-in and clears URL');
   const noStorage = start('#runs', new Map(), '', true); await settle();
   check(noStorage.calls.length === 0 && !noStorage.ids.error.hidden, 'storage failure without bootstrap remains signed out');
-  const replaced = new Map([['nuntius.web.token', 'stale-fixture-auth']]);
+  const replaced = new Map([['nuntius.web.credential', JSON.stringify({token:'stale-fixture-auth',expiresAt:1791658800000+sevenDays})]]);
   const fresh = start('#runs', replaced, '?token=fixture-auth'); await settle();
 	vm.runInContext("selectTab('agents'); lastData.lanes[0].eta = 'over usual (+7m)'; lastData.lanes[0].eta_details = {explanation:'Usual = 24m: median of 3 earlier codex size-S runs; this run 31m'}; globalThis.alert = text => { globalThis.tappedExplanation = text; }; render(lastData)", fresh.context);
 	const eta = fresh.ids.lanes.children[0].querySelectorAll('dd')[2];
@@ -271,7 +325,7 @@ function rendered(h, id) {
   check(fresh.ids.freeze.textContent.includes('Enabled') && fresh.ids.freeze.title === 'Dispatch enabled' && fresh.ids.freeze.getAttribute('aria-label') === 'Dispatch enabled', 'short enabled label has full accessible text');
   vm.runInContext("lastData.freeze = {since: '2026-10-09T10:00:00Z', reason: 'Owner pause'}; render(lastData)", fresh.context);
   check(fresh.ids.freeze.textContent.includes('Frozen') && fresh.ids.freeze.title.includes('Owner pause') && fresh.ids.freeze.getAttribute('aria-label') === fresh.ids.freeze.title, 'short frozen label has full accessible text');
-  check(replaced.get('nuntius.web.token') === 'fixture-auth', 'new start link replaces stale tab credential');
+  check(JSON.parse(replaced.get('nuntius.web.credential')).token === 'fixture-auth', 'new start link replaces stale device credential');
   await vm.runInContext("action('unfreeze')", fresh.context);
   check(fresh.calls.some(c => c.path === '/action' && c.options.method === 'POST' && c.options.headers['X-Nuntius-Token'] === fresh.calls[0].options.headers['X-Nuntius-Token']), 'actions use the same tab credential header');
   fresh.doc.keydown({type: 'keydown', target: fresh.ids.runs});

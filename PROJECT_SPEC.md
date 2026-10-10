@@ -380,8 +380,14 @@ access again and optionally resends. QR uses qr.L, half-block rows, two-module
 quiet zone and a terminal-width guard. Tests decode it offline and use fixture
 launchctl, tailscale and osascript programs on PATH. Actions
 accept only POST with the credential in a header. No CORS, external assets or
-access logs. The browser stores the start credential in sessionStorage for this
-tab, removes it from the address bar and reads storage on reload. Empty storage
+access logs. The browser remembers the start credential in origin-scoped
+localStorage for seven days with an absolute expiry, removes it from the
+address bar before storage/API work and reads storage on reload or a new tab.
+Sign out clears local sign-in and reloads the public shell; storage events
+clear other open tabs and late responses cannot render signed-out data.
+Expiry blocks API calls, server 403 forgets the grant, and temporary failures
+retain it. Stop/start rotates the server grant and revokes all old copies;
+browser expiry/sign-out alone does not revoke other devices. Empty storage
 shows instructions to reopen the printed start link. Disabled storage permits
 the current start-link load only. Query credentials cannot authenticate APIs.
 

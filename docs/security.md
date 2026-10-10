@@ -1,4 +1,50 @@
-# Dashboard recovery security notes
+# Dashboard security notes
+
+## Remembered phone sign-in (Unreleased)
+
+The public, data-free shell removes the first-load credential query from the
+address bar before storage or API work. It remembers the grant in localStorage
+for this exact origin and browser profile, with an absolute seven-day expiry.
+Reloads, polling and bookmarked opens do not renew that expiry. No credential
+is put in subsequent URLs, asset requests, logs or cookies. API requests still
+require `X-Nuntius-Token`; POST `/action` still requires the exact allowed
+Origin. Exact Host/port checks, loopback binding, no CORS, same-origin CSP,
+HTTPS through tailnet-only Serve and Funnel refusal remain unchanged.
+
+This changes the threat model from one tab's lifetime to a remembered browser
+profile. Someone using the same unlocked profile can open the bookmark and
+control agents until expiry or revocation. Same-origin script compromise or a
+privileged browser extension could read the persisted grant, including after
+the tab closes; HttpOnly protection is not provided. Use only your own trusted
+device/profile, protect it with a device lock, and sign out on shared devices.
+Browser storage may be cleared by the OS or user, so persistence is not a
+guarantee against storage eviction, private browsing or disabled storage.
+
+Sign out removes this origin's stored grant and reloads the public shell to
+discard private data and drafts. Other open tabs react to storage changes;
+in-flight responses cannot restore signed-out data. Expiry is checked before
+every API request and before rendering responses, including after sleep.
+Malformed, expired or implausibly far-future records are discarded. A server
+403 clears remembered sign-in; network/5xx failures retain it for retry.
+When storage is disabled, a fresh link works in memory for this load only,
+with the same time limit and sign-out control.
+
+The seven-day limit is browser retention policy, based on the device clock;
+it is not a server-enforced grant expiry. Sign out is local, not revocation:
+other devices and copies of the original link retain access. `nuntius web stop`
+ends serving; the next start creates a new random grant, rejecting all prior
+links and stored copies. Never use a restart as a proof against owner services.
+Offline tests use a fake clock, fresh tab contexts and temporary manager
+fixtures to check persistence, expiry, sign-out, guards and grant rotation.
+
+Alternatives considered: an HttpOnly, Secure, SameSite=Strict cookie would
+reduce script-readable persistence but replace the browser's header-token
+contract and require a larger authentication/CSRF change. Helper or
+`nuntius web link --notify` re-sign-in keeps tab-only storage but does not make
+a bookmark survive tab discard. Origin-scoped localStorage is the smallest
+change that solves that loss while preserving existing server guards.
+
+## Judge-only recovery
 
 The unreleased `nuntius_web_ensure` capability belongs only to the existing
 owner-launched stdio MCP server in the judge's host. Set approval to Ask on

@@ -2,6 +2,7 @@ package nuntius
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -39,6 +40,20 @@ func TestWebRedactionAndTokenPerStart(t *testing.T) {
 	second, e := NewWeb(m, "127.0.0.1:8123")
 	if e != nil || first.token == second.token {
 		t.Fatal("web credential reused")
+	}
+	// A newly started server rejects every remembered copy of the old grant.
+	for _, current := range []bool{false, true} {
+		req := httptest.NewRequest("GET", "http://localhost:8123/data", nil)
+		credential, want := first.token, http.StatusForbidden
+		if current {
+			credential, want = second.token, http.StatusOK
+		}
+		req.Header.Set("X-Nuntius-Token", credential)
+		out := httptest.NewRecorder()
+		second.ServeHTTP(out, req)
+		if out.Code != want {
+			t.Fatal("new server grant revocation predicate failed")
+		}
 	}
 	for _, path := range []string{"/", "/data"} {
 		req := httptest.NewRequest("GET", "http://localhost:8123"+path, nil)

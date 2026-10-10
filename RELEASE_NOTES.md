@@ -7,6 +7,17 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+After first sign-in, bookmark the cleaned dashboard address on your iPhone.
+Sign-in is remembered in that browser profile for seven days, so tab discard
+and reload no longer require finding the original message. Use Sign out in
+the top bar to forget this browser and clear the page. To revoke every device
+and old link, stop the dashboard and start it again when ready. Use the helper
+or `nuntius web link --notify` for a fresh sign-in link after expiry or restart.
+Use only a trusted private browser profile; anyone using that unlocked profile
+can access the bookmark. Cleared/disabled storage or private browsing may
+require the original link again. Tailnet-only access and API guards are unchanged.
+This change is unreleased; no upgrade or restart is automatic.
+
 The judge can use `nuntius_web_ensure` to ask the owner-launched MCP server to
 restore phone dashboard access. Set this tool to Ask for each call in the host.
 A healthy dashboard keeps its sign-in; a missing Tailscale Serve mapping is

@@ -1,13 +1,54 @@
 'use strict';
 
-// The shell is public; only API requests carry the tab's credential.
+// The shell is public; only API headers carry the credential. Remember it for
+// this browser origin, with an absolute expiry that reloads never extend.
+const credentialKey = 'nuntius.web.credential';
+const credentialLifetime = 7 * 24 * 60 * 60 * 1000;
 let token = new URL(location.href).searchParams.get('token') || '';
-try {
-  if (token) sessionStorage.setItem('nuntius.web.token', token);
-  else token = sessionStorage.getItem('nuntius.web.token') || '';
-} catch { /* Storage can be disabled; the start link still works this load. */ }
 history.replaceState(null, '', '/' + location.hash);
+let expiresAt = token ? Date.now() + credentialLifetime : 0;
+let authEpoch = 0;
+try {
+  sessionStorage.removeItem('nuntius.web.token');
+} catch { /* Legacy tab storage may be disabled independently. */ }
+try {
+  if (token) localStorage.setItem(credentialKey, JSON.stringify({token, expiresAt}));
+  else {
+    const saved = JSON.parse(localStorage.getItem(credentialKey) || 'null');
+    if (saved && typeof saved.token === 'string' && saved.token &&
+        Number.isSafeInteger(saved.expiresAt) && saved.expiresAt > Date.now() &&
+        saved.expiresAt <= Date.now() + credentialLifetime) {
+      token = saved.token; expiresAt = saved.expiresAt;
+    } else localStorage.removeItem(credentialKey);
+  }
+} catch { /* Storage can be disabled; the start link still works this load. */ }
+// Malformed JSON must not remain a remembered sign-in.
+if (!token) {
+  try { localStorage.removeItem(credentialKey); } catch {}
+}
+function signOut(removeStored = true) {
+  if (!token) return;
+  token = ''; expiresAt = 0; authEpoch++;
+  if (removeStored) {
+    try { localStorage.removeItem(credentialKey); } catch {}
+  }
+  try { sessionStorage.removeItem('nuntius.web.token'); } catch {}
+  // A fresh public shell clears private data, drafts and any pending requests.
+  location.reload();
+}
+function authenticated() {
+  if (token && Date.now() >= expiresAt) signOut();
+  return !!token;
+}
+window.addEventListener('storage', event => {
+  if (event.storageArea === localStorage && (event.key === credentialKey || event.key === null)) {
+    // Another tab may have signed in with a new grant. Preserve its new record.
+    signOut(false);
+  }
+});
 const el = id => document.getElementById(id);
+el('signOut').hidden = !token;
+el('signOut').addEventListener('click', () => signOut());
 const cards = new Map(), runs = new Map(), notes = new Map();
 const historyTable = el('history').parentElement;
 let nextRunID = 0;
@@ -446,17 +487,21 @@ function renderPanels(d, shown = '') {
 el('history').remove();
 el('laneHistoryPlaceholder').remove();
 async function refresh() {
-  if (!token) {
+  if (!authenticated()) {
     setText(el('error'), 'Open the link printed by `nuntius web` to sign in.');
     el('error').hidden = false;
     return;
   }
   if (refreshing || acting || document.hidden) return;
   refreshing = true;
+  const epoch = authEpoch;
   try {
     const response = await fetch('/data', {headers: {'X-Nuntius-Token': token}, cache: 'no-store'});
+    if (epoch !== authEpoch || !authenticated()) return;
+    if (response.status === 403) { signOut(); return; }
     if (!response.ok) throw new Error('unavailable');
     const d = await response.json();
+    if (epoch !== authEpoch || !authenticated()) return;
     render(d);
     lastUpdate = Date.now();
     setText(el('lastRefresh'), 'Last refresh ' + new Date(lastUpdate).toLocaleTimeString());
@@ -465,23 +510,28 @@ async function refresh() {
     el('updated').title = el('lastRefresh').title;
     el('error').hidden = true;
   } catch {
+    if (epoch !== authEpoch || !authenticated()) return;
     setText(el('error'), 'Unable to refresh dashboard. Showing the last received data. Retrying every 2 seconds.');
     el('error').hidden = false;
   } finally { refreshing = false; }
 }
 async function action(name, lane = '', text = '', stop = false) {
-  if (!token) { await refresh(); return false; }
+  if (!authenticated()) { await refresh(); return false; }
   if (acting) return false;
   acting = true;
   const buttons = Array.from(document.querySelectorAll('button'));
   buttons.forEach(b => { b.disabled = true; });
   let ok = false;
+  const epoch = authEpoch;
   try {
     const response = await fetch('/action', {method: 'POST', headers: {'X-Nuntius-Token': token, 'Content-Type': 'application/json'}, body: JSON.stringify({action: name, lane, text, stop})});
+    if (epoch !== authEpoch || !authenticated()) return false;
+    if (response.status === 403) { signOut(); return false; }
     if (!response.ok) throw new Error('refused');
     setText(el('notice'), name === 'message' ? 'Message sent or queued.' : name === 'note' ? 'Note saved.' : name === 'cancel' ? 'Cancellation requested.' : name === 'freeze' ? 'Dispatch frozen.' : 'Dispatch enabled.');
     el('notice').hidden = false; el('error').hidden = true; ok = true;
   } catch {
+    if (epoch !== authEpoch || !authenticated()) return false;
     setText(el('error'), 'Action could not be completed. Check the current state and try again.');
     el('error').hidden = false;
   } finally {

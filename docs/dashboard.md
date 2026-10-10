@@ -55,10 +55,11 @@ nuntius web
 
 Open the private URL printed by that invocation. It contains a new random
 credential each start; do not share or log the URL. The page removes it from
-the address bar after loading and stores it in `sessionStorage` for this tab
-only. Reload keeps sign-in and the selected tab; closing the browser tab clears
-the stored credential. If storage is disabled, the start link works for the
-current load, but reload needs that link again. Without a credential the page
+the address bar after loading and remembers it in `localStorage` for this
+origin and browser profile for seven days (Unreleased). Reload and opening a
+bookmark after the phone discards the tab keep sign-in and the selected view.
+They do not extend the expiry. If storage is disabled or cleared, the start
+link works for the current load, but reload needs that link again. Without a credential the page
 shows: "Open the link printed by `nuntius web` to sign in."
 Binding is restricted to `127.0.0.1`; use
 `nuntius web --bind 127.0.0.1:8124` for another port. No LAN/remote bind or CORS
@@ -68,6 +69,17 @@ checks the allowed Host and port, method and security headers; POST Origin must
 match the request's local origin, or the exact opted-in HTTPS origin below. `/data` and `/action` require the
 `X-Nuntius-Token` header; a query parameter cannot authenticate either API.
 Actions accept only POST.
+
+Use **Sign out** in the top bar to forget sign-in in this browser and clear
+the displayed private data and drafts. Other open tabs at this origin also
+sign out. This does not stop agent runs or revoke the link on other devices.
+To revoke all links and remembered sign-ins, run `nuntius web stop`, then
+start again when ready; the new start uses a new grant. Sign-out and expiry
+need the original link again: use the menu-bar helper's dashboard link or
+`nuntius web link --notify` to obtain it privately. A server rejection clears
+the saved sign-in; a temporary network failure keeps it for retry.
+Remember sign-in only on your own trusted browser profile. Anyone using that
+unlocked profile can open the bookmark. See [security notes](security.md).
 
 ### Phone access over Tailscale
 
@@ -178,8 +190,11 @@ tailscale serve status
 On the iPhone, scan the terminal QR code or open the printed private
 `https://mac.tail123.ts.net/` sign-in link. The link and QR contain the same
 per-start credential; keep both private. The plain loopback sign-in link also
-remains available. Sign-in still uses tab-scoped `sessionStorage`, with API
-credentials sent only in the `X-Nuntius-Token` header.
+remains available. After first sign-in, bookmark the cleaned address in the
+same iPhone browser profile. It works after tab discard or reload for seven
+days, unless browser storage is cleared or the dashboard restarts. Sign-in
+uses origin-scoped `localStorage`; API credentials are sent only in the
+`X-Nuntius-Token` header. Private browsing may clear storage when closed.
 
 The opt-in accepts only the exact DNS Host, with no port or `:443`, and exactly
 `https://mac.tail123.ts.net` as its POST Origin. Wildcards, other hosts and

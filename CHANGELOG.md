@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Remember dashboard sign-in per browser origin for seven days without renewal
+  on reload, so phone bookmarks survive tab discard. Keep header-only API auth,
+  exact Host/Origin checks and per-start grant revocation.
+- Add explicit browser sign-out, cross-tab clearing, expiry checks, 403 cleanup
+  and stale-response guards. Document the longer trusted-profile exposure and
+  cover persistence/refusal with offline fake-clock browser predicates.
+
 - Add judge-only stdio `nuntius_web_ensure` with a closed empty schema,
   state-changing/idempotent annotations and bounded, allowlisted state results.
 - Serialize dashboard recovery with the existing lifecycle lock; preserve
