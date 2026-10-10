@@ -415,7 +415,7 @@ func TestCrashExplicitRecoverySessionAndFresh(t *testing.T) {
 				t.Fatal("resumed running wording missing from web data")
 			}
 			prompt, _ := os.ReadFile(filepath.Join(store, "runs", current.ID, "goal.txt"))
-			if !strings.HasPrefix(string(prompt), "You were interrupted by a restart or crash at ") || !strings.Contains(string(prompt), "Re-measure the repositories") || !strings.HasSuffix(string(prompt), mode) {
+			if !strings.HasPrefix(string(prompt), "Previous run ended before report delivery; exit cause unknown at ") || !strings.Contains(string(prompt), "Re-measure the repositories") || !strings.HasSuffix(string(prompt), mode) {
 				t.Fatal("recovery lost the brief or restart note")
 			}
 			rows, _ := next.Tail("codex", 200)

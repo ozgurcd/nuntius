@@ -21,6 +21,11 @@ func (m *Manager) signalRoot() (*os.Root, error) {
 }
 
 func (m *Manager) endRun(r *Run) error {
+	if r.StopReason == "ended_no_report" {
+		if terminal, _ := m.terminalTurn(*r); terminal {
+			r.StopReason = "report_delivery_failed"
+		}
+	}
 	m.captureEffort(r)
 	if err := m.cleanupJob(r); err != nil {
 		_ = m.audit("launchd_cleanup", r.Lane, r.GoalID, r.SHA256, "failed")

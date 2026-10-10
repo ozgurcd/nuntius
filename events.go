@@ -77,6 +77,11 @@ func (m *Manager) Tail(lane string, lines int) ([]string, error) {
 	if r == nil {
 		return out, nil
 	}
+	if r.State != "running" && !m.reportExists(*r) {
+		if terminal, final := m.terminalTurn(*r); terminal && final != "" {
+			return []string{final}, nil
+		}
+	}
 	b, e := readWindow(filepath.Join(m.store, "runs", r.ID, "events.jsonl"), true)
 	if e != nil {
 		return nil, e

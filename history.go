@@ -251,10 +251,15 @@ func terminalDisplay(r Run, fallback string) string {
 			return "Timed out" + label
 		case "failed":
 			return "Failed" + label
+		case "report_delivery_failed", "ended_no_report":
+			return "Ended · report missing" + label
 		}
 		return "Ended" + label
 	}
 	if r.State != "running" {
+		if outcome := runOutcome(r); outcome == "report_delivery_failed" || outcome == "ended_no_report" {
+			return "Ended · report missing"
+		}
 		if outcome := runOutcome(r); outcome == "cancelled" || outcome == "timed_out" {
 			return outcome
 		}
@@ -273,7 +278,7 @@ func badgeTone(r Run, state string) string {
 		return ""
 	}
 	switch runOutcome(r) {
-	case "cancelled", "timed_out":
+	case "cancelled", "timed_out", "report_delivery_failed", "ended_no_report":
 		return "amber"
 	case "failed":
 		return "red"

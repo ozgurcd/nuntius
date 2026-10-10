@@ -89,6 +89,11 @@ func (m *Manager) Recover() error {
 			}
 		}
 		if r.State == "ended" && r.StopReason == "ended_no_report" && r.StopAt == nil && !m.reportExists(*r) {
+			// Legacy ended records have no terminal classification. Observe
+			// the full stream before declaring an interruption; keep history.
+			if terminal, _ := m.terminalTurn(*r); terminal {
+				continue
+			}
 			r.State = "interrupted"
 			r.StopReason = "interrupted"
 			if r.Brief == "" {
@@ -180,7 +185,7 @@ func (m *Manager) Recover() error {
 		if r.Ended != nil {
 			when = *r.Ended
 		}
-		note := fmt.Sprintf("You were interrupted by a restart or crash at %s. Some of your work may already be done. Re-measure the repositories (git status, git log, your claims, any scratch containers), keep what is committed, then finish the goal.\n\n", when.Format(time.RFC3339))
+		note := fmt.Sprintf("Previous run ended before report delivery; exit cause unknown at %s. Some of your work may already be done. Re-measure the repositories (git status, git log, your claims, any scratch containers), keep what is committed, then finish the goal.\n\n", when.Format(time.RFC3339))
 		id, launchErr := m.launch(lane, r.GoalID, note+r.Brief, session, lock, &r)
 		err = launchErr
 		if err != nil {

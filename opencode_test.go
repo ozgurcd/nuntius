@@ -217,7 +217,7 @@ func TestOpenCodeRecoveryAndLaunchd(t *testing.T) {
 				t.Fatal("recovery link/job missing")
 			}
 			input, _ := os.ReadFile(filepath.Join(store, "runs", current.ID, "goal.txt"))
-			if !strings.HasPrefix(string(input), "You were interrupted by a restart or crash at ") || !strings.HasSuffix(string(input), mode) {
+			if !strings.HasPrefix(string(input), "Previous run ended before report delivery; exit cause unknown at ") || !strings.HasSuffix(string(input), mode) {
 				t.Fatal("recovery brief lost")
 			}
 			b, _ := os.ReadFile(filepath.Join(store, "runs", current.ID, "events.jsonl"))

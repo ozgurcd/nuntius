@@ -182,7 +182,7 @@ func main() {
 		time.Sleep(750 * time.Millisecond)
 		emit("finished after client exit")
 	}
-	if strings.HasPrefix(mode, "You were interrupted by a restart or crash at ") {
+	if strings.HasPrefix(mode, "Previous run ended before report delivery; exit cause unknown at ") {
 		emit("recovery-message=" + mode)
 	}
 	if strings.Contains(mode, "ignore-int") {
@@ -358,7 +358,7 @@ func opencode() {
 	text("cwd=" + cwd)
 	emit("step_start", map[string]any{"type": "step-start"})
 	emit("tool_use", map[string]any{"type": "tool", "tool": "bash", "callID": "fixture-call", "state": map[string]any{"status": "running", "input": map[string]any{"command": "fixture command"}}})
-	if strings.Contains(mode, "ignore-int") {
+	if strings.Contains(mode, "ignore-int") && !strings.Contains(mode, "terminal-hold") {
 		signal.Ignore(os.Interrupt)
 		text("ready")
 		for {
@@ -375,12 +375,26 @@ func opencode() {
 		text("ready")
 		time.Sleep(750 * time.Millisecond)
 	}
-	if strings.HasPrefix(mode, "You were interrupted by a restart or crash at ") {
+	if strings.HasPrefix(mode, "Previous run ended before report delivery; exit cause unknown at ") {
 		text("recovery-message=" + mode)
 	}
 	emit("tool_use", map[string]any{"type": "tool", "tool": "bash", "callID": "fixture-call", "state": map[string]any{"status": "completed", "input": map[string]any{"command": "fixture command"}, "output": "must-not-return"}})
 	text("done")
+	if strings.Contains(mode, "terminal-hold") {
+		if strings.Contains(mode, "ignore-int") {
+			signal.Ignore(os.Interrupt)
+		}
+		text("ready")
+	}
 	emit("step_finish", map[string]any{"type": "step-finish", "reason": "stop"})
+	if strings.Contains(mode, "terminal-hold") {
+		for {
+			if _, err := os.Stat("terminal-release"); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 	if strings.Contains(mode, "exit-seven") {
 		os.Exit(7)
 	}
