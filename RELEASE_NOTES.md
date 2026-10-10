@@ -7,6 +7,11 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+Sign out stays available while a dashboard action is waiting for a response.
+It forgets this browser's sign-in immediately and reloads the public page.
+A late action response cannot sign you back in or restore dashboard data.
+This fix is unreleased; no upgrade or restart is automatic.
+
 If dashboard startup fails after creating its Tailscale HTTPS mapping, Nuntius
 now removes that mapping only when it still points exactly to its own port.
 Foreign or uncertain mappings stay untouched, and cleanup failures are reported.

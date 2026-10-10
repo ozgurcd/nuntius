@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Keep dashboard Sign out enabled while an action is pending. Cover immediate
+  local credential removal and rejection of late success, refusal, revocation
+  and network-failure responses with disabled-aware offline browser clicks.
+- Shorten the tail-contract test's temporary working directory so the complete
+  cwd assertion fits the unchanged 120-rune action-summary cap.
+
 - Clean up an exact owned HTTPS mapping after a partially failed child Serve
   create, even with --tailnet-keep; preserve foreign or uncertain mappings and
   report cleanup failures alongside setup failure.
