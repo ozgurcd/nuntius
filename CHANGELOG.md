@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add user-facing release notes for the existing versions. Require matching,
+  nonempty release-note and changelog sections in release checks and CI, with
+  offline refusal fixtures. Use the selected release-note section as the GitHub
+  release body and include the release notes in downloadable archives.
+
 ## v0.2.10 — 2026-10-10
 
 - Add `web start`, `stop`, `status` and `link [--notify]`: a transient per-user

@@ -41,6 +41,13 @@ macOS and Linux are supported; Windows is not a target.
 make verify
 ```
 
+Read [Release notes](RELEASE_NOTES.md) for user-facing changes and upgrade
+actions, and [CHANGELOG](CHANGELOG.md) for technical detail. Contributors must
+add a section to both files for each release. `make release-notes-test` checks
+offline refusal fixtures; `make release-check` refuses a source version with
+missing or empty sections. The tagged release workflow checks the exact tag
+version and uses its release-note section as the GitHub release body.
+
 Install the published release through the owner's Homebrew tap. Never install
 nuntius into `~/go/bin`.
 

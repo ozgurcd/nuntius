@@ -18,3 +18,5 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
       - name: Verify
         run: make verify
+      - name: Check release notes and refusal fixtures
+        run: make release-notes-test release-notes-check
