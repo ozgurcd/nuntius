@@ -48,6 +48,9 @@ func main() {
 	}
 	emit("args=" + string(args))
 	emit("cwd=" + cwd)
+	if marker := os.Getenv("NUNTIUS_FIXTURE_ENV"); marker == "inherited-fixture-marker" {
+		emit("env=" + marker)
+	}
 	emit(fmt.Sprintf("ppid=%d", os.Getppid()))
 	fmt.Println(`{"type":"item.completed","item":{"type":"agent_message","text":"codex answer"}}`)
 	fmt.Println(`{"type":"item.completed","item":{"type":"command_execution","command":"must-not-return","aggregated_output":"must-not-return"}}`)

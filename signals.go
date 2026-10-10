@@ -21,6 +21,9 @@ func (m *Manager) signalRoot() (*os.Root, error) {
 }
 
 func (m *Manager) endRun(r *Run) error {
+	if err := m.cleanupJob(r); err != nil {
+		_ = m.audit("launchd_cleanup", r.Lane, r.GoalID, r.SHA256, "failed")
+	}
 	if err := m.save(r); err != nil {
 		return err
 	}

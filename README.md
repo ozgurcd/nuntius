@@ -205,13 +205,25 @@ item or energy helper. Claude Desktop must be open for the judge to reach MCP.
 
 Every accepted goal is published durably before an agent starts. Its private
 record contains the lane, goal ID, original brief, session ID once detected,
-resume count and links to earlier/later runs. A short double-fork bootstrap
-creates a new session, waits for reparenting to the OS, then becomes the agent.
-The bootstrap exits; no nuntius wrapper or watchdog remains. Standard input,
-output and error use files, with no controlling terminal.
+resume count and links to earlier/later runs. On macOS, each agent starts through
+a transient `gui/<uid>/nuntius.run.<run_id>` launchd job. Its private plist lives
+only in that run's data directory, never in `~/Library/LaunchAgents`. Bootstrap
+loads it without `RunAtLoad` or `KeepAlive`, then explicitly starts it once.
+`LaunchOnlyOnce` allows launchd to discard the finished job even while MCP is
+down. An exec-only bootstrap becomes the agent; no wrapper, daemon, login item
+or watchdog remains. Standard input, output and error use the run's files.
+The bootstrap restores the same argv, working directory and inherited environment;
+environment values cross a bounded private pipe and are never saved to disk.
+Linux keeps the double-fork/session start used in v0.2.3.
 
-- App restart or MCP crash: the agent has no app/MCP parent and keeps running.
-  A live nuntius process polls its recorded PID and kernel start identity.
+- App quit/restart or MCP crash: the macOS agent belongs to its own GUI job,
+  outside the app's job. A live nuntius process polls its PID and kernel start
+  identity and removes the recorded job on end, cancellation or timeout.
+  Recovery retries stale-job cleanup using only labels in intact run records.
+- A launchctl failure uses the v0.2.3 detached start. A fixed `launchd_fallback`
+  event and `launch_fallback` status flag warn that app-quit survival is unavailable.
+  If a partial start cannot be safely identified and removed, the recorded goal
+  stays pending rather than starting a duplicate or killing an unknown process.
 - Nuntius upgrade: replacing/removing the nuntius executable does not affect
   an already running agent. Nuntius does not reinstall or restart owner apps.
 - Reboot, power loss or agent crash: the process can end, but the durable goal
@@ -240,6 +252,8 @@ a busy lane frees. Recovery is a local action explicitly enabled by the config.
 End detection derives `completed` from a regular report, otherwise
 `ended_no_report`. Exit codes are unknown because no parent waits for the agent.
 No process is signalled unless its PID, start time and process group match.
+Job removal also checks any live job PID against that identity; unrelated or
+unrecorded labels are never removed. Cleanup failure is audited and retried.
 When no nuntius process runs, only the agents run; end detection, timeout and
 recovery wait until a nuntius process next checks the store.
 

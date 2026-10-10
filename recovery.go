@@ -60,7 +60,17 @@ func (m *Manager) Recover() error {
 	}
 	for i := range runs {
 		r := &runs[i]
+		if r.State != "running" && r.LaunchdLabel != "" && !r.LaunchdCleaned {
+			if err = m.cleanupJob(r); err != nil {
+				_ = m.audit("launchd_cleanup", r.Lane, r.GoalID, r.SHA256, "failed")
+			} else if err = m.save(r); err != nil {
+				return err
+			}
+		}
 		if r.State == "running" {
+			if err = m.pendingJob(r); err != nil {
+				return err
+			}
 			// A live legacy PID with no identity is busy, but never signalled.
 			if sameProcess(*r) || (r.ProcessStart == "" && processExists(r.PID)) {
 				continue

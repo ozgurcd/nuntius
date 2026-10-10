@@ -15,13 +15,14 @@ import (
 // the orphaned, session-leading grandchild becomes the agent with exec. No
 // wrapper, waiter, supervisor or nuntius process remains beside the agent.
 type launchSpec struct {
-	Binary  string   `json:"binary"`
-	Args    []string `json:"args"`
-	Workdir string   `json:"workdir"`
+	Binary          string   `json:"binary"`
+	Args            []string `json:"args"`
+	Workdir         string   `json:"workdir"`
+	EnvironmentPipe bool     `json:"environment_pipe,omitempty"`
 }
 
 func detachAgent(dir string, lane Lane, session string, input, stdout, stderr *os.File, lock *os.File) error {
-	b, err := json.Marshal(launchSpec{lane.Binary, agentArgs(lane, session), lane.Workdir})
+	b, err := json.Marshal(launchSpec{Binary: lane.Binary, Args: agentArgs(lane, session), Workdir: lane.Workdir})
 	if err != nil {
 		return err
 	}
@@ -54,7 +55,7 @@ func detachAgent(dir string, lane Lane, session string, input, stdout, stderr *o
 }
 
 func launchEntry(args []string) (int, bool) {
-	if len(args) == 0 || (args[0] != "__nuntius_fork" && args[0] != "__nuntius_exec") {
+	if len(args) == 0 || (args[0] != "__nuntius_fork" && args[0] != "__nuntius_exec" && args[0] != "__nuntius_launchd_exec") {
 		return 0, false
 	}
 	if len(args) != 2 || !filepath.IsAbs(args[1]) || !runPattern.MatchString(filepath.Base(args[1])) {
@@ -77,7 +78,7 @@ func launchEntry(args []string) (int, bool) {
 		return 0, true
 	}
 	// Waiting is bounded bootstrap coordination, not runtime supervision.
-	for deadline := time.Now().Add(5 * time.Second); os.Getppid() != 1; {
+	for deadline := time.Now().Add(5 * time.Second); args[0] != "__nuntius_launchd_exec" && os.Getppid() != 1; {
 		if time.Now().After(deadline) {
 			return 1, true
 		}
@@ -97,6 +98,18 @@ func launchEntry(args []string) (int, bool) {
 	if err != nil || r == nil {
 		return 1, true
 	}
+	env := os.Environ()
+	if spec.EnvironmentPipe {
+		env, err = readLaunchEnvironment(dir)
+		if err != nil {
+			return 1, true
+		}
+	}
+	if args[0] == "__nuntius_launchd_exec" && syscall.Getpgrp() != os.Getpid() {
+		if _, err = syscall.Setsid(); err != nil {
+			return 1, true
+		}
+	}
 	r.PID = os.Getpid()
 	r.ProcessStart, err = processStart(r.PID)
 	if err != nil || saveAt(dir, r) != nil {
@@ -107,7 +120,7 @@ func launchEntry(args []string) (int, bool) {
 	}
 	// The agent owns only file-backed standard descriptors, never a manager lock.
 	_ = syscall.Close(3)
-	if syscall.Exec(spec.Binary, append([]string{spec.Binary}, spec.Args...), os.Environ()) != nil {
+	if syscall.Exec(spec.Binary, append([]string{spec.Binary}, spec.Args...), env) != nil {
 		return 127, true
 	}
 	return 0, true

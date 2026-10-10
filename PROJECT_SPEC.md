@@ -1,11 +1,11 @@
-# Nuntius v0.2.3 — specification as built
+# Nuntius v0.2.4 — specification as built
 
 ## Boundary
 
 Nuntius is a Go, standard-library-only stdio MCP server for an owner-approved
 judge on macOS or Linux. Linux CI tests the same process and file contracts. The module
 is `github.com/ozgurcd/nuntius`. It has no network client, LLM or shell runner.
-Version v0.2.3 is compiled in; publication is a separate release workflow.
+Version v0.2.4 is compiled in; publication is a separate release workflow.
 
 Do not register it for coding agents. The MCP host owns approval. The server
 cannot verify that a caller is the judge or force a host to display a click.
@@ -79,8 +79,22 @@ Normal completion is ended. Timeout metadata uses timed_out; status keeps the
 legacy ended/ended_no_report state and adds display_state timed_out. Cancelled
 runs also retain their legacy state and add display_state cancelled.
 SIGINT escalates to SIGKILL after 30 seconds.
-Cancel uses the same escalation. A short bootstrap forks twice, creates sessions,
-waits for the grandchild's OS parent, records its identity and execs the agent.
+Cancel uses the same escalation. Linux retains the short double-fork bootstrap,
+new session, OS parent and exec used in v0.2.3. Darwin bootstraps a transient
+`gui/<uid>/nuntius.run.<run_id>` job, then kickstarts it once. Its 0600 plist is
+in the private run directory only. RunAtLoad and KeepAlive are false;
+LaunchOnlyOnce is true. An exec-only stage records PID/kernel start and becomes
+the agent with unchanged argv/cwd/environment and file-backed standard streams.
+Inherited environment crosses a 0600 FIFO during bounded startup only, never
+a disk snapshot or a launchctl diagnostic. There is no runtime pipe helper.
+The live manager bootouts the job after end/cancel/timeout and recovery retries
+stale cleanup. Finished cleanup is persisted, avoiding repeated launchctl calls.
+Only intact recorded run IDs supply labels; job print must report no running
+process or a PID with the exact recorded start identity before bootout.
+Pending job PIDs remain busy and unsignalable until bootstrap supplies a start
+identity. A launchctl failure safely removes any partial job and uses detached
+start, adding a fixed launchd_fallback event and launch_fallback status flag.
+An unverifiable partial job prevents duplicate fallback; the goal remains recorded.
 All standard descriptors are files; there is no controlling terminal. No
 bootstrap, wrapper, watchdog, daemon, service or login item remains while the
 agent runs. Server shutdown leaves runs alive. Every signal requires a live
@@ -108,6 +122,8 @@ Darwin uses the kernel's microsecond start time; Linux uses boot ID plus start
 ticks. Mismatched identities are never signalled and become ended with unknown
 exit. Legacy records with a live PID but no identity remain busy and unsignalable.
 Never infer an exit code. While all servers are down timeout supervision is absent.
+LaunchOnlyOnce supplies OS cleanup when the Darwin agent exits while MCP is down;
+current macOS app-quit survival and that cleanup remain owner-pilot checks.
 
 MCP startup and the explicit recover command enable crash recovery. Display
 commands never launch. An unreported end without cancellation/timeout becomes
@@ -204,7 +220,9 @@ recover, watch LANE, config check, config convert, set KIND-agent-pool N, versio
 and store flags precede the command. Status and agents default to human views;
 --json preserves their machine shapes. MCP output stays JSON. Status columns
 use optional display_state for cancelled, timed_out and stuck?, while retaining
-legacy machine state values. History defaults to the last 20 completed runs;
+legacy machine state values. Status also carries launchd_label and launch_fallback
+when applicable; human status shows a fixed warning for fallback runs.
+History defaults to the last 20 completed runs;
 its table has ENDED (local time), AGENT, GOAL, OUTCOME, DURATION, REPORT yes/no
 and EXIT (- for unknown), using the same redaction and duration helpers.
 History JSON preserves numeric/boolean/null types and matches the MCP list.

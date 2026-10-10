@@ -24,6 +24,7 @@ func TestMain(m *testing.M) {
 	if code, handled := launchEntry(os.Args[1:]); handled {
 		os.Exit(code)
 	}
+	newJobLauncher = func() *jobLauncher { return nil }
 	dir, err := os.MkdirTemp("", "nuntius-fixture-")
 	if err != nil {
 		os.Exit(1)

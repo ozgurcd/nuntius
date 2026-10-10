@@ -40,8 +40,13 @@ type Run struct {
 	InterruptedSignalled bool       `json:"interrupted_signalled,omitempty"`
 	ResumedSignalled     bool       `json:"resumed_signalled,omitempty"`
 	WaitingToResume      bool       `json:"waiting_to_resume,omitempty"`
+	LaunchdLabel         string     `json:"launchd_label,omitempty"`
+	LaunchFallback       bool       `json:"launch_fallback,omitempty"`
+	LaunchdCleaned       bool       `json:"launchd_cleaned,omitempty"`
 }
 type Status struct {
+	LaunchFallback      bool         `json:"launch_fallback,omitempty"`
+	LaunchdLabel        string       `json:"launchd_label,omitempty"`
 	Freeze              *FreezeState `json:"freeze,omitempty"`
 	LastEventAgeSeconds *int64       `json:"last_event_age_seconds,omitempty"`
 	Lane                string       `json:"lane"`
@@ -72,6 +77,7 @@ type Manager struct {
 	closing  chan struct{}
 	watcher  sync.WaitGroup
 	recovery bool
+	launcher *jobLauncher
 }
 
 func NewManager(c Config, store string) (*Manager, error) {
@@ -97,7 +103,7 @@ func NewManager(c Config, store string) (*Manager, error) {
 	if e = syncDir(filepath.Dir(store)); e != nil {
 		return nil, e
 	}
-	m := &Manager{config: c, store: store, runtime: d, Grace: 30 * time.Second, active: map[string]*activeRun{}, closing: make(chan struct{})}
+	m := &Manager{config: c, store: store, runtime: d, Grace: 30 * time.Second, active: map[string]*activeRun{}, closing: make(chan struct{}), launcher: newJobLauncher()}
 	if _, e := m.Status(); e != nil {
 		return nil, e
 	}
@@ -187,6 +193,11 @@ func (m *Manager) start(name, goal, text string, resume bool) (id string, err er
 		return "", readErr
 	}
 	for _, r := range runs {
+		if r.State == "running" {
+			if err := m.pendingJob(&r); err != nil {
+				return "", err
+			}
+		}
 		if r.Lane == name && r.State == "running" && (sameProcess(r) || (r.ProcessStart == "" && processExists(r.PID))) {
 			return "", errors.New("lane has a surviving process")
 		}
@@ -282,7 +293,7 @@ func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, p
 	if e = m.audit(tool, name, goal, digest, "accepted"); e != nil {
 		return "", e
 	}
-	if e = detachAgent(filepath.Join(m.store, "runs", id), lane, session, input, stdout, stderr, lock); e != nil {
+	if e = m.startAgent(filepath.Join(m.store, "runs", id), lane, session, input, stdout, stderr, lock); e != nil {
 		return "", e
 	}
 	rp, e := loadRun(filepath.Join(m.store, "runs", id), id)
@@ -480,6 +491,18 @@ func (m *Manager) Status() ([]Status, error) {
 		return nil, e
 	}
 	for _, r := range runs {
+		if r.State != "running" && r.LaunchdLabel != "" && !r.LaunchdCleaned {
+			if err := m.cleanupJob(&r); err != nil {
+				_ = m.audit("launchd_cleanup", r.Lane, r.GoalID, r.SHA256, "failed")
+			} else if err := m.save(&r); err != nil {
+				return nil, err
+			}
+		}
+		if r.State == "running" {
+			if err := m.pendingJob(&r); err != nil {
+				return nil, err
+			}
+		}
 		if r.State != "running" || sameProcess(r) || (r.ProcessStart == "" && processExists(r.PID)) {
 			continue
 		}
@@ -540,6 +563,8 @@ func (m *Manager) Status() ([]Status, error) {
 				s.State = "ended"
 			}
 			s.RunID = r.ID
+			s.LaunchFallback = r.LaunchFallback
+			s.LaunchdLabel = r.LaunchdLabel
 			s.GoalID = r.GoalID
 			s.Started = &r.Started
 			s.Exit = r.Exit

@@ -199,6 +199,9 @@ func (m *Manager) writeStatus(out io.Writer, view any) error {
 				eta = m.etaFromHistory(runs, r, m.agentKind(s.Lane), m.runSize(s.RunID), time.Duration(s.ElapsedSeconds)*time.Second)
 			}
 		}
+		if s.LaunchFallback {
+			current += " (launchd fallback; app-quit survival unavailable)"
+		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", cell(s.Lane), state, goal, elapsed, eta, age, current, report)
 	}
 	return w.Flush()

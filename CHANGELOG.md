@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.4 — 2026-10-10
+
+- Start macOS agents in transient, one-shot GUI launchd jobs outside the app's
+  job; retain Linux double-fork starts and install no service or login item.
+- Keep exact argv, cwd and environment with file-backed standard streams and
+  an exec-only bootstrap; ferry environment in memory through a private pipe.
+- Remove only recorded per-run jobs on completion, cancel and timeout; retry
+  stale cleanup on recovery and refuse unverifiable live process identities.
+- Fall back to detached start on launchctl failure, with fixed events/status
+  warnings; ambiguous partial starts remain recorded without duplicate agents.
+- Add offline injectable-launchctl tests for lifecycle, recovery, label and PID
+  safety, fallback, pending launches, restart/freeze and environment preservation.
+- App-quit survival and macOS one-shot cleanup require the owner's live pilot;
+  sandbox inspection cannot establish the pilot's exact process-kill mechanism.
+
 ## v0.2.3 — 2026-10-10
 
 - Launch agents through short-lived double-fork stages, with their own session,
