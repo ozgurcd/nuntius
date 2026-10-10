@@ -45,10 +45,11 @@ Linux keeps the double-fork/session start used in v0.2.3.
 nuntius recover
 ```
 
-Recovery marks an unreported, unstopped end `interrupted` and emits
+Recovery marks an unreported, unstopped end without a confirmed terminal turn `interrupted` and emits
 `<lane>.<goal>.interrupted`. With `auto_resume` enabled, it resumes the agent's
 own recorded session, or starts the same brief fresh if no session ID is known.
-It prepends a restart note requiring the agent to re-measure previous work.
+It prepends a neutral note: the previous run ended before report delivery,
+and its exit cause is unknown. The agent must re-measure previous work.
 Repeating part of the work is acceptable; no periodic work journal is required.
 Each goal chain permits at most two automatic recovery attempts. Each attempt
 emits `<lane>.<goal>.resumed`; interrupted goals beyond the limit stay visible
@@ -64,6 +65,26 @@ a busy lane frees. Recovery is a local action explicitly enabled by the config.
 
 End detection derives `completed` from a regular report, otherwise
 `ended_no_report`. Exit codes are unknown because no parent waits for the agent.
+For OpenCode, a complete event stream whose last step ends with reason `stop`
+confirms that the model turn ended. Without a current report file, a new run's
+outcome is `report_delivery_failed`, status is `ended_no_report`, and the label
+is `Ended · report missing` with an amber attention badge. This is incomplete
+report delivery, not successful completion. No automatic recovery child or
+interrupted signal is created. The judge can read the bounded, redacted final
+assistant text through the tail and choose whether to reply manually. Nuntius
+does not create a report from that text or relax any agent write guard.
+
+Terminal observation reads the complete private stream, independently of the
+tail window, with at most 64 MiB per stream and 1 MiB per newline-terminated
+event. Malformed, truncated, oversized, unknown or unbalanced events, a later
+step start, and top-level errors cannot prove a terminal turn. These retain
+the existing conservative recovery policy. A missing session ID does not
+invalidate a complete turn; it still limits manual same-session reply. Existing
+ended records are observed before recovery without rewriting their history.
+A terminal event while the verified process is alive leaves the lane busy
+and runtime supervision active. Current regular reports still complete;
+stale or linked files do not. Cancellation, freeze and timeout take precedence.
+
 No process is signalled unless its PID, start time and process group match.
 Job removal also checks any live job PID against that identity; unrelated or
 unrecorded labels are never removed. Cleanup failure is audited and retried.

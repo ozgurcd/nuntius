@@ -65,7 +65,7 @@ environment or logs. Browser/QR pages are 0600 and removed after two minutes
 or dashboard shutdown. Keep a displayed QR private.
 
 Agents lane-tab dots use grey for idle, green for running, violet for finished,
-amber for stuck, and red for failed/interrupted work. Hover and screen-reader
+amber for stuck or terminal report-delivery attention, and red for failed/interrupted work. Hover and screen-reader
 labels explain the state. See [the design note](menubar-design.md).
 
 ```sh

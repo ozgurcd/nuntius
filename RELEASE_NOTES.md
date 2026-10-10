@@ -5,6 +5,15 @@ User-facing changes and upgrade actions are listed newest first. See the
 restart an existing server. Choose when to upgrade through the Homebrew tap
 and restart your MCP server or background dashboard to load the new binary.
 
+## Unreleased
+
+OpenCode work that ends its final turn but fails to write the report now shows
+`Ended · report missing` with amber attention. Read its final answer and parked
+questions in the tail. Nuntius does not replay that work automatically or treat
+the missing report as success. Interrupted work still uses the existing bounded
+recovery policy; recovery notes say when the process exit cause is unknown.
+No configuration change is needed. This change is awaiting the next release.
+
 ## v0.3.1 — 2026-10-10
 
 Start with a plain-English guide to what nuntius does, who it helps and how to

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Classify complete OpenCode terminal turns without a current report as
+  report_delivery_failed / ended_no_report; suppress automatic crash recovery
+  while preserving unknown exit attribution and the existing recovery limit.
+- Observe complete bounded streams rather than tails; reject partial, damaged,
+  unbalanced or over-budget evidence. Keep live processes supervised.
+- Show report-missing attention in status, history and dashboard; retain bounded,
+  redacted final text. Use a neutral unknown-exit recovery note.
+- Add offline terminal/restart, crash-chain, report freshness, redaction,
+  corrupted-stream, inactivity/runtime and dashboard indicator regressions.
+
 ## v0.3.1 — 2026-10-10
 
 - Rewrite newcomer README and preserve measured references in docs with

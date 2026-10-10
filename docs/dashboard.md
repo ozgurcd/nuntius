@@ -178,6 +178,10 @@ Badge colours come from the server's `badge` field, never from the label text:
 green = working or finished normally (including a resumed run), amber = needs
 a look (no report, cancelled, timed out, `stuck?`), red = failed. Idle and
 interrupted badges stay plain.
+An OpenCode run that ended its final turn without delivering the report shows
+`Ended · report missing`, an amber badge and an amber lane dot labelled
+`Finished with attention: report missing`. Read its final text in the tail;
+the report link remains unavailable and the run is not completed or resumed.
 Tab counts show running agents, unread owner notes and runs with open questions.
 
 Polling runs every two seconds; hidden panels update when shown. Stable cards and rows keep focus and expansion;
