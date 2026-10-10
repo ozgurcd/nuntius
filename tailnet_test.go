@@ -191,8 +191,8 @@ func TestIMessageHandles(t *testing.T) {
 			t.Fatal("invalid handle accepted", bad)
 		}
 	}
-	if !strings.HasPrefix(imessageScript, "on run argv") || strings.Contains(imessageScript, "%s") || !strings.Contains(imessageScript, "item 1 of argv") || !strings.Contains(imessageScript, "item 2 of argv") {
-		t.Fatal("AppleScript must take handle and text from argv")
+	if strings.Contains(imessageScript, "%s") || !strings.Contains(imessageScript, "participant recipientHandle") || !strings.Contains(imessageScript, "send messageText") {
+		t.Fatal("AppleScript must use stdin-supplied data variables")
 	}
 }
 
@@ -225,8 +225,8 @@ func TestTailnetWebLifecycle(t *testing.T) {
 	if len(sends) != 1 || json.Unmarshal([]byte(sends[0]), &argv) != nil {
 		t.Fatalf("osascript sends: %q", sends)
 	}
-	if len(argv) != 4 || argv[0] != "-e" || argv[1] != imessageScript || argv[2] != "owner@icloud.com" || argv[3] != "nuntius dashboard (mac): [private sign-in link]" {
-		t.Fatal("osascript argv differs from the fixed script with handle and text")
+	if len(argv) != 1 || argv[0] != "-" {
+		t.Fatal("osascript argv must contain no credential")
 	}
 	var status bytes.Buffer
 	if CLI(context.Background(), []string{"status", "--long"}, strings.NewReader(""), &status, &status) != 0 || !strings.Contains(status.String(), "tailnet=mac.tail123.ts.net serve=created imessage=sent") {
@@ -312,6 +312,7 @@ func TestTailnetServeReuseKeepAndNotifyFailure(t *testing.T) {
 func TestTailnetOptionalAndConfigHandle(t *testing.T) {
 	_, c, store := manager(t)
 	c.NotifyIMessage = "owner@icloud.com"
+	t.Setenv("NUNTIUS_FAKE_IMESSAGE_HANDLE", c.NotifyIMessage)
 	cliFixture(t, c, store)
 	dir := fakeTailscale(t, `{"BackendState":"NeedsLogin","Self":{"DNSName":""}}`)
 	out, errOut, stop := webCLI(t, "--bind", "127.0.0.1:0", "--tailnet", "--tailnet-optional")
@@ -334,8 +335,8 @@ func TestTailnetOptionalAndConfigHandle(t *testing.T) {
 	}
 	var argv []string
 	sends := fakeCalls(t, dir, "osascript.log")
-	if len(sends) != 1 || json.Unmarshal([]byte(sends[0]), &argv) != nil || len(argv) != 4 || argv[2] != "owner@icloud.com" {
-		t.Fatalf("configured handle not used: %q", sends)
+	if len(sends) != 1 || json.Unmarshal([]byte(sends[0]), &argv) != nil || len(argv) != 1 || argv[0] != "-" {
+		t.Fatal("stdin delivery not used")
 	}
 	c.NotifyIMessage = "not-a-handle"
 	if _, err := c.Validate(); err == nil || !strings.Contains(err.Error(), "notify_imessage") {

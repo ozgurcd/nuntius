@@ -86,6 +86,15 @@ func fakeOsascript() {
 		os.Exit(3)
 	}
 	args := append([]string(nil), os.Args[1:]...)
+	if len(args) == 1 && args[0] == "-" {
+		input, e := io.ReadAll(io.LimitReader(os.Stdin, 8192))
+		if e != nil || !strings.Contains(string(input), "set recipientHandle to") || !strings.Contains(string(input), "send messageText") {
+			os.Exit(3)
+		}
+		if expected := os.Getenv("NUNTIUS_FAKE_IMESSAGE_HANDLE"); expected != "" && !strings.Contains(string(input), "set recipientHandle to \""+expected+"\"") {
+			os.Exit(3)
+		}
+	}
 	for i, arg := range args {
 		if at := strings.Index(arg, "https://"); at >= 0 && strings.Contains(arg, "?token=") {
 			args[i] = arg[:at] + "[private sign-in link]"

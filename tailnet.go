@@ -186,13 +186,11 @@ func machineName(host string) string {
 
 // The script is fixed; the handle and text arrive as argv and are never spliced
 // into AppleScript source.
-const imessageScript = `on run argv
-	tell application "Messages"
-		set targetService to 1st account whose service type = iMessage
-		set targetBuddy to participant (item 1 of argv) of targetService
-		send (item 2 of argv) to targetBuddy
-	end tell
-end run`
+const imessageScript = `tell application "Messages"
+	set targetService to 1st account whose service type = iMessage
+	set targetBuddy to participant recipientHandle of targetService
+	send messageText to targetBuddy
+end tell`
 
 var emailHandle = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._%+-]{0,63}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$`)
 var phoneHandle = regexp.MustCompile(`^\+[1-9][0-9]{6,14}$`)
@@ -213,7 +211,12 @@ func sendIMessage(ctx context.Context, handle, text string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	if exec.CommandContext(ctx, exe, "-e", imessageScript, handle, text).Run() != nil {
+	quote := func(s string) string {
+		return "\"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "\r", " ", "\n", " ").Replace(s) + "\""
+	}
+	cmd := exec.CommandContext(ctx, exe, "-")
+	cmd.Stdin = strings.NewReader("set recipientHandle to " + quote(handle) + "\nset messageText to " + quote(text) + "\n" + imessageScript)
+	if cmd.Run() != nil {
 		return errors.New("the Messages app did not send it; allow nuntius to control Messages when macOS asks, and check the handle")
 	}
 	return nil
