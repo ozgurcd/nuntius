@@ -238,6 +238,8 @@ function rendered(h, id) {
 // the existing history, notes and freeze JSON shape, including optional fields.
 func TestDashboardFixtureMatchesData(t *testing.T) {
 	type historyView struct {
+		Kind          string            `json:"kind"`
+		Model         string            `json:"model"`
 		Relation      string            `json:"relation"`
 		ChainID       string            `json:"chain_id"`
 		ChainDepth    int               `json:"chain_depth"`

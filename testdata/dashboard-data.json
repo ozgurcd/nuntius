@@ -85,6 +85,8 @@
     {
       "run_id": "sample02",
       "lane": "codex-2",
+      "kind": "codex",
+      "model": "",
       "goal_id": "REVIEW-RELEASE",
       "started": "2026-10-09T19:00:00Z",
       "ended": "2026-10-09T19:30:40Z",
@@ -103,6 +105,8 @@
     {
       "run_id": "sample03",
       "lane": "claude-2",
+      "kind": "claude",
+      "model": "",
       "goal_id": "CHECK-DOCS",
       "started": "2026-10-09T18:00:00Z",
       "ended": "2026-10-09T18:15:02Z",
@@ -121,6 +125,8 @@
     {
       "run_id": "sample04",
       "lane": "claude-1",
+      "kind": "claude",
+      "model": "",
       "goal_id": "VERIFY-ASSETS",
       "started": "2026-10-09T17:00:00Z",
       "ended": "2026-10-09T17:18:12Z",
