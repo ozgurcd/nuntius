@@ -53,7 +53,7 @@ func main() {
 	}
 	emit(fmt.Sprintf("ppid=%d", os.Getppid()))
 	fmt.Println(`{"type":"item.completed","item":{"type":"agent_message","text":"codex answer"}}`)
-	fmt.Println(`{"type":"item.completed","item":{"type":"command_execution","command":"must-not-return","aggregated_output":"must-not-return"}}`)
+	fmt.Println(`{"type":"item.completed","item":{"type":"command_execution","command":"fixture command","aggregated_output":"must-not-return"}}`)
 	emit("done")
 	if strings.Contains(mode, "orphan-detect") {
 		parent := os.Getppid()

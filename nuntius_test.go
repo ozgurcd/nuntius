@@ -271,7 +271,7 @@ func TestDispatchReplyArgvAndStore(t *testing.T) {
 			t.Fatal(e)
 		}
 		joined := strings.Join(rows, "\n")
-		if !strings.Contains(joined, "cwd="+c.Lanes[0].Workdir) || strings.Contains(joined, "must-not-return") {
+		if !strings.Contains(joined, "cwd="+c.Lanes[0].Workdir) || !strings.Contains(joined, "fixture command") || strings.Contains(joined, "must-not-return") {
 			t.Fatal("tail contract")
 		}
 		if lane == "claude" && !strings.Contains(joined, `["-p","--output-format","stream-json","--verbose"]`) {
