@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Protect test-fixture manager configuration updates with the existing mutex;
+  preserve launch-identity assertions and production locking.
+
 - Keep dashboard Sign out enabled while an action is pending. Cover immediate
   local credential removal and rejection of late success, refusal, revocation
   and network-failure responses with disabled-aware offline browser clicks.
