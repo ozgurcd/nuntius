@@ -29,6 +29,24 @@ archives:
       - CHANGELOG.md
       - RELEASE_NOTES.md
       - THIRD_PARTY_NOTICES
+      - src: menubar/licenses/*.txt
+        dst: menubar-licenses
+        strip_parent: true
+      - src: release-helpers/{{ .Os }}_{{ .Arch }}/nuntius-menubar
+        dst: .
+        strip_parent: true
+      - src: '{{ if eq .Os "darwin" }}release-helpers/{{ .Os }}_{{ .Arch }}/Nuntius Menu Bar.app/Contents/Info.plist{{ else }}no-darwin-bundle-*{{ end }}'
+        dst: Nuntius Menu Bar.app/Contents
+        strip_parent: true
+      - src: '{{ if eq .Os "darwin" }}release-helpers/{{ .Os }}_{{ .Arch }}/Nuntius Menu Bar.app/Contents/MacOS/nuntius-menubar{{ else }}no-darwin-bundle-*{{ end }}'
+        dst: Nuntius Menu Bar.app/Contents/MacOS
+        strip_parent: true
+      - src: '{{ if eq .Os "darwin" }}release-helpers/{{ .Os }}_{{ .Arch }}/Nuntius Menu Bar.app/Contents/Resources/Relay.icns{{ else }}no-darwin-bundle-*{{ end }}'
+        dst: Nuntius Menu Bar.app/Contents/Resources
+        strip_parent: true
+      - src: '{{ if eq .Os "darwin" }}release-helpers/{{ .Os }}_{{ .Arch }}/Nuntius Menu Bar.app/Contents/_CodeSignature/CodeResources{{ else }}no-darwin-bundle-*{{ end }}'
+        dst: Nuntius Menu Bar.app/Contents/_CodeSignature
+        strip_parent: true
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -59,6 +77,14 @@ homebrew_casks:
     description: "Local MCP run manager for the judge in Claude Desktop"
     binaries:
       - nuntius
+    custom_block: |
+      on_macos do
+        app "Nuntius Menu Bar.app"
+        binary "#{appdir}/Nuntius Menu Bar.app/Contents/MacOS/nuntius-menubar", target: "nuntius-menubar"
+      end
+      on_linux do
+        binary "nuntius-menubar"
+      end
     url:
       template: "https://github.com/ozgurcd/nuntius/releases/download/v#{version}/{{ .ArtifactName }}"
     hooks:
@@ -66,4 +92,6 @@ homebrew_casks:
         install: |
           if OS.mac?
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/nuntius"]
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/nuntius-menubar"]
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{appdir}/Nuntius Menu Bar.app"]
           end

@@ -11,7 +11,12 @@ env:
   GORELEASER_VERSION: 'v2.17.0'
 
 jobs:
+  native:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/menubar.yml
   verify:
+    needs: native
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -42,11 +47,28 @@ jobs:
       - name: Select version release notes
         run: make release-notes-check RELEASE_VERSION="$GITHUB_REF_NAME" RELEASE_NOTES_OUTPUT="$RUNNER_TEMP/release-notes.md"
       - name: Validate release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: helper-*
+          path: release-helpers-download
+      - name: Restore helper artifacts
+        run: |
+          mkdir -p release-helpers
+          for os in darwin linux; do
+            for arch in amd64 arm64; do
+              mv "release-helpers-download/helper-$os-$arch" "release-helpers/$os"_"$arch"
+              chmod +x "release-helpers/$os"_"$arch/nuntius-menubar"
+              if [ "$os" = darwin ]; then chmod +x "release-helpers/$os"_"$arch/Nuntius Menu Bar.app/Contents/MacOS/nuntius-menubar"; fi
+            done
+          done
+      - name: Validate release artifacts with native helper
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
         with:
           distribution: goreleaser
           version: ${{ env.GORELEASER_VERSION }}
           args: release --snapshot --clean --skip=publish --release-notes=${{ runner.temp }}/release-notes.md
+      - name: Verify archive helper payloads
+        run: make release-artifacts-check
 
   release:
     needs: verify
@@ -70,6 +92,21 @@ jobs:
       - name: Select version release notes
         run: make release-notes-check RELEASE_VERSION="$GITHUB_REF_NAME" RELEASE_NOTES_OUTPUT="$RUNNER_TEMP/release-notes.md"
       - name: Publish public GitHub release
+        uses: actions/download-artifact@v4
+        with:
+          pattern: helper-*
+          path: release-helpers-download
+      - name: Restore helper artifacts
+        run: |
+          mkdir -p release-helpers
+          for os in darwin linux; do
+            for arch in amd64 arm64; do
+              mv "release-helpers-download/helper-$os-$arch" "release-helpers/$os"_"$arch"
+              chmod +x "release-helpers/$os"_"$arch/nuntius-menubar"
+              if [ "$os" = darwin ]; then chmod +x "release-helpers/$os"_"$arch/Nuntius Menu Bar.app/Contents/MacOS/nuntius-menubar"; fi
+            done
+          done
+      - name: Publish public GitHub release with native helper
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
         with:
           distribution: goreleaser
@@ -77,6 +114,8 @@ jobs:
           args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify published archive helper payloads
+        run: make release-artifacts-check
 
       - name: Publish and verify Homebrew cask
         env:
@@ -99,10 +138,14 @@ jobs:
           urls = [line.strip() for line in text.splitlines() if line.strip().startswith('url ')]
           expected = ['url "https://github.com/ozgurcd/nuntius/releases/download/v#{version}/' + asset + '"' for asset in assets]
           assert sorted(urls) == sorted(expected), 'unexpected or duplicate download URL'
-          legacy = '  postflight do\n    if OS.mac?\n      system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/nuntius"]\n    end\n  end'
-          structured = '  postflight_steps do\n    on_macos do\n      run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{staged_path}}/nuntius"]\n    end\n  end'
+          paths = ('#{staged_path}/nuntius', '#{staged_path}/nuntius-menubar', '#{appdir}/Nuntius Menu Bar.app')
+          legacy = '  postflight do\n    if OS.mac?\n' + ''.join('      system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "' + path + '"]\n' for path in paths) + '    end\n  end'
+          structured = '  postflight_steps do\n    on_macos do\n' + ''.join('      run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "' + path.replace('#{staged_path}', '{{staged_path}}').replace('#{appdir}', '{{appdir}}') + '"]\n' for path in paths) + '    end\n  end'
           counts = (text.count(legacy), text.count(structured))
           assert counts in ((1, 0), (0, 1)), 'unexpected postflight form'
+          assert 'app "Nuntius Menu Bar.app"' in text, 'helper app missing'
+          assert 'binary "nuntius-menubar"' in text, 'Linux helper missing'
+          assert 'target: "nuntius-menubar"' in text, 'macOS bundle helper missing'
           p.write_text(text.replace(legacy, structured))
           PY
           for asset in \

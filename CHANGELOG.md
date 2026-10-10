@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.3.0 — 2026-10-10
+
+- Add a separate fyne.io/systray module: Cocoa template Relay icon, Linux
+  StatusNotifierItem, fake-testable controller, three-second status refresh,
+  lane rows, attention state and dashboard/phone/QR/lifecycle actions.
+- Add a 0600 Unix socket and private browser/QR presentations. Keep sign-in
+  credentials out of helper responses, process argv, environment and logs;
+  pass iMessage data through stdin instead of argv.
+- Start the installed helper with background dashboards, add --no-menubar,
+  close it on dashboard stop, and offer explicit helper-only macOS login startup.
+- Add accessible lane-tab state dots and offline mapping tests.
+- Build helpers on macOS/Ubuntu CI; include them, app bundles and notices in
+  release archives and the cask. Preserve the main CGO-disabled build.
+
 ## v0.2.11 — 2026-10-10
 
 - Resolve Claude/Codex model flags and Claude effort flags in split and equals

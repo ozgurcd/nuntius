@@ -5,6 +5,32 @@ User-facing changes and upgrade actions are listed newest first. See the
 restart an existing server. Choose when to upgrade through the Homebrew tap
 and restart your MCP server or background dashboard to load the new binary.
 
+## v0.3.0 — 2026-10-10
+
+`nuntius web start` now starts the separate Relay menu-bar helper when installed
+in a desktop session. Its icon shows idle, the running lane count, or attention
+for stuck, failed, unreported or question-waiting work. Hover for counts. The
+menu lists each lane, goal, state and elapsed time. Open the signed-in dashboard,
+send the configured phone link, show its QR, or start/stop the dashboard.
+Quit menu bar leaves the dashboard running. Dispatch/cancel stay on the
+dashboard with confirmations. Use `web start --no-menubar` to skip the helper.
+
+Start-at-login is off by default. On macOS, `nuntius menubar --at-login on`
+installs a helper-only LaunchAgent for your next login; `--at-login off` removes
+it. It never starts the dashboard at login. Linux needs a StatusNotifier tray:
+KDE, XFCE with its plugin, or GNOME with an AppIndicator extension. Without a
+supported tray the helper exits successfully and the dashboard still works.
+
+Agents lane tabs now have distinct dots for idle, running, finished, stuck and
+failed/interrupted work. Hover for the state; screen readers receive the same
+label. The tab itself keeps its normal styling.
+
+The main binary stays pure Go. The macOS helper uses Cocoa and ships as an
+ad-hoc signed, unnotarized app in the same Homebrew cask. Homebrew handles
+quarantine for installed files; manual downloads still need normal Gatekeeper
+approval. Upgrade when convenient and restart your dashboard to load this
+version. An upgrade does not touch an already running dashboard.
+
 ## v0.2.11 — 2026-10-10
 
 See each agent's model and effort directly in `agents`, `status --long`, history

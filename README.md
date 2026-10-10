@@ -5,7 +5,7 @@
 
 # nuntius
 
-Nuntius v0.2.10 is a small local Go MCP server for a judge using Claude Desktop.
+Nuntius v0.3.0 is a small local Go MCP server for a judge using Claude Desktop.
 It starts and follows configured Claude Code, Codex and OpenCode agent pools on macOS or Linux.
 It contains no LLM and makes no network requests of its own. Agent programs may
 use the network under their existing settings. The Relay mark is dedicated to
@@ -36,6 +36,36 @@ pure-Go goqr decoder (test-only; LGPL-3.0) to read the rendered terminal QR back
 It is not linked into released binaries. Tests also need Node.js (CI pins 26.8.1) to run the dashboard
 JavaScript in an offline fake DOM; no browser or npm packages are needed.
 macOS and Linux are supported; Windows is not a target.
+
+### Menu bar
+
+`nuntius web start` starts the installed Relay menu-bar helper in a desktop
+session. Use `--no-menubar` to skip it. The icon shows idle, the running lane
+count, or attention for stuck/failed work, an end without a report, or a waiting
+question. Hover for lane counts. Each menu row shows lane, goal, state and
+elapsed time. Actions open the signed-in local dashboard, send the configured
+iMessage phone link, show the phone QR, and start/stop the dashboard. Quit menu
+bar leaves the dashboard running; `web stop` closes both. Dispatch/cancel
+remain in the dashboard.
+
+On macOS, opt in with `nuntius menubar --at-login on` and disable with
+`nuntius menubar --at-login off`. The helper alone starts at your next login;
+it does not start the dashboard. Installation enables no login items.
+On Linux, KDE supports StatusNotifierItem, XFCE needs its StatusNotifier
+plugin, and GNOME normally needs an AppIndicator extension. An unsupported
+desktop exits without affecting the dashboard.
+
+The main command remains pure Go. Native code lives in a separate helper
+module and macOS app. Its ad-hoc signature is not Developer ID signing or
+notarization; Homebrew removes quarantine for installed files, while manual
+downloads need normal Gatekeeper approval. Relay assets are CC0. The helper
+API is an owner-only Unix socket; no sign-in link enters helper argv,
+environment or logs. Browser/QR pages are 0600 and removed after two minutes
+or dashboard shutdown. Keep a displayed QR private.
+
+Agents lane-tab dots use grey for idle, green for running, violet for finished,
+amber for stuck, and red for failed/interrupted work. Hover and screen-reader
+labels explain the state. See [the design note](docs/menubar-design.md).
 
 ```sh
 make verify

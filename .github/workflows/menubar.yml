@@ -1,0 +1,31 @@
+name: Native menu bar
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  helper:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: darwin, arch: arm64, runner: macos-15}
+          - {os: darwin, arch: amd64, runner: macos-15}
+          - {os: linux, arch: arm64, runner: ubuntu-24.04}
+          - {os: linux, arch: amd64, runner: ubuntu-24.04}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04
+      - name: Test controller without starting a tray
+        working-directory: menubar
+        run: go test -race ./... -count=1
+      - name: Build native helper and macOS bundle
+        run: make menubar-build HELPER_OS=${{ matrix.os }} HELPER_ARCH=${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helper-${{ matrix.os }}-${{ matrix.arch }}
+          path: release-helpers/${{ matrix.os }}_${{ matrix.arch }}
+          if-no-files-found: error

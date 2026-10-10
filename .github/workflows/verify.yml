@@ -6,6 +6,8 @@ on:
 permissions:
   contents: read
 jobs:
+  native:
+    uses: ./.github/workflows/menubar.yml
   verify:
     runs-on: ubuntu-24.04
     steps:
