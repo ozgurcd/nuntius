@@ -1,6 +1,6 @@
 # nuntius
 
-Nuntius v0.2.6 is a small local Go MCP server for a judge using Claude Desktop.
+Nuntius v0.2.7 is a small local Go MCP server for a judge using Claude Desktop.
 It starts and follows configured Claude Code, Codex and OpenCode agent pools on macOS or Linux.
 It contains no LLM and makes no network requests of its own. Agent programs may
 use the network under their existing settings.
@@ -14,8 +14,10 @@ side effects; they do not enforce a click or identify who called the server.
 
 Use the Go version in `go.mod` (1.27.2), Staticcheck 2026.2.1 (0.8.1), and
 govulncheck v1.8.0. CI gets Go and the checksum-verified Staticcheck build from
-the pinned Lictor composite action used by Legattus. No Go library dependencies
-are required. Tests also need Node.js (CI pins 26.8.1) to run the dashboard
+the pinned Lictor composite action used by Legattus. The pure Go
+[rsc.io/qr v0.2.0](https://github.com/rsc/qr) library generates terminal QR codes,
+with no transitive modules. Go has no standard-library QR encoder; using the
+existing encoder avoids maintaining QR error correction here. Tests also need Node.js (CI pins 26.8.1) to run the dashboard
 JavaScript in an offline fake DOM; no browser or npm packages are needed.
 macOS and Linux are supported; Windows is not a target.
 
@@ -232,6 +234,8 @@ dashboard and MCP use the same first eight characters. MCP history adds readable
 MCP dispatch/reply responses use the same short run ID; actions still target lanes.
 
 Human status, agents and the dashboard distinguish `timed_out` and `cancelled`.
+An active recovery run reads `Running · resumed 1/2` (or `2/2`), so the
+resume count does not hide that the agent is running.
 Existing status/agents JSON `state` values remain compatible; an optional
 `display_state` supplies those labels and `stuck?`. A running run is `stuck?`
 when its regular report file's modification time is over five minutes old,
@@ -319,6 +323,10 @@ down. An exec-only bootstrap becomes the agent; no wrapper, daemon, login item
 or watchdog remains. Standard input, output and error use the run's files.
 The bootstrap restores the same argv, working directory and inherited environment;
 environment values cross a bounded private pipe and are never saved to disk.
+The launchd plist carries the dispatching nuntius process's inherited umask,
+captured at startup, with 022 as the fallback. Starting nuntius from a Terminal
+with umask 022 therefore gives its jobs 022, rather than a forced 077.
+Private run files still use 0600 and directories use 0700.
 Linux keeps the double-fork/session start used in v0.2.3.
 
 - App quit/restart or MCP crash: the macOS agent belongs to its own GUI job,
@@ -406,10 +414,54 @@ Binding is restricted to `127.0.0.1`; use
 `nuntius web --bind 127.0.0.1:8124` for another port. No LAN/remote bind or CORS
 is enabled. The static shell (`index.html`, `app.css`, `app.js`) is available
 without sign-in and contains no private data or credential. Every request still
-checks the loopback Host and port, method and security headers; POST Origin must
-match the request's local origin. `/data` and `/action` require the
+checks the allowed Host and port, method and security headers; POST Origin must
+match the request's local origin, or the exact opted-in HTTPS origin below. `/data` and `/action` require the
 `X-Nuntius-Token` header; a query parameter cannot authenticate either API.
 Actions accept only POST.
+
+### Phone access over Tailscale
+
+Install and connect Tailscale on the Mac and iPhone with the same account.
+Enable MagicDNS and HTTPS certificates for the tailnet. Find the Mac's full
+DNS name in Tailscale, for example `mac.tail123.ts.net`. See the official
+[Serve guide](https://tailscale.com/docs/features/tailscale-serve) and
+[HTTPS setup](https://tailscale.com/docs/how-to/set-up-https-certificates).
+The Mac must stay awake, connected to Tailscale, and running `nuntius web`.
+
+Start the dashboard with that exact name (one `--allow-host` value):
+
+```sh
+nuntius web --allow-host mac.tail123.ts.net
+```
+
+Nuntius still listens only on `127.0.0.1:8123`. In another Terminal, use the
+dashboard port shown in the loopback link (8123 by default):
+
+```sh
+tailscale serve --bg --https=443 localhost:8123
+tailscale serve status
+```
+
+On the iPhone, scan the terminal QR code or open the printed private
+`https://mac.tail123.ts.net/` sign-in link. The link and QR contain the same
+per-start credential; keep both private. The plain loopback sign-in link also
+remains available. Sign-in still uses tab-scoped `sessionStorage`, with API
+credentials sent only in the `X-Nuntius-Token` header.
+
+The opt-in accepts only the exact configured DNS Host, with no port or `:443`,
+and exactly `https://mac.tail123.ts.net` as its POST Origin. Wildcards, other
+hosts and ports, HTTP origins, and forwarded headers grant no access.
+Keep this dashboard tailnet-only: **never enable Tailscale Funnel**. Anyone
+who can reach it and has its credential can dispatch and cancel agents.
+Tailscale access rules and the dashboard credential both matter. Serve supplies
+HTTPS; nuntius does not change Tailscale settings or validate tailnet membership.
+To turn off this Serve endpoint:
+
+```sh
+tailscale serve --https=443 off
+```
+
+See the official [Serve command reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
 
 The dashboard adapts to laptop and phone-width windows and your system's light
 or dark mode. The sticky top bar shows dispatch/freeze controls, running, idle

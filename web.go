@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"rsc.io/qr"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,9 +24,20 @@ import (
 type Web struct {
 	manager        *Manager
 	address, token string
+	allowHost      string
 }
 
-func NewWeb(m *Manager, address string) (*Web, error) {
+func NewWeb(m *Manager, address string, allowHost ...string) (*Web, error) {
+	allowed := ""
+	if len(allowHost) > 1 {
+		return nil, errors.New("only one allow-host is supported")
+	}
+	if len(allowHost) == 1 {
+		allowed = allowHost[0]
+		if !validTailnetHost(allowed) {
+			return nil, errors.New("allow-host must be a DNS name ending in .ts.net, without a port or wildcard")
+		}
+	}
 	host, port, e := net.SplitHostPort(address)
 	if e != nil || host != "127.0.0.1" {
 		return nil, errors.New("web must bind to 127.0.0.1 only")
@@ -38,7 +50,53 @@ func NewWeb(m *Manager, address string) (*Web, error) {
 	if _, e = rand.Read(b); e != nil {
 		return nil, e
 	}
-	return &Web{m, address, hex.EncodeToString(b)}, nil
+	return &Web{manager: m, address: address, token: hex.EncodeToString(b), allowHost: allowed}, nil
+}
+
+func validTailnetHost(host string) bool {
+	if len(host) > 253 || !strings.HasSuffix(host, ".ts.net") {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, c := range label {
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (w *Web) writeLinks(out io.Writer) error {
+	_, err := fmt.Fprintf(out, "http://%s/?token=%s\n", w.address, w.token)
+	if err != nil || w.allowHost == "" {
+		return err
+	}
+	link := "https://" + w.allowHost + "/?token=" + w.token
+	code, err := qr.Encode(link, qr.M)
+	if err != nil {
+		return errors.New("cannot encode sign-in QR")
+	}
+	var b strings.Builder
+	b.WriteString(link + "\nScan to sign in (keep this QR private):\n")
+	// Explicit colors work on light and dark terminals. Two character cells
+	// form one square module; the four-module white border is the quiet zone.
+	for y := -4; y < code.Size+4; y++ {
+		b.WriteString("\x1b[30;47m")
+		for x := -4; x < code.Size+4; x++ {
+			if code.Black(x, y) {
+				b.WriteString("██")
+			} else {
+				b.WriteString("  ")
+			}
+		}
+		b.WriteString("\x1b[0m\n")
+	}
+	_, err = io.WriteString(out, b.String())
+	return err
 }
 
 func (w *Web) ServeHTTP(out http.ResponseWriter, r *http.Request) {
@@ -48,7 +106,9 @@ func (w *Web) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 	out.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 	host, port, e := net.SplitHostPort(r.Host)
 	_, wantPort, _ := net.SplitHostPort(w.address)
-	if e != nil || (host != "127.0.0.1" && host != "localhost") || port != wantPort {
+	local := e == nil && (host == "127.0.0.1" || host == "localhost") && port == wantPort
+	tailnet := w.allowHost != "" && (r.Host == w.allowHost || r.Host == w.allowHost+":443")
+	if !local && !tailnet {
 		http.Error(out, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -59,7 +119,11 @@ func (w *Web) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 		http.Error(out, "forbidden", http.StatusForbidden)
 		return
 	}
-	if r.Method == http.MethodPost && r.Header.Get("Origin") != "http://"+r.Host {
+	origin := "http://" + r.Host
+	if tailnet {
+		origin = "https://" + w.allowHost
+	}
+	if r.Method == http.MethodPost && r.Header.Get("Origin") != origin {
 		http.Error(out, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -259,7 +323,10 @@ func (w *Web) Run(ctx context.Context, out io.Writer) error {
 	}
 	w.address = listener.Addr().String()
 	server := &http.Server{Handler: w, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}
-	fmt.Fprintf(out, "http://%s/?token=%s\n", w.address, w.token)
+	if e = w.writeLinks(out); e != nil {
+		_ = listener.Close()
+		return e
+	}
 	done := make(chan struct{})
 	defer close(done)
 	go func() {

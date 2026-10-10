@@ -136,6 +136,10 @@ func TestLaunchdRunLifecycle(t *testing.T) {
 			if err != nil || r == nil || r.LaunchdLabel != "nuntius.run."+id || r.ProcessStart == "" {
 				t.Fatal("missing job identity")
 			}
+			plist, err := os.ReadFile(filepath.Join(store, "runs", id, "job.plist"))
+			if err != nil || !strings.Contains(string(plist), fmt.Sprintf("<key>Umask</key><integer>%d</integer>", dispatchUmask)) {
+				t.Fatal("launchd plist did not inherit dispatch umask")
+			}
 			if mode == "cancel" {
 				if err = m.Cancel("codex"); err != nil {
 					t.Fatal(err)
@@ -151,6 +155,23 @@ func TestLaunchdRunLifecycle(t *testing.T) {
 				t.Fatal("missing job removal")
 			}
 		})
+	}
+}
+
+func TestCaptureUmask(t *testing.T) {
+	for _, mask := range []int{0, 0022, 0077} {
+		current := mask
+		got := captureUmask(func(next int) (int, error) {
+			old := current
+			current = next
+			return old, nil
+		})
+		if got != mask || current != mask {
+			t.Fatal("umask not captured and restored")
+		}
+	}
+	if captureUmask(func(int) (int, error) { return 0, errors.New("unavailable") }) != 0022 {
+		t.Fatal("missing fallback umask")
 	}
 }
 

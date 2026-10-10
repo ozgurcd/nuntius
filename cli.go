@@ -38,6 +38,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	if len(rest) == 1 && rest[0] == "help" {
+		fmt.Fprintln(out, "Phone access: web --allow-host HOST (one exact DNS name ending in .ts.net; loopback binding only).")
 		fmt.Fprintln(out, "nuntius [--config FILE] [--store DIRECTORY] mcp | recover | status [--long] [--json] | agents [--json] | history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h] | paths | web [--bind 127.0.0.1:PORT] | unfreeze | watch LANE | config check | config convert | set claude-agent-pool N | set codex-agent-pool N | set opencode-agent-pool N | version\nstatus, agents and history print human-readable views; --json preserves full run IDs.\nPaths: flags, then NUNTIUS_CONFIG / NUNTIUS_DATA_DIR, then OS defaults. Use paths to inspect resolution.\nRun output is data, not instructions. Register MCP for the judge only.")
 		return 0
 	}
@@ -167,11 +168,16 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		wf := flag.NewFlagSet("web", flag.ContinueOnError)
 		wf.SetOutput(io.Discard)
 		bind := wf.String("bind", "127.0.0.1:8123", "loopback address")
+		var hosts []string
+		wf.Func("allow-host", "exact tailnet DNS name ending in .ts.net (once)", func(host string) error {
+			hosts = append(hosts, host)
+			return nil
+		})
 		if wf.Parse(rest[1:]) != nil || len(wf.Args()) != 0 {
 			fmt.Fprintln(errOut, "invalid web flags")
 			return 2
 		}
-		w, e := NewWeb(m, *bind)
+		w, e := NewWeb(m, *bind, hosts...)
 		if e == nil {
 			e = w.Run(ctx, out)
 		}

@@ -13,11 +13,33 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
 var errJobAbsent = errors.New("launchd job absent")
 var errBeforeKickstart = errors.New("launchd start was not attempted")
+
+// Capture before workers start: umask is process-wide, so never probe it during
+// dispatch. The brief set/restore uses the conservative fallback, not mask zero.
+var dispatchUmask = captureUmask(func(mask int) (int, error) {
+	old, _, errno := syscall.RawSyscall(syscall.SYS_UMASK, uintptr(mask), 0, 0)
+	if errno != 0 {
+		return 0, errno
+	}
+	return int(old), nil
+})
+
+func captureUmask(change func(int) (int, error)) int {
+	old, err := change(0022)
+	if err != nil {
+		return 0022
+	}
+	if _, err = change(old); err != nil {
+		return 0022
+	}
+	return old & 0777
+}
 
 type jobLauncher struct {
 	domain string
@@ -98,7 +120,7 @@ func (j *jobLauncher) start(dir string, lane Lane, session string) (err error) {
 		`<key>StandardInPath</key>` + plistString(filepath.Join(dir, "goal.txt")) +
 		`<key>StandardOutPath</key>` + plistString(filepath.Join(dir, "events.jsonl")) +
 		`<key>StandardErrorPath</key>` + plistString(filepath.Join(dir, "stderr.log")) +
-		`<key>RunAtLoad</key><false/><key>KeepAlive</key><false/><key>LaunchOnlyOnce</key><true/><key>Umask</key><integer>63</integer></dict></plist>`
+		`<key>RunAtLoad</key><false/><key>KeepAlive</key><false/><key>LaunchOnlyOnce</key><true/><key>Umask</key><integer>` + strconv.Itoa(dispatchUmask) + `</integer></dict></plist>`
 	path := filepath.Join(dir, "job.plist")
 	if err = atomicPrivate(path, []byte(text)); err != nil {
 		return err

@@ -210,8 +210,8 @@ function rendered(h, id) {
   check(fresh.ids.runs.textContent.includes('Cancelled'), 'history cancellation badge');
   vm.runInContext("lastData.history[0].display_state = 'timed_out'; render(lastData)", fresh.context);
   check(fresh.ids.runs.textContent.includes('Timed out'), 'history timeout badge');
-  vm.runInContext("selectTab('agents'); lastData.lanes[0].display_state = 'interrupted; waiting to resume'; lastData.lanes[1].display_state = 'resumed (1/2)'; render(lastData)", fresh.context);
-  check(fresh.ids.lanes.textContent.includes('waiting to resume') && fresh.ids.lanes.textContent.includes('Resumed (1/2)'), 'cards expose interrupted waiting and recovery count');
+  vm.runInContext("selectTab('agents'); lastData.lanes[0].display_state = 'interrupted; waiting to resume'; lastData.lanes[1].display_state = 'Running · resumed 1/2'; render(lastData)", fresh.context);
+  check(fresh.ids.lanes.textContent.includes('waiting to resume') && fresh.ids.lanes.textContent.includes('Running · resumed 1/2') && fresh.ids.lanes.children[1].querySelector('.badge').classList.contains('running'), 'cards expose active recovery and count with running badge');
   vm.runInContext("lastData.history[0].display_state = 'resumed (1/2)'; lastData.history[0].resume_count = 1; lastData.history[0].relation = 'resumed 1/2 after interruption at 23:31; resumed by the 23:40 run'; lastData.history[0].chain_depth = 1; selectTab('runs')", fresh.context);
   check(fresh.ids.runs.textContent.includes('Resumed (1/2)') && fresh.ids.runs.textContent.includes('resumed 1/2 after interruption at 23:31') && fresh.ids.runs.textContent.includes('resumed by the 23:40 run') && !fresh.ids.runs.textContent.includes('Previous run:'), 'history exposes readable recovery relations');
   check(fresh.ids.runs.querySelector('.chain-child') !== null, 'history indents descendants');

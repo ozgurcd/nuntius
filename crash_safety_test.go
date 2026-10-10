@@ -402,6 +402,18 @@ func TestCrashExplicitRecoverySessionAndFresh(t *testing.T) {
 			}
 			defer signalRun(*current, syscall.SIGKILL)
 			waitReady(t, next, "codex")
+			cliFixture(t, c, store)
+			for _, command := range []string{"status", "agents"} {
+				var display, diagnostic bytes.Buffer
+				if CLI(context.Background(), []string{command}, strings.NewReader(""), &display, &diagnostic) != 0 || !strings.Contains(display.String(), "Running · resumed 1/2") {
+					t.Fatal("resumed running wording missing from CLI")
+				}
+			}
+			web, _ := NewWeb(next, "127.0.0.1:8123")
+			data, err := web.data()
+			if err != nil || !strings.Contains(toolText(data), "Running · resumed 1/2") {
+				t.Fatal("resumed running wording missing from web data")
+			}
 			prompt, _ := os.ReadFile(filepath.Join(store, "runs", current.ID, "goal.txt"))
 			if !strings.HasPrefix(string(prompt), "You were interrupted by a restart or crash at ") || !strings.Contains(string(prompt), "Re-measure the repositories") || !strings.HasSuffix(string(prompt), mode) {
 				t.Fatal("recovery lost the brief or restart note")

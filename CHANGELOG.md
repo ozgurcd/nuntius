@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.7 — 2026-10-10
+
+- Inherit the dispatching process's startup umask in transient launchd jobs,
+  with fallback 022, instead of forcing 077; retain private run-file modes.
+- Add a single exact `web --allow-host` tailnet DNS opt-in while keeping
+  loopback binding, exact Host/HTTPS POST Origin guards and header-only API auth.
+- Print private tailnet and loopback sign-in links plus a terminal QR code
+  using pure Go rsc.io/qr v0.2.0; never trust forwarded headers for access.
+- Document phone access through Tailscale Serve, its security limits and awake
+  Mac requirement; no Tailscale settings or home-screen/PWA changes.
+- Label active recovery runs `Running · resumed 1/2` across status, agents and
+  dashboard; prove behaviour with fake launchctl and offline request/DOM tests.
+
 ## v0.2.6 — 2026-10-10
 
 - Add OpenCode pools and legacy lanes, explicit owner-selected provider/model,

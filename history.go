@@ -237,6 +237,9 @@ func terminalDisplay(r Run, fallback string) string {
 		return "interrupted"
 	}
 	if r.RecoveryRun {
+		if r.State == "running" {
+			return fmt.Sprintf("Running · resumed %d/2", r.ResumeCount)
+		}
 		label := fmt.Sprintf("resumed (%d/2)", r.ResumeCount)
 		if outcome := runOutcome(r); r.State != "running" && (outcome == "cancelled" || outcome == "timed_out") {
 			return outcome + "; " + label

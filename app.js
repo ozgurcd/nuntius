@@ -100,7 +100,7 @@ function timeText(n, value, prefix = '') {
 }
 function stateBadge(n, state) {
   const known = ['running', 'idle', 'ended', 'ended_no_report', 'cancelled', 'timed_out', 'stuck?', 'failed', 'frozen', 'enabled'];
-  n.className = 'badge ' + (known.includes(state) ? state : '');
+  n.className = 'badge ' + (/^Running · resumed [12]\/2$/.test(state) ? 'running' : known.includes(state) ? state : '');
   setText(n, state === 'ended_no_report' ? 'Ended · no report' :
     state === 'timed_out' ? 'Timed out' : state.charAt(0).toUpperCase() + state.slice(1));
 }

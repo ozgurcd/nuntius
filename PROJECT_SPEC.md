@@ -1,11 +1,12 @@
-# Nuntius v0.2.6 — specification as built
+# Nuntius v0.2.7 — specification as built
 
 ## Boundary
 
-Nuntius is a Go, standard-library-only stdio MCP server for an owner-approved
+Nuntius is a Go stdio MCP server for an owner-approved
 judge on macOS or Linux. Linux CI tests the same process and file contracts. The module
 is `github.com/ozgurcd/nuntius`. It has no network client, LLM or shell runner.
-Version v0.2.6 is compiled in; publication is a separate release workflow.
+Version v0.2.7 is compiled in; publication is a separate release workflow.
+Terminal QR encoding uses rsc.io/qr v0.2.0, with no transitive modules.
 
 Do not register it for coding agents. The MCP host owns approval. The server
 cannot verify that a caller is the judge or force a host to display a click.
@@ -105,7 +106,9 @@ Cancel uses the same escalation. Linux retains the short double-fork bootstrap,
 new session, OS parent and exec used in v0.2.3. Darwin bootstraps a transient
 `gui/<uid>/nuntius.run.<run_id>` job, then kickstarts it once. Its 0600 plist is
 in the private run directory only. RunAtLoad and KeepAlive are false;
-LaunchOnlyOnce is true. An exec-only stage records PID/kernel start and becomes
+LaunchOnlyOnce is true. Umask inherits the dispatching process's startup mask,
+with fallback 022; private file/directory modes remain 0600/0700.
+An exec-only stage records PID/kernel start and becomes
 the agent with unchanged argv/cwd/environment and file-backed standard streams.
 Inherited environment crosses a 0600 FIFO during bounded startup only, never
 a disk snapshot or a launchctl diagnostic. There is no runtime pipe helper.
@@ -159,7 +162,8 @@ restart note precedes the brief. A busy lane keeps its goal waiting; MCP polls
 retry when it frees. Child and parent links repair a crash between their writes.
 Signals raise lane.goal.resumed and persist acknowledgement-safe delivery flags.
 Status, agents, history and web show interrupted, waiting to resume and resumed
-(n/2). History exposes chain IDs and count, never the private session ID.
+counts. Active recovery reads `Running · resumed n/2`; finished recovery keeps
+its terminal labels. History exposes chain IDs and count, never the private session ID.
 Interrupted records beyond the limit stay visible for owner action. Nothing of
 nuntius runs while all nuntius processes are stopped. The Mac decides sleep;
 reboot/power loss recovery occurs at the next MCP startup or recover command.
@@ -244,7 +248,7 @@ shapes and Desktop permission interaction remain owner-pilot questions.
 
 Commands: mcp, status [--long] [--json], agents [--json],
 history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h],
-paths, web [--bind 127.0.0.1:PORT], unfreeze,
+paths, web [--bind 127.0.0.1:PORT] [--allow-host HOST], unfreeze,
 recover, watch LANE, config check, config convert, set KIND-agent-pool N, version and help. Global config
 and store flags precede the command. Status and agents default to human views;
 --json preserves their machine shapes. MCP output stays JSON. Status columns
@@ -312,7 +316,14 @@ Only 127.0.0.1 binds are accepted. A new random credential is printed in the
 start URL and required in the X-Nuntius-Token header on /data and /action.
 The static shell is public and contains no private data or credential.
 Host must be 127.0.0.1 or localhost
-with the listener port; POST Origin must equal the local HTTP origin. Actions
+with the listener port; POST Origin must equal the local HTTP origin. A single
+--allow-host opts in one validated DNS name ending in .ts.net (no wildcards,
+ports, paths or schemes). That exact Host, with no port or :443, also passes;
+its POST Origin must be exactly https://HOST. Forwarded and X-Forwarded-* grant
+nothing. Binding stays loopback-only. Startup prints both private sign-in links
+and a terminal QR of the HTTPS link, with an explicit white quiet zone.
+The owner supplies tailnet-only HTTPS through Tailscale Serve, never Funnel;
+the Mac must be awake. Nuntius edits no Tailscale settings. Actions
 accept only POST with the credential in a header. No CORS, external assets or
 access logs. The browser stores the start credential in sessionStorage for this
 tab, removes it from the address bar and reads storage on reload. Empty storage
