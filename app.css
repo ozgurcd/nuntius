@@ -20,9 +20,11 @@
 .agent-tabs { display: flex; gap: .5rem; overflow-x: auto; padding: .4rem 0 .8rem; }
 .agent-tab { flex: 0 0 auto; white-space: nowrap; border-bottom: 3px solid transparent; }
 .agent-tab[aria-selected="true"] { outline: 2px solid currentColor; outline-offset: -2px; }
-.agent-tab.tone-green { border-bottom-color: var(--green, #168044); }
-.agent-tab.tone-amber { border-bottom-color: var(--amber, #b57912); }
-.agent-tab.tone-red { border-bottom-color: var(--red, #bd3434); }
+.lane-indicator { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; margin-left: .5rem; background: var(--muted); }
+.indicator-running { background: var(--green); }
+.indicator-finished { background: #6178df; }
+.indicator-stuck { background: var(--amber); }
+.indicator-failed { background: var(--red); }
 .lane-detail { margin-top: 1rem; }
 .live-tail { max-height: 24rem; overflow: auto; }
 .follow { display: flex; gap: .5rem; align-items: center; }

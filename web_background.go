@@ -157,6 +157,7 @@ func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.
 	keep := wf.Bool("tailnet-keep", false, "keep created mapping")
 	notify := wf.String("notify-imessage", "", "owner iMessage handle")
 	replace := wf.Bool("replace", false, "restart background dashboard")
+	noMenubar := wf.Bool("no-menubar", false, "skip menu bar helper")
 	job := wf.String("job", "", "internal background job")
 	if wf.Parse(args) != nil || len(wf.Args()) != 0 || (!*tnMode && (*optional || *keep)) || (*notify != "" && !*tnMode && len(hosts) == 0) || (*replace && action != "start") || (*job != "" && action != "__background") {
 		fmt.Fprintln(errOut, "invalid web flags")
@@ -180,6 +181,9 @@ func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.
 		defer guard.Close()
 		if state := m.webDashboard(); state != nil {
 			if !*replace {
+				if !*noMenubar {
+					m.startMenubar()
+				}
 				fmt.Fprintln(out, "web: already running; use --replace to restart")
 				return 0
 			}
@@ -220,6 +224,9 @@ func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.
 			return 1
 		}
 		fmt.Fprintf(out, "summary: local=http://%s/ tailnet=%s serve=%s imessage=%s\n", state.Address, webHost(state.Host), state.Serve, state.IMessage)
+		if !*noMenubar {
+			m.startMenubar()
+		}
 		if err = m.webLink(ctx, state, false, out, errOut); err != nil {
 			fmt.Fprintln(errOut, err.Error())
 			return 1
@@ -434,6 +441,7 @@ func (m *Manager) clearWebFiles() error {
 }
 
 func (m *Manager) stopWeb(ctx context.Context) error {
+	m.stopMenubar()
 	state := m.webDashboard()
 	if state == nil {
 		var pending webState

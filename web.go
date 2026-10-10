@@ -391,6 +391,12 @@ func (w *Web) Run(ctx context.Context, out, errOut io.Writer) error {
 	}
 	defer listener.Close()
 	w.address = listener.Addr().String()
+	closeMenubar, trayErr := w.serveMenubar()
+	if trayErr != nil {
+		fmt.Fprintln(errOut, "warning: menu bar API unavailable")
+	} else {
+		defer closeMenubar()
+	}
 	_, port, _ := net.SplitHostPort(w.address)
 	serve := "none"
 	if w.tailnet != nil {

@@ -1,0 +1,4 @@
+Nuntius Relay artwork
+Owner-selected artwork dedicated to the public domain under CC0 1.0.
+https://creativecommons.org/publicdomain/zero/1.0/
+The Linux icon is a raster of the supplied monochrome SVG.

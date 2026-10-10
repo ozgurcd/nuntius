@@ -283,6 +283,14 @@ function fillFilter(select, values, label) {
   }
   select.value = wanted.includes(chosen) ? chosen : '';
 }
+function laneIndicator(s) {
+  const state = (s.display_state || s.state || 'idle').toLowerCase();
+  if (s.exit > 0 || s.badge === 'red' || /^(failed|interrupted|cancelled|timed_out|timed out|ended_no_report)/.test(state)) return {kind:'failed', label:'Failed or interrupted'};
+  if (state === 'stuck?' || (s.state === 'running' && (s.last_event_age_seconds > 900 || (!s.last_event && s.elapsed_seconds > 900)))) return {kind:'stuck', label:'Stuck: no recent progress'};
+  if (/^(ended|completed)/.test(state)) return {kind:'finished', label:'Finished'};
+  if (/^running/.test(state)) return {kind:'running', label:'Running'};
+  return {kind:'idle', label:'Idle'};
+}
 function renderAgentTabs(d) {
   if (laneSelection && !d.lanes.some(s => s.lane === laneSelection)) {
     laneSelection = '';
@@ -302,12 +310,18 @@ function renderAgentTabs(d) {
       event.preventDefault(); selectTab('agents' + (names[next] ? '/' + names[next] : ''));
       agentTabs.get(names[next]).root.focus();
     });
-    return {root};
+    const indicator = node('span', 'lane-indicator');
+    indicator.setAttribute('aria-hidden', 'true');
+    if (s.lane) root.append(indicator);
+    return {root, indicator};
   }, (v,s) => {
     const selected = s.lane === laneSelection;
     v.root.setAttribute('aria-selected', String(selected)); v.root.tabIndex = selected ? 0 : -1;
-    v.root.className = 'agent-tab' + (s.badge ? ' tone-' + s.badge : '');
-    v.root.title = s.lane ? (s.display_state || s.state) : 'All agents';
+    v.root.className = 'agent-tab';
+    const mark = laneIndicator(s);
+    v.indicator.className = 'lane-indicator indicator-' + mark.kind;
+    v.root.title = s.lane ? mark.label + ' · ' + (s.display_state || s.state) : 'All agents';
+    v.root.setAttribute('aria-label', s.lane ? s.lane + ': ' + mark.label : 'All agents');
   }, s => s.lane);
 }
 function renderLane(d) {
