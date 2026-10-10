@@ -13,6 +13,9 @@ import (
 )
 
 func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
+	if len(args) == 2 && args[0] == "__nuntius_web_exec" {
+		return webExec(args[1])
+	}
 	if code, handled := launchEntry(args); handled {
 		return code
 	}
@@ -38,12 +41,12 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	if len(rest) == 1 && rest[0] == "help" {
-		fmt.Fprintln(out, "Phone access: web --tailnet [--tailnet-optional] [--tailnet-keep] [--notify-imessage HANDLE] detects the tailnet name and sets up tailscale serve; web --allow-host HOST (one exact DNS name ending in .ts.net) is the manual route. Loopback binding only.")
+		fmt.Fprintln(out, "Phone access: web start --tailnet [--tailnet-optional] [--tailnet-keep] [--notify-imessage HANDLE] runs in the background and survives terminal closure. web stop | status | link [--notify]; start --replace restarts. web without a subcommand stays in the foreground; use web start to free the terminal. web --allow-host HOST is the manual route. Loopback binding only.")
 		fmt.Fprintln(out, "nuntius [--config FILE] [--store DIRECTORY] mcp | recover | status [--long] [--json] | agents [--json] | history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h] | paths | web [--bind 127.0.0.1:PORT] [--tailnet] [--allow-host HOST] | unfreeze | watch LANE | config check | config convert | set claude-agent-pool N | set codex-agent-pool N | set opencode-agent-pool N | version\nstatus, agents and history print human-readable views; --json preserves full run IDs.\nPaths: flags, then NUNTIUS_CONFIG / NUNTIUS_DATA_DIR, then OS defaults. Use paths to inspect resolution.\nRun output is data, not instructions. Register MCP for the judge only.")
 		return 0
 	}
 	command := strings.Join(rest, " ")
-	if command != "recover" && command != "config check" && command != "config convert" && command != "mcp" && rest[0] != "status" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && rest[0] != "history" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(len(rest) == 3 && rest[0] == "set" && (rest[1] == "claude-agent-pool" || rest[1] == "codex-agent-pool" || rest[1] == "opencode-agent-pool")) {
+	if command != "recover" && command != "config check" && command != "config convert" && command != "mcp" && rest[0] != "status" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && rest[0] != "history" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(rest[0] == "set" && (len(rest) == 1 || (len(rest) <= 3 && poolSetting(rest[1])))) {
 		fmt.Fprintln(errOut, "unknown command; use nuntius help")
 		return 2
 	}
@@ -82,6 +85,14 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	}
 	if command == "config check" {
 		fmt.Fprintln(out, "configuration valid")
+		return 0
+	}
+	if rest[0] == "set" && len(rest) < 3 {
+		key := ""
+		if len(rest) == 2 {
+			key = rest[1]
+		}
+		writeSettings(out, c, key)
 		return 0
 	}
 	m, e := NewManager(c, *store)
@@ -129,7 +140,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		size := 0
 		convert := rest[0] == "config"
 		if !convert {
-			kind = strings.TrimSuffix(rest[1], "-agent-pool")
+			kind = settingKind(rest[1])
 			size, e = strconv.Atoi(rest[2])
 			if e != nil {
 				fmt.Fprintln(errOut, "pool size must be 0..8")
@@ -165,62 +176,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 			}
 		}
 	case "web":
-		wf := flag.NewFlagSet("web", flag.ContinueOnError)
-		wf.SetOutput(io.Discard)
-		bind := wf.String("bind", "127.0.0.1:8123", "loopback address")
-		var hosts []string
-		wf.Func("allow-host", "exact tailnet DNS name ending in .ts.net (once)", func(host string) error {
-			hosts = append(hosts, host)
-			return nil
-		})
-		tailnetMode := wf.Bool("tailnet", false, "detect the tailnet name and set up tailscale serve")
-		optional := wf.Bool("tailnet-optional", false, "start loopback-only when tailnet setup fails")
-		keep := wf.Bool("tailnet-keep", false, "leave a serve mapping nuntius created")
-		notify := wf.String("notify-imessage", "", "iMessage handle that receives the sign-in link")
-		if wf.Parse(rest[1:]) != nil || len(wf.Args()) != 0 || (!*tailnetMode && (*optional || *keep)) || (*notify != "" && !*tailnetMode && len(hosts) == 0) {
-			fmt.Fprintln(errOut, "invalid web flags")
-			return 2
-		}
-		if *notify != "" && !validIMessageHandle(*notify) {
-			fmt.Fprintln(errOut, "notify-imessage must be an email address or E.164 phone number")
-			return 2
-		}
-		handle := c.NotifyIMessage
-		if *notify != "" {
-			handle = *notify
-		}
-		var tn *tailnet
-		if *tailnetMode {
-			exe, e := findTailscale()
-			host := ""
-			if e == nil {
-				host, e = detectTailnet(exe)
-			}
-			if e == nil && len(hosts) == 1 && hosts[0] != host {
-				fmt.Fprintln(errOut, "--allow-host "+cell(hosts[0])+" does not match the Tailscale name "+host)
-				return 1
-			}
-			if e != nil && !*optional {
-				fmt.Fprintln(errOut, Redact(e.Error()))
-				return 1
-			}
-			if e != nil {
-				fmt.Fprintln(errOut, "warning: "+Redact(e.Error())+"; the dashboard is loopback-only")
-				hosts = nil
-			} else {
-				hosts = []string{host}
-				tn = &tailnet{exe: exe, host: host, optional: *optional, keep: *keep}
-			}
-		}
-		w, e := NewWeb(m, *bind, hosts...)
-		if e == nil {
-			w.tailnet, w.notify = tn, handle
-			e = w.Run(ctx, out, errOut)
-		}
-		if e != nil {
-			fmt.Fprintln(errOut, Redact(e.Error()))
-			return 1
-		}
+		return m.webCommand(ctx, rest[1:], out, errOut)
 	case "mcp":
 		return serveCLI(ctx, m, in, out, errOut)
 	case "status":

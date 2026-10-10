@@ -172,7 +172,7 @@ func (m *Manager) recoverEnded(r *Run) error {
 	r.Ended = &now
 	if r.StopReason == "" {
 		r.StopReason = "ended_no_report"
-		if m.reportExists(r.GoalID) {
+		if m.reportExists(*r) {
 			r.StopReason = "completed"
 		}
 	}

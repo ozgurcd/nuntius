@@ -1,11 +1,11 @@
-# Nuntius v0.2.9 — specification as built
+# Nuntius v0.2.10 — specification as built
 
 ## Boundary
 
 Nuntius is a Go stdio MCP server for an owner-approved
 judge on macOS or Linux. Linux CI tests the same process and file contracts. The module
 is `github.com/ozgurcd/nuntius`. It has no network client, LLM or shell runner.
-Version v0.2.9 is compiled in; publication is a separate release workflow.
+Version v0.2.10 is compiled in; publication is a separate release workflow.
 Terminal QR encoding uses rsc.io/qr v0.2.0, with no transitive modules.
 
 Do not register it for coding agents. The MCP host owns approval. The server
@@ -132,7 +132,7 @@ Every terminal outcome writes an empty private signals/<agent>.<goal_id>.ended
 file through atomic exclusive creation; duplicate names coalesce. Recovery
 also writes a signal. A normal completion's signal persistence failure is audited.
 
-Running runs with a regular report file older than five minutes, or a last
+Running runs with a current regular report file older than five minutes, or a last
 event older than fifteen minutes, show display_state `stuck?`. Both comparisons
 are strictly greater than the threshold. Missing events use the run start time;
 linked files do not supply timestamps. No automatic cancel is added.
@@ -235,7 +235,10 @@ or store startup faults leave a non-serving MCP transport, not a runnable lane.
 Status flags asked_interactively for known AskUserQuestion/request_user_input
 tool attempts in the last 1 MiB of events, including refusals. It does not claim
 to detect unknown event shapes or an attempt outside that window. Report
-existence is by goal ID, including an older report with the same ID.
+existence requires a regular goal report modified at or after that run started;
+an older report with the same goal ID is ignored. A later dispatch owns reports
+at or after its start, so old history does not borrow the new report. Late
+report delivery after an end is accepted until that next dispatch.
 
 Returned strings redact GitHub token prefixes, sk-/sk-ant- API keys, xox Slack
 tokens, JWT-shaped strings, PEM private-key blocks (including incomplete blocks),
@@ -341,18 +344,29 @@ to run, and nuntius never enables or disables Funnel. On a normal exit it runs
 "nuntius dashboard (NAME): LINK" through osascript with a fixed AppleScript
 that reads handle and text from argv; handles are email or E.164 only; a failed
 send warns and the dashboard keeps running. The link is never written to a
-nuntius log, history or state file; web.json in the store records only the
-dashboard PID, process start, tailnet host and serve mode for status --long,
-which prints whether a tailnet dashboard is active. Start prints one summary
+nuntius log or history file. Background web start stores the credential only in
+web-access.json (0600) in the owner's data directory (0700); stop removes it.
+web.json records the dashboard PID/start identity, address, job, start time,
+tailnet host, serve mode and last iMessage result for web status and status --long.
+Foreground web keeps its credential only in memory. Start prints one summary
 line (tailnet host, serve none/reused/created/manual, iMessage off/sent/failed)
-without the credential. Tests use fixture tailscale and osascript programs. Actions
+without the credential. web start uses a one-shot user launchd job on macOS,
+no RunAtLoad/KeepAlive, inherited umask, private file streams and an in-memory
+environment FIFO; Linux uses setsid and web.pid. It waits for loopback readiness,
+refuses duplicates and supports --replace. stop verifies PID/start identity,
+shuts down cleanly and removes its recorded job. link [--notify] displays owner
+access again and optionally resends. QR uses qr.L, half-block rows, two-module
+quiet zone and a terminal-width guard. Tests decode it offline and use fixture
+launchctl, tailscale and osascript programs on PATH. Actions
 accept only POST with the credential in a header. No CORS, external assets or
 access logs. The browser stores the start credential in sessionStorage for this
 tab, removes it from the address bar and reads storage on reload. Empty storage
 shows instructions to reopen the printed start link. Disabled storage permits
 the current start-link load only. Query credentials cannot authenticate APIs.
 
-The page is embedded as index.html, app.css and app.js. Asset GET requests pass
+The page is embedded as index.html, app.css, app.js and the CC0 Relay SVGs.
+The favicon and theme-specific mark are public static assets under the same
+Host/method guards, with img-src 'self'. Asset GET requests pass
 the same Host, port, method and response-header checks as the page. Script and style CSP
 directives are 'self'; no inline script/style or external network asset is used.
 Static asset URLs carry no credential. All existing response headers remain.

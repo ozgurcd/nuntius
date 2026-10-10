@@ -42,6 +42,12 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(dir)
 		os.Exit(1)
 	}
+	// Every CLI subprocess resolves launchctl to an offline fake. With no
+	// fixture launchd directory it refuses, exercising the detached fallback.
+	if os.Symlink(fakeBinary, filepath.Join(dir, "launchctl")) != nil {
+		os.Exit(1)
+	}
+	_ = os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
@@ -234,12 +240,12 @@ func TestGoalIDAndSize(t *testing.T) {
 
 func TestDispatchReplyArgvAndStore(t *testing.T) {
 	m, c, store := manager(t)
-	if e := os.WriteFile(filepath.Join(c.ReportsDir, "DEMO-1.txt"), []byte("done"), 0600); e != nil {
-		t.Fatal(e)
-	}
 	for _, lane := range []string{"claude", "codex"} {
-		id, e := m.Dispatch(lane, "DEMO-1", "hello")
+		id, e := m.Dispatch(lane, "DEMO-1", "hello slow-finish")
 		if e != nil {
+			t.Fatal(e)
+		}
+		if e := os.WriteFile(filepath.Join(c.ReportsDir, "DEMO-1.txt"), []byte("done"), 0600); e != nil {
 			t.Fatal(e)
 		}
 		s := waitState(t, m, lane, "ended")
@@ -262,7 +268,7 @@ func TestDispatchReplyArgvAndStore(t *testing.T) {
 		if e := json.Unmarshal(b, &r); e != nil {
 			t.Fatal(e)
 		}
-		sum := sha256.Sum256([]byte("hello"))
+		sum := sha256.Sum256([]byte("hello slow-finish"))
 		if r.SHA256 != hex.EncodeToString(sum[:]) || r.SessionID == "" {
 			t.Fatal("metadata mismatch")
 		}
@@ -280,7 +286,10 @@ func TestDispatchReplyArgvAndStore(t *testing.T) {
 		if lane == "codex" && !strings.Contains(joined, `["exec","--json","-"]`) {
 			t.Fatal("codex argv")
 		}
-		if _, e := m.Reply(lane, "follow up"); e != nil {
+		if _, e := m.Reply(lane, "follow up slow-finish"); e != nil {
+			t.Fatal(e)
+		}
+		if e := os.WriteFile(filepath.Join(c.ReportsDir, "DEMO-1.txt"), []byte("done"), 0600); e != nil {
 			t.Fatal(e)
 		}
 		waitState(t, m, lane, "ended")
@@ -522,9 +531,6 @@ func TestEndedQuestion(t *testing.T) {
 
 func TestClaudeGoalThenContinue(t *testing.T) {
 	m, c, store := manager(t)
-	if e := os.WriteFile(filepath.Join(c.ReportsDir, "CONTINUE-1.txt"), []byte("done"), 0600); e != nil {
-		t.Fatal(e)
-	}
 	first, e := m.Dispatch("claude", "CONTINUE-1", "ack-goal")
 	if e != nil {
 		t.Fatal(e)
@@ -532,6 +538,9 @@ func TestClaudeGoalThenContinue(t *testing.T) {
 	s := waitState(t, m, "claude", "ended")
 	if s.RunID == first {
 		t.Fatal("acknowledgement did not trigger continuation")
+	}
+	if e := os.WriteFile(filepath.Join(c.ReportsDir, "CONTINUE-1.txt"), []byte("done"), 0600); e != nil {
+		t.Fatal(e)
 	}
 	for _, id := range []string{first, s.RunID} {
 		b, e := os.ReadFile(filepath.Join(store, "runs", id, "meta.json"))

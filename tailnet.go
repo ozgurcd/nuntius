@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -226,18 +227,13 @@ type webState struct {
 	Host         string    `json:"tailnet_host"`
 	Serve        string    `json:"serve"`
 	Started      time.Time `json:"started"`
+	Address      string    `json:"address,omitempty"`
+	Job          string    `json:"job,omitempty"`
+	IMessage     string    `json:"imessage,omitempty"`
 }
 
-func (m *Manager) saveWebState(host, serve string) error {
-	start, err := processStart(os.Getpid())
-	if err != nil {
-		return errors.New("cannot record the dashboard process identity")
-	}
-	b, err := json.Marshal(webState{PID: os.Getpid(), ProcessStart: start, Host: host, Serve: serve, Started: time.Now().UTC()})
-	if err != nil {
-		return err
-	}
-	return atomicPrivate(filepath.Join(m.store, "web.json"), b)
+func (m *Manager) saveWebState(state webState) error {
+	return saveWebFile(filepath.Join(m.store, "web.json"), state)
 }
 
 func (m *Manager) clearWebState() error {
@@ -256,8 +252,17 @@ func (m *Manager) webDashboard() *webState {
 	defer f.Close()
 	b, err := io.ReadAll(io.LimitReader(f, 4097))
 	var v webState
-	if err != nil || len(b) > 4096 || strictJSON(b, &v) != nil || v.PID <= 1 || !validTailnetHost(v.Host) {
+	if err != nil || len(b) > 4096 || strictJSON(b, &v) != nil || v.PID <= 1 || (v.Host != "" && !validTailnetHost(v.Host)) {
 		return nil
+	}
+	if v.Address != "" {
+		host, port, err := net.SplitHostPort(v.Address)
+		n, e := strconv.Atoi(port)
+		if host != "127.0.0.1" || err != nil || e != nil || n < 1 || n > 65535 {
+			return nil
+		}
+	} else if v.Host == "" {
+		return nil // pre-v0.2.10 recorded only tailnet foreground dashboards
 	}
 	if start, err := processStart(v.PID); err != nil || start != v.ProcessStart {
 		return nil

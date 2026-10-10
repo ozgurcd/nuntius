@@ -3,11 +3,14 @@ package main
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -60,6 +63,9 @@ func fakeTailscale() {
 		}
 		fmt.Println("Available within your tailnet:")
 	case args == "serve --https=443 off":
+		if _, err := os.Stat(filepath.Join(dir, "serve-off-fail")); err == nil {
+			os.Exit(1)
+		}
 		if err := os.WriteFile(filepath.Join(dir, "serve.json"), []byte("null\n"), 0600); err != nil {
 			os.Exit(1)
 		}
@@ -79,7 +85,13 @@ func fakeOsascript() {
 	if err != nil {
 		os.Exit(3)
 	}
-	b, _ := json.Marshal(os.Args[1:])
+	args := append([]string(nil), os.Args[1:]...)
+	for i, arg := range args {
+		if at := strings.Index(arg, "https://"); at >= 0 && strings.Contains(arg, "?token=") {
+			args[i] = arg[:at] + "[private sign-in link]"
+		}
+	}
+	b, _ := json.Marshal(args)
 	fmt.Fprintln(log, string(b))
 	log.Close()
 	if _, err := os.Stat(filepath.Join(dir, "osascript-fail")); err == nil {
@@ -97,6 +109,9 @@ func main() {
 		return
 	case "osascript":
 		fakeOsascript()
+		return
+	case "launchctl":
+		fakeLaunchctl()
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "run" {
@@ -177,6 +192,126 @@ func main() {
 	}
 	if strings.Contains(mode, "exit-seven") {
 		os.Exit(7)
+	}
+}
+
+// Only private fixture directories are used; this never invokes launchd.
+func fakeLaunchctl() {
+	dir := os.Getenv("NUNTIUS_FAKE_LAUNCHCTL")
+	if dir == "" {
+		os.Exit(3)
+	}
+	args := os.Args[1:]
+	log, err := os.OpenFile(filepath.Join(dir, "launchctl.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		os.Exit(3)
+	}
+	fmt.Fprintln(log, strings.Join(args, " "))
+	log.Close()
+	path := filepath.Join(dir, "job.path")
+	pidPath := filepath.Join(dir, "job.pid")
+	switch args[0] {
+	case "bootstrap":
+		if len(args) != 3 {
+			os.Exit(2)
+		}
+		if _, err := os.Stat(path); err == nil {
+			os.Exit(1)
+		}
+		if os.WriteFile(path, []byte(args[2]), 0600) != nil {
+			os.Exit(1)
+		}
+	case "kickstart":
+		if _, err := os.Stat(filepath.Join(dir, "kickstart-fail")); err == nil {
+			os.Exit(1)
+		}
+		p, err := os.ReadFile(path)
+		if err != nil {
+			os.Exit(1)
+		}
+		b, err := os.ReadFile(string(p))
+		if err != nil {
+			os.Exit(1)
+		}
+		var plist struct {
+			Dict struct {
+				Inner string `xml:",innerxml"`
+			} `xml:"dict"`
+		}
+		if xml.Unmarshal(b, &plist) != nil {
+			os.Exit(1)
+		}
+		dec := xml.NewDecoder(strings.NewReader(plist.Dict.Inner))
+		var argv []string
+		output := ""
+		for {
+			tok, err := dec.Token()
+			if err != nil {
+				break
+			}
+			el, ok := tok.(xml.StartElement)
+			if !ok {
+				continue
+			}
+			if el.Name.Local == "key" {
+				var key string
+				_ = dec.DecodeElement(&key, &el)
+				if key == "ProgramArguments" {
+					for {
+						tok, _ = dec.Token()
+						if start, ok := tok.(xml.StartElement); ok && start.Name.Local == "string" {
+							var s string
+							_ = dec.DecodeElement(&s, &start)
+							argv = append(argv, s)
+						}
+						if end, ok := tok.(xml.EndElement); ok && end.Name.Local == "array" {
+							break
+						}
+					}
+				}
+				if key == "StandardOutPath" {
+					for {
+						tok, _ = dec.Token()
+						if start, ok := tok.(xml.StartElement); ok && start.Name.Local == "string" {
+							_ = dec.DecodeElement(&output, &start)
+							break
+						}
+					}
+				}
+			}
+		}
+		if len(argv) == 0 {
+			os.Exit(1)
+		}
+		f, err := os.OpenFile(output, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			os.Exit(1)
+		}
+		defer f.Close()
+		cmd := exec.Command(argv[0], argv[1:]...)
+		cmd.Stdout, cmd.Stderr = f, f
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if cmd.Start() != nil {
+			os.Exit(1)
+		}
+		_ = os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)), 0600)
+		fmt.Println(cmd.Process.Pid)
+		_ = cmd.Process.Release()
+	case "print":
+		if _, err := os.Stat(path); err != nil {
+			os.Exit(113)
+		}
+		b, _ := os.ReadFile(pidPath)
+		if len(b) > 0 {
+			fmt.Println("pid = " + string(b))
+		} else {
+			fmt.Println("state = not running")
+		}
+	case "bootout":
+		_ = os.Remove(path)
+		_ = os.Remove(pidPath)
+	default:
+		os.Exit(2)
 	}
 }
 

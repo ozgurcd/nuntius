@@ -17,7 +17,7 @@ func (m *Manager) checkStuck(r *Run, now time.Time) (bool, error) {
 		last = fi.ModTime()
 	}
 	stuck := now.Sub(last) > 15*time.Minute
-	if fi, err := os.Lstat(filepath.Join(m.config.ReportsDir, r.GoalID+".txt")); err == nil && fi.Mode().IsRegular() && now.Sub(fi.ModTime()) > 5*time.Minute {
+	if fi := m.currentReport(*r); fi != nil && now.Sub(fi.ModTime()) > 5*time.Minute {
 		stuck = true
 	}
 	if !stuck || r.StuckSignalled {

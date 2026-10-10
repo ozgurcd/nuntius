@@ -422,7 +422,7 @@ func (m *Manager) follow(r Run, lock, supervisor *os.File, a *activeRun, grace t
 	}
 	if r.StopReason == "" {
 		r.StopReason = "ended_no_report"
-		if m.reportExists(r.GoalID) {
+		if m.reportExists(r) {
 			r.StopReason = "completed"
 		}
 	}
@@ -595,7 +595,7 @@ func (m *Manager) Status() ([]Status, error) {
 				age := max(0, int64(time.Since(v).Seconds()))
 				s.LastEventAgeSeconds = &age
 			}
-			s.ReportExists = m.reportExists(r.GoalID)
+			s.ReportExists = m.reportExists(*r)
 			if s.State == "ended" && !s.ReportExists {
 				s.State = "ended_no_report"
 			}

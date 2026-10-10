@@ -81,7 +81,7 @@ func (m *Manager) Tail(lane string, lines int) ([]string, error) {
 	if e != nil {
 		return nil, e
 	}
-	if r.State != "running" && !m.reportExists(r.GoalID) {
+	if r.State != "running" && !m.reportExists(*r) {
 		final, _ := questionSummary(b)
 		if final != "" {
 			return []string{bounded(final, 8192)}, nil
@@ -188,9 +188,30 @@ func questionSummary(b []byte) (string, bool) {
 	return final, asked
 }
 
-func (m *Manager) reportExists(goal string) bool {
-	fi, e := os.Lstat(filepath.Join(m.config.ReportsDir, goal+".txt"))
-	return e == nil && fi.Mode().IsRegular()
+func (m *Manager) reportExists(r Run) bool {
+	return m.currentReport(r) != nil
+}
+
+// A goal name can be dispatched again. A pre-existing report belongs to its
+// earlier run, and a later report must not retroactively complete old history.
+func (m *Manager) currentReport(r Run) os.FileInfo {
+	fi, e := os.Lstat(filepath.Join(m.config.ReportsDir, r.GoalID+".txt"))
+	if e != nil || !fi.Mode().IsRegular() || fi.ModTime().Before(r.Started) {
+		return nil
+	}
+	if r.Ended != nil {
+		// Late report delivery is valid until a newer dispatch of this goal.
+		runs, err := m.history()
+		if err != nil {
+			return nil
+		}
+		for _, other := range runs {
+			if other.GoalID == r.GoalID && other.Started.After(r.Started) && !fi.ModTime().Before(other.Started) {
+				return nil
+			}
+		}
+	}
+	return fi
 }
 
 func (m *Manager) Report(goal string) (string, error) {

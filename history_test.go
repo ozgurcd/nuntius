@@ -258,6 +258,14 @@ func TestStuckSignalOnceAcrossAckAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := time.Now().Add(-6 * time.Minute)
+	m.mu.Lock()
+	run, _ := m.latest("codex")
+	run.Started = old.Add(-time.Minute)
+	if err := m.save(run); err != nil {
+		m.mu.Unlock()
+		t.Fatal(err)
+	}
+	m.mu.Unlock()
 	if err := os.Chtimes(report, old, old); err != nil {
 		t.Fatal(err)
 	}
@@ -330,8 +338,8 @@ func TestStuckSignalOnceAcrossAckAndRestart(t *testing.T) {
 	}
 	waitReady(t, m, "codex")
 	names, err = m.Signals()
-	if err != nil || toolText(names) != toolText([]string{name}) {
-		t.Fatal("new run cannot deliver its stuck signal")
+	if err != nil || len(names) != 0 {
+		t.Fatal("old report marked redispatched run stuck")
 	}
 }
 
@@ -379,6 +387,9 @@ func TestStuckThresholds(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m, c, _ := manager(t)
 			r := Run{ID: fmt.Sprintf("%032x", i+1), Lane: "codex", GoalID: "BOUNDARY-1", State: "running", Started: now.Add(-tc.eventAge)}
+			if tc.report && tc.reportAge > tc.eventAge {
+				r.Started = now.Add(-tc.reportAge - time.Minute)
+			}
 			if tc.ended {
 				r.State = "ended"
 			}

@@ -88,7 +88,7 @@ func (m *Manager) Recover() error {
 				return err
 			}
 		}
-		if r.State == "ended" && r.StopReason == "ended_no_report" && r.StopAt == nil && !m.reportExists(r.GoalID) {
+		if r.State == "ended" && r.StopReason == "ended_no_report" && r.StopAt == nil && !m.reportExists(*r) {
 			r.State = "interrupted"
 			r.StopReason = "interrupted"
 			if r.Brief == "" {
@@ -134,7 +134,7 @@ func (m *Manager) Recover() error {
 	// Oldest interrupted goal first. A busy lane leaves every queued goal intact.
 	sort.Slice(runs, func(i, j int) bool { return runs[i].Started.Before(runs[j].Started) })
 	for _, r := range runs {
-		if r.State != "interrupted" || r.ResumeCount >= 2 || r.ContinueRunID != "" || m.reportExists(r.GoalID) {
+		if r.State != "interrupted" || r.ResumeCount >= 2 || r.ContinueRunID != "" || m.reportExists(r) {
 			continue
 		}
 		current, err := loadRun(filepath.Join(m.store, "runs", r.ID), r.ID)

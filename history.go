@@ -64,7 +64,7 @@ func (m *Manager) History(f HistoryFilter) ([]HistoryEntry, error) {
 		if r.State == "running" || r.Ended == nil || (f.Lane != "" && r.Lane != f.Lane) || (f.GoalID != "" && r.GoalID != f.GoalID) || r.Ended.Before(since) {
 			continue
 		}
-		rows = append(rows, HistoryEntry{RunID: r.ID, Lane: r.Lane, GoalID: r.GoalID, Ended: *r.Ended, Outcome: runOutcome(r), DurationSeconds: max(0, int64(r.Ended.Sub(r.Started).Seconds())), ReportExists: m.reportExists(r.GoalID), Exit: r.Exit, ParentRunID: r.ParentRunID, ContinueRunID: r.ContinueRunID, ResumeCount: r.ResumeCount, DisplayState: terminalDisplay(r, runOutcome(r)), Badge: badgeTone(r, r.State)})
+		rows = append(rows, HistoryEntry{RunID: r.ID, Lane: r.Lane, GoalID: r.GoalID, Ended: *r.Ended, Outcome: runOutcome(r), DurationSeconds: max(0, int64(r.Ended.Sub(r.Started).Seconds())), ReportExists: m.reportExists(r), Exit: r.Exit, ParentRunID: r.ParentRunID, ContinueRunID: r.ContinueRunID, ResumeCount: r.ResumeCount, DisplayState: terminalDisplay(r, runOutcome(r)), Badge: badgeTone(r, r.State)})
 		row := &rows[len(rows)-1]
 		row.Kind, row.Model = r.Kind, r.Model
 		row.ShortRunID = shortRunID(r.ID)

@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.2.10 — 2026-10-10
+
+- Add `web start`, `stop`, `status` and `link [--notify]`: a transient per-user
+  macOS launchd job or Linux detached session frees the terminal and survives
+  terminal closure. Wait for loopback readiness, prevent duplicate starts,
+  support `--replace`, cleanly release owned Serve mappings and remove access
+  files on stop; foreground `web` remains compatible.
+- Store background link access only in an owner-only 0600 file; keep credentials
+  out of daemon logs and status. Show the same dashboard line in `status --long`.
+- Ignore reports from earlier runs of a redispatched goal for report presence,
+  stuck detection, recovery and dashboard history.
+- Let `set` list all writable pool sizes and their current values/sources,
+  or read one key; identify read-only config without exposing template secrets.
+- Render terminal QR codes with one-column half-blocks, qr.L and a two-module
+  quiet zone; suppress QR on known narrow terminals. Decode rendered text in
+  offline pure-Go tests.
+- Embed the owner's CC0 Relay logo and theme-aware favicon in the dashboard,
+  and show light/dark marks in README. Document background phone access.
+
 ## v0.2.9 — 2026-10-10
 
 - Add `web --tailnet`: find the Tailscale CLI, require a running backend with a

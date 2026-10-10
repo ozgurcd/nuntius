@@ -19,6 +19,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 type Web struct {
@@ -27,6 +28,22 @@ type Web struct {
 	allowHost      string
 	tailnet        *tailnet
 	notify         string
+	background     bool
+	job            string
+}
+
+// TIOCGWINSZ is shared by Darwin and Linux. Unknown width does not suppress QR.
+var terminalColumns = func(out io.Writer) int {
+	f, ok := out.(*os.File)
+	if !ok {
+		return 0
+	}
+	var size struct{ Rows, Cols, X, Y uint16 }
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), syscall.TIOCGWINSZ, uintptr(unsafe.Pointer(&size)))
+	if errno != 0 {
+		return 0
+	}
+	return int(size.Cols)
 }
 
 func NewWeb(m *Manager, address string, allowHost ...string) (*Web, error) {
@@ -74,25 +91,40 @@ func validTailnetHost(host string) bool {
 
 func (w *Web) writeLinks(out io.Writer) error {
 	_, err := fmt.Fprintf(out, "http://%s/?token=%s\n", w.address, w.token)
-	if err != nil || w.allowHost == "" {
+	if err != nil {
 		return err
 	}
-	link := "https://" + w.allowHost + "/?token=" + w.token
-	code, err := qr.Encode(link, qr.M)
+	link := "http://" + w.address + "/?token=" + w.token
+	if w.allowHost != "" {
+		link = "https://" + w.allowHost + "/?token=" + w.token
+		if _, err = fmt.Fprintln(out, link); err != nil {
+			return err
+		}
+	}
+	code, err := qr.Encode(link, qr.L)
 	if err != nil {
 		return errors.New("cannot encode sign-in QR")
 	}
 	var b strings.Builder
-	b.WriteString(link + "\nScan to sign in (keep this QR private):\n")
-	// Explicit colors work on light and dark terminals. Two character cells
-	// form one square module; the four-module white border is the quiet zone.
-	for y := -4; y < code.Size+4; y++ {
+	if width := terminalColumns(out); width > 0 && width < code.Size+4 {
+		_, err = fmt.Fprintln(out, "QR did not fit this terminal; use the sign-in link above.")
+		return err
+	}
+	b.WriteString("Scan to sign in (keep this QR private):\n")
+	// One cell holds two vertical modules, with a two-module quiet zone.
+	for y := -2; y < code.Size+2; y += 2 {
 		b.WriteString("\x1b[30;47m")
-		for x := -4; x < code.Size+4; x++ {
-			if code.Black(x, y) {
-				b.WriteString("██")
-			} else {
-				b.WriteString("  ")
+		for x := -2; x < code.Size+2; x++ {
+			top, bottom := code.Black(x, y), code.Black(x, y+1)
+			switch {
+			case top && bottom:
+				b.WriteRune('█')
+			case top:
+				b.WriteRune('▀')
+			case bottom:
+				b.WriteRune('▄')
+			default:
+				b.WriteByte(' ')
 			}
 		}
 		b.WriteString("\x1b[0m\n")
@@ -105,7 +137,7 @@ func (w *Web) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 	out.Header().Set("Cache-Control", "no-store")
 	out.Header().Set("Referrer-Policy", "no-referrer")
 	out.Header().Set("X-Content-Type-Options", "nosniff")
-	out.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+	out.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 	host, port, e := net.SplitHostPort(r.Host)
 	_, wantPort, _ := net.SplitHostPort(w.address)
 	local := e == nil && (host == "127.0.0.1" || host == "localhost") && port == wantPort
@@ -116,7 +148,7 @@ func (w *Web) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 	}
 	// Only the static, data-free shell is public. Data and actions use headers
 	// exclusively, so a query credential never authenticates an API request.
-	shell := r.URL.Path == "/" || r.URL.Path == "/app.css" || r.URL.Path == "/app.js"
+	shell := r.URL.Path == "/" || r.URL.Path == "/app.css" || r.URL.Path == "/app.js" || r.URL.Path == "/favicon.svg" || r.URL.Path == "/assets/brand/nuntius-logo.svg" || r.URL.Path == "/assets/brand/nuntius-logo-dark.svg"
 	if !shell && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Nuntius-Token")), []byte(w.token)) != 1 {
 		http.Error(out, "forbidden", http.StatusForbidden)
 		return
@@ -155,6 +187,14 @@ func (w *Web) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 		}
 		out.Header().Set("Content-Type", contentType)
 		asset, _ := dashboardAssets.ReadFile(strings.TrimPrefix(r.URL.Path, "/"))
+		_, _ = out.Write(asset)
+	case "/favicon.svg", "/assets/brand/nuntius-logo.svg", "/assets/brand/nuntius-logo-dark.svg":
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if name == "favicon.svg" {
+			name = "assets/brand/favicon.svg"
+		}
+		asset, _ := dashboardAssets.ReadFile(name)
+		out.Header().Set("Content-Type", "image/svg+xml")
 		_, _ = out.Write(asset)
 	case "/data":
 		v, e := w.data()
@@ -271,7 +311,10 @@ func (w *Web) data() (any, error) {
 	for _, entry := range groupedHistory(groups) {
 		r := index[entry.RunID]
 		relation, chain, depth := runRelation(r, index)
-		report, _ := m.Report(r.GoalID)
+		report := ""
+		if m.reportExists(r) {
+			report, _ = m.Report(r.GoalID)
+		}
 		views = append(views, map[string]any{"kind": r.Kind, "model": r.Model, "run_id": shortRunID(r.ID), "chain_id": shortRunID(chain), "chain_depth": depth, "relation": relation, "lane": r.Lane, "goal_id": r.GoalID, "started": r.Started, "ended": r.Ended, "state": r.State, "display_state": terminalDisplay(r, r.State), "badge": badgeTone(r, r.State), "resume_count": r.ResumeCount, "exit": r.Exit, "goal": readDisplay(filepath.Join(m.store, "runs", r.ID, "goal.txt"), 12000), "report": report, "sections": reportSections(report)})
 	}
 	tails := map[string][]string{}
@@ -322,6 +365,11 @@ type webLane struct {
 // the dashboard and sends the optional iMessage. The summary line and every
 // warning omit the credential; only the link lines carry it.
 func (w *Web) Run(ctx context.Context, out, errOut io.Writer) error {
+	guard, e := w.manager.lock("web-serving")
+	if e != nil {
+		return errors.New("dashboard is already serving from this data directory")
+	}
+	defer guard.Close()
 	listener, e := net.Listen("tcp4", w.address)
 	if e != nil {
 		return errors.New("cannot listen on local web address")
@@ -345,20 +393,21 @@ func (w *Web) Run(ctx context.Context, out, errOut io.Writer) error {
 		}
 	}
 	defer func() {
-		if w.tailnet.release() != nil {
+		failed := w.tailnet.release() != nil
+		if w.background {
+			_ = saveWebFile(filepath.Join(w.manager.store, "web-stopped.json"), webStopState{ServeCleanupFailed: failed})
+		}
+		if failed {
 			fmt.Fprintln(errOut, "warning: the serve mapping was not removed; run: tailscale serve --https=443 off")
 		}
 	}()
-	if w.allowHost != "" {
-		if serve == "none" {
-			serve = "manual"
-		}
-		if e = w.manager.saveWebState(w.allowHost, serve); e != nil {
-			return e
-		}
-		defer func() { _ = w.manager.clearWebState() }()
+	if w.allowHost != "" && serve == "none" {
+		serve = "manual"
 	}
-	if e = w.writeLinks(out); e != nil {
+	if !w.background {
+		e = w.writeLinks(out)
+	}
+	if e != nil {
 		return e
 	}
 	server := &http.Server{Handler: w, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}
@@ -375,6 +424,23 @@ func (w *Web) Run(ctx context.Context, out, errOut io.Writer) error {
 			fmt.Fprintln(errOut, "warning: iMessage not sent: "+e.Error())
 		}
 	}
+	start, e := processStart(os.Getpid())
+	if e != nil {
+		return errors.New("cannot record dashboard identity")
+	}
+	state := webState{PID: os.Getpid(), ProcessStart: start, Host: w.allowHost, Serve: serve, Started: time.Now().UTC(), Address: w.address, Job: w.job, IMessage: message}
+	defer func() { _ = w.manager.clearWebFiles() }()
+	if w.background {
+		if e = saveWebFile(filepath.Join(w.manager.store, "web-access.json"), webAccess{Token: w.token, Notify: w.notify, PID: state.PID, ProcessStart: start}); e != nil {
+			return errors.New("cannot save owner-only dashboard access")
+		}
+		if e = atomicPrivate(filepath.Join(w.manager.store, "web.pid"), []byte(strconv.Itoa(state.PID)+"\n")); e != nil {
+			return e
+		}
+	}
+	if e = w.manager.saveWebState(state); e != nil {
+		return e
+	}
 	fmt.Fprintf(out, "summary: tailnet=%s serve=%s imessage=%s\n", host, serve, message)
 	select {
 	case <-ctx.Done():
@@ -390,5 +456,5 @@ func (w *Web) Run(ctx context.Context, out, errOut io.Writer) error {
 	return e
 }
 
-//go:embed index.html app.css app.js
+//go:embed index.html app.css app.js assets/brand/*.svg
 var dashboardAssets embed.FS

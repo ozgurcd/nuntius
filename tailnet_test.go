@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/color"
+	"io"
 	"io/fs"
 	"net"
 	"net/http/httptest"
@@ -15,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/liyue201/goqr"
 	"rsc.io/qr"
 )
 
@@ -221,11 +225,11 @@ func TestTailnetWebLifecycle(t *testing.T) {
 	if len(sends) != 1 || json.Unmarshal([]byte(sends[0]), &argv) != nil {
 		t.Fatalf("osascript sends: %q", sends)
 	}
-	if len(argv) != 4 || argv[0] != "-e" || argv[1] != imessageScript || argv[2] != "owner@icloud.com" || argv[3] != "nuntius dashboard (mac): https://mac.tail123.ts.net/?token="+token {
+	if len(argv) != 4 || argv[0] != "-e" || argv[1] != imessageScript || argv[2] != "owner@icloud.com" || argv[3] != "nuntius dashboard (mac): [private sign-in link]" {
 		t.Fatal("osascript argv differs from the fixed script with handle and text")
 	}
 	var status bytes.Buffer
-	if CLI(context.Background(), []string{"status", "--long"}, strings.NewReader(""), &status, &status) != 0 || !strings.Contains(status.String(), "tailnet dashboard: active (mac.tail123.ts.net, serve created)") {
+	if CLI(context.Background(), []string{"status", "--long"}, strings.NewReader(""), &status, &status) != 0 || !strings.Contains(status.String(), "tailnet=mac.tail123.ts.net serve=created imessage=sent") {
 		t.Fatalf("status --long while active: %s", status.String())
 	}
 	status.Reset()
@@ -251,7 +255,7 @@ func TestTailnetWebLifecycle(t *testing.T) {
 		t.Fatalf("serve mapping not removed on exit: %q", calls)
 	}
 	status.Reset()
-	if CLI(context.Background(), []string{"status", "--long"}, strings.NewReader(""), &status, &status) != 0 || !strings.Contains(status.String(), "tailnet dashboard: inactive") {
+	if CLI(context.Background(), []string{"status", "--long"}, strings.NewReader(""), &status, &status) != 0 || !strings.Contains(status.String(), "web: not running") {
 		t.Fatalf("status --long after exit: %s", status.String())
 	}
 }
@@ -488,29 +492,51 @@ func TestTailnetSignInQR(t *testing.T) {
 	if lines[0] != "http://127.0.0.1:8123/?token="+w.token || lines[1] != "https://mac.tail123.ts.net/?token="+w.token {
 		t.Fatal("incorrect sign-in links")
 	}
-	code, err := qr.Encode(lines[1], qr.M)
+	code, err := qr.Encode(lines[1], qr.L)
 	if err != nil {
 		t.Fatal("fixture QR encoding failed")
 	}
-	// Reconstruct every terminal module, including the four-module quiet zone.
-	if len(lines) != code.Size+12 {
+	// Decode the pixels reconstructed from half-block text, including its
+	// two-module quiet zone. Failure messages never print the private payload.
+	if len(lines) != (code.Size+5)/2+4 {
 		t.Fatal("wrong QR height")
 	}
-	for y := -4; y < code.Size+4; y++ {
-		line := strings.TrimPrefix(lines[y+7], "\x1b[30;47m")
+	im := image.NewGray(image.Rect(0, 0, (code.Size+4)*4, (code.Size+5)*4))
+	for i := range im.Pix {
+		im.Pix[i] = 255
+	}
+	for row := 0; row < (code.Size+5)/2; row++ {
+		line := strings.TrimPrefix(lines[row+3], "\x1b[30;47m")
 		line = strings.TrimSuffix(line, "\x1b[0m")
 		cells := []rune(line)
-		if len(cells) != 2*(code.Size+8) {
+		if len(cells) != code.Size+4 {
 			t.Fatal("wrong QR width")
 		}
-		for x := -4; x < code.Size+4; x++ {
-			want := ' '
-			if code.Black(x, y) {
-				want = '█'
-			}
-			if cells[2*(x+4)] != want || cells[2*(x+4)+1] != want {
-				t.Fatal("terminal QR changed encoded URL")
+		for x, c := range cells {
+			for half := 0; half < 2; half++ {
+				black := c == '█' || (half == 0 && c == '▀') || (half == 1 && c == '▄')
+				if black != code.Black(x-2, row*2+half-2) {
+					t.Fatal("terminal QR changed modules")
+				}
+				if black {
+					for dy := 0; dy < 4; dy++ {
+						for dx := 0; dx < 4; dx++ {
+							im.SetGray(x*4+dx, (row*2+half)*4+dy, color.Gray{Y: 0})
+						}
+					}
+				}
 			}
 		}
+	}
+	decoded, err := goqr.Recognize(im)
+	if err != nil || len(decoded) != 1 || string(decoded[0].Payload) != lines[1] {
+		t.Fatal("terminal QR did not decode to the sign-in link")
+	}
+	old := terminalColumns
+	terminalColumns = func(io.Writer) int { return code.Size + 3 }
+	t.Cleanup(func() { terminalColumns = old })
+	out.Reset()
+	if w.writeLinks(&out) != nil || strings.Contains(out.String(), "\x1b[30;47m") || !strings.Contains(out.String(), "QR did not fit") {
+		t.Fatal("narrow-terminal fallback missing")
 	}
 }

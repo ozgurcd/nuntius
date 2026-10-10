@@ -1,14 +1,28 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/nuntius-logo-dark.svg">
+  <img src="assets/brand/nuntius-logo.svg" alt="Nuntius Relay logo" width="96" height="96">
+</picture>
+
 # nuntius
 
-Nuntius v0.2.9 is a small local Go MCP server for a judge using Claude Desktop.
+Nuntius v0.2.10 is a small local Go MCP server for a judge using Claude Desktop.
 It starts and follows configured Claude Code, Codex and OpenCode agent pools on macOS or Linux.
 It contains no LLM and makes no network requests of its own. Agent programs may
-use the network under their existing settings.
+use the network under their existing settings. The Relay mark is dedicated to
+the public domain under [CC0 1.0](assets/brand/README.md).
 
 Register nuntius in Claude Desktop only. Do not register it in Claude Code or
 Codex or OpenCode. Coding agents must not dispatch other agents. Configure the host to ask
 the owner before every dispatch, reply, cancel and unfreeze. MCP annotations describe
 side effects; they do not enforce a click or identify who called the server.
+
+`nuntius set` lists each writable pool size and its current value/source;
+`nuntius set codex-agent-pool` reads one. Missing pools show zero from the
+default; configured pools and legacy lane counts cite the config file path.
+Only the three pool sizes are writable by `set`. Templates, lanes, max_runtime,
+reports_dir, notifications, auto_resume, oversight_path and notify_imessage
+are read-only config keys. Tailnet flags default to off and are CLI-only.
+Queries do not print template arguments, secrets or tokens, and redact paths.
 
 ## Build and check
 
@@ -17,7 +31,9 @@ govulncheck v1.8.0. CI gets Go and the checksum-verified Staticcheck build from
 the pinned Lictor composite action used by Legattus. The pure Go
 [rsc.io/qr v0.2.0](https://github.com/rsc/qr) library generates terminal QR codes,
 with no transitive modules. Go has no standard-library QR encoder; using the
-existing encoder avoids maintaining QR error correction here. Tests also need Node.js (CI pins 26.8.1) to run the dashboard
+existing encoder avoids maintaining QR error correction here. Tests use the
+pure-Go goqr decoder (test-only; LGPL-3.0) to read the rendered terminal QR back.
+It is not linked into released binaries. Tests also need Node.js (CI pins 26.8.1) to run the dashboard
 JavaScript in an offline fake DOM; no browser or npm packages are needed.
 macOS and Linux are supported; Windows is not a target.
 
@@ -434,13 +450,47 @@ Install and connect Tailscale on the Mac and iPhone with the same account.
 Enable MagicDNS and HTTPS certificates for the tailnet. See the official
 [Serve guide](https://tailscale.com/docs/features/tailscale-serve) and
 [HTTPS setup](https://tailscale.com/docs/how-to/set-up-https-certificates).
-The Mac must stay awake, connected to Tailscale, and running `nuntius web`.
+The Mac must stay awake and connected to Tailscale. The background dashboard
+survives closing Terminal; it is a transient per-user job, not a login item.
 
 One command does the rest:
 
 ```sh
-nuntius web --tailnet --notify-imessage you@icloud.com
+nuntius web start --tailnet --notify-imessage you@icloud.com
 ```
+
+`start` waits for the loopback dashboard to answer, prints one summary, the
+private sign-in link and a compact terminal QR, then exits. On macOS it uses
+the per-user launchd job `gui/<uid>/nuntius.web`, with no RunAtLoad or KeepAlive
+and your inherited umask. On Linux it starts a detached session with a private
+`web.pid` in the data directory. Standard input is closed; stdout/stderr go to
+the private `web.log`, which never receives the sign-in link or QR.
+An existing dashboard is left running; use `web start --replace` to restart it.
+
+```sh
+nuntius web status
+nuntius web link
+nuntius web link --notify
+nuntius web stop
+```
+
+`status` and `status --long` show the same credential-free dashboard line:
+running state, start time, PID/job, port, tailnet host, Serve mode and last
+iMessage result. `link` displays the current link and QR again; `--notify`
+resends to the handle used at start. `stop` sends a clean shutdown, removes
+the job and private access files, and succeeds when nothing is running.
+It does not stop agent runs. Plain `nuntius web` keeps foreground behaviour.
+
+Background access is stored only in `web-access.json` (0600) inside your
+private data directory (0700), so only your OS account can read it. It contains
+the current credential, handle and process identity; keep it private and out
+of backups or shared folders. It is removed on normal stop and replaced on
+restart. A crash can leave a stale private file; `web stop` removes it safely.
+Foreground mode keeps its credential in memory and has no retrievable file.
+
+The QR uses qr.L, one character per module column and two module rows per
+half-block line, black on white with a two-module quiet zone. If the known
+terminal width is too small, only links print with a fit warning.
 
 `--tailnet` finds the Tailscale CLI (`tailscale` on PATH, else the one inside
 `/Applications/Tailscale.app`), reads `tailscale status --json`, and requires
@@ -471,11 +521,10 @@ your own Apple ID (an email address) or phone number (E.164) through
 text are passed as arguments to a fixed AppleScript. The first run asks for
 macOS permission for your terminal to control Messages; allow it. If sending
 fails, nuntius prints a warning and the dashboard keeps running; the terminal
-link and QR code still print. The link is never written to any nuntius log,
-history or state file. The start prints one summary line without the
-credential, for example `summary: tailnet=mac.tail123.ts.net serve=created
-imessage=sent`, and `nuntius status --long` shows whether a tailnet dashboard
-is active.
+link and QR code still print. The link is never written to a nuntius log or
+history. Only the background owner-only access file described above stores its
+credential. Start prints one summary without the credential: local URL,
+tailnet host, Serve mode and iMessage result. `web status` shows the last send.
 
 Security model: the dashboard stays tailnet-only. Nuntius listens only on
 `127.0.0.1`; Tailscale Serve supplies HTTPS to tailnet devices and nuntius
@@ -608,8 +657,10 @@ regardless of the requested line count. `asked_interactively` flags a known
 AskUserQuestion or request_user_input attempt in the last 1 MiB of events,
 including refused attempts. The judge can answer with `nuntius_reply`.
 Unknown question event shapes need the owner pilot; no tool arguments or
-tool results are returned. A report from an older run with the same goal ID
-still counts as present; use distinct goal IDs for distinct tasks.
+tool results are returned. Report presence and stuck detection count only a
+regular report modified at or after the current run started. Older reports do
+not mark a redispatched goal complete or stuck. A report delivered late is
+accepted until a newer run of the same goal owns that report timestamp.
 
 Run folders are private (0700), and files are private (0600). They include the
 full prompt and raw agent stdout/stderr, which can contain sensitive material.
