@@ -28,6 +28,7 @@ type tailnet struct {
 	exe, host      string
 	optional, keep bool
 	created        bool
+	port           string
 }
 
 func findTailscale() (string, error) {
@@ -44,7 +45,7 @@ func findTailscale() (string, error) {
 func runTailscale(exe string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, exe, args...).Output()
+	out, err := ensureCommand(ctx, exe, args...)
 	if err != nil {
 		return nil, errors.New("tailscale " + strings.Join(args, " ") + " failed")
 	}
@@ -110,7 +111,7 @@ func servePlan(b []byte, host, port string) (string, error) {
 		}
 		AllowFunnel map[string]bool
 	}
-	if json.Unmarshal(b, &config) != nil {
+	if len(b) > 65536 || uniqueJSON(b) != nil || strictJSON(b, &config) != nil {
 		return "", errors.New("the tailscale serve status is unreadable; run: tailscale serve status")
 	}
 	funnel := []string{}
@@ -128,8 +129,19 @@ func servePlan(b []byte, host, port string) (string, error) {
 		return "", fmt.Errorf("tailscale Funnel is on for this Mac and nuntius refuses tailnet mode; turn Funnel off with: tailscale funnel --https=%s off", p)
 	}
 	tcp, tcpOK := config.TCP["443"]
+	for key := range config.TCP {
+		n, err := strconv.Atoi(key)
+		if err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != key {
+			return "", errors.New("noncanonical Serve port")
+		}
+	}
 	webOn443 := 0
 	for key := range config.Web {
+		_, p, err := net.SplitHostPort(key)
+		n, e := strconv.Atoi(p)
+		if err != nil || e != nil || n < 1 || n > 65535 || strconv.Itoa(n) != p {
+			return "", errors.New("noncanonical Serve endpoint")
+		}
 		if strings.HasSuffix(key, ":443") {
 			webOn443++
 		}
@@ -149,6 +161,7 @@ func servePlan(b []byte, host, port string) (string, error) {
 // ensure makes https:443 proxy to the dashboard port, reusing an identical
 // mapping, and confirms a new one with serve status before claiming it.
 func (t *tailnet) ensure(port string) (string, error) {
+	t.port = port
 	out, err := runTailscale(t.exe, "serve", "status", "--json")
 	if err != nil {
 		return "", errors.New("the tailscale serve status is unavailable; run: tailscale serve status")
@@ -175,7 +188,21 @@ func (t *tailnet) release() error {
 	if t == nil || !t.created || t.keep {
 		return nil
 	}
-	_, err := runTailscale(t.exe, "serve", "--https=443", "off")
+	out, err := runTailscale(t.exe, "serve", "status", "--json")
+	if err != nil {
+		return errors.New("Serve cleanup unavailable")
+	}
+	state, err := servePlan(out, t.host, t.port)
+	if err != nil {
+		return errors.New("Serve cleanup refused")
+	}
+	if state == "absent" {
+		return nil
+	}
+	if state != "reused" {
+		return errors.New("Serve cleanup refused")
+	}
+	_, err = runTailscale(t.exe, "serve", "--https=443", "off")
 	return err
 }
 

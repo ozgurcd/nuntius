@@ -19,7 +19,7 @@ set `NUNTIUS_DATA_DIR` in your shell, set the same variable in the app's
 Set `NUNTIUS_CONFIG` there too if you override the config file in your shell.
 Use `nuntius paths` locally to check the selected paths.
 
-Restart Desktop after saving. Set dispatch, reply, cancel and unfreeze to ask each time.
+Restart Desktop after saving. Set dispatch, reply, cancel, unfreeze and web ensure to ask each time.
 Ask the judge for status first, then approve one small read-only pilot goal.
 Check the first session ID, resume behavior, report and audit locally without
 copying raw agent logs into chat.
@@ -29,11 +29,19 @@ copying raw agent logs into chat.
 The tools are `nuntius_status`, `nuntius_history`, `nuntius_dispatch`, `nuntius_reply`,
 `nuntius_tail`, `nuntius_report`, `nuntius_cancel`, `nuntius_freeze`,
 `nuntius_unfreeze`, `nuntius_owner_notes`, `nuntius_owner_notes_ack`,
-`nuntius_signals` and `nuntius_signals_ack`. See [PROJECT_SPEC.md](../PROJECT_SPEC.md) for
+`nuntius_signals`, `nuntius_signals_ack` and `nuntius_web_ensure`. See [PROJECT_SPEC.md](../PROJECT_SPEC.md) for
 arguments, limits and failure behavior. The transport uses newline-delimited
 JSON-RPC over stdio and MCP 2025-11-25. Stdout carries protocol messages only.
 References: [stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 and [MCP tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
+
+`nuntius_web_ensure({})` is judge-only and unreleased. It accepts only an empty
+object (at most 4096 bytes), with no caller-selected path, host, port, recipient,
+PID or command. It is state-changing and idempotent; host approval remains Ask
+for every invocation. Refusals return stable state/reason codes. An unavailable
+owner MCP cannot be replaced by dispatching a privileged coding task.
+See [dashboard recovery](dashboard.md#judge-only-dashboard-recovery) for results
+and [security notes](security.md) for boundaries.
 
 An ended run without a report has status `ended_no_report`. Its tail returns
 the final assistant message as one text entry, up to 8 KiB after redaction,

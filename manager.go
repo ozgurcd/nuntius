@@ -88,6 +88,7 @@ type Manager struct {
 	watcher      sync.WaitGroup
 	recovery     bool
 	launcher     *jobLauncher
+	webEnsure    *webEnsureRuntime // nil uses owner-process adapters; tests use offline fakes.
 }
 
 func NewManager(c Config, store string) (*Manager, error) {

@@ -423,6 +423,18 @@ func (w *Web) Run(ctx context.Context, out, errOut io.Writer) error {
 		}
 	}
 	defer func() {
+		// An owner ensure may have repaired Serve while this listener stayed up.
+		// Its private identity-bound ownership record lets this process clean only
+		// the still-exact mapping, including when the initial mapping was reused.
+		var owner webServeOwner
+		if w.tailnet != nil && readWebFile(filepath.Join(w.manager.store, "web-serve.json"), &owner) == nil {
+			start, err := processStart(os.Getpid())
+			if err == nil && owner.PID == os.Getpid() && owner.ProcessStart == start && owner.Host == w.allowHost && owner.Port == port {
+				w.tailnet.created = true
+				w.tailnet.port = port
+			}
+		}
+		_ = os.Remove(filepath.Join(w.manager.store, "web-serve.json"))
 		failed := w.tailnet.release() != nil
 		if w.background {
 			_ = saveWebFile(filepath.Join(w.manager.store, "web-stopped.json"), webStopState{ServeCleanupFailed: failed})

@@ -200,6 +200,16 @@ The lane remains locked throughout the transition. Resumes never auto-resume.
 Protocol 2025-11-25 over newline-delimited JSON-RPC. Initialize and the initialized
 notification precede tools. The tools are:
 
+- nuntius_web_ensure(): unreleased judge-only empty-object operation. Serialized
+  with web lifecycle control; require Running Tailscale, exact certificate/DNS
+  name, no Funnel and absent/exact HTTPS 443 Serve. Preserve healthy web and its
+  grant, repair absent mapping or start required-tailnet web; allow one graceful
+  replacement of an unhealthy identity-verified process, never force or duplicates.
+  State-only result: local, operation, tailnet, notification, sign_in_required,
+  remote_client (unknown), reason. No paths, commands, recipients, links, grants
+  or file content. Two-minute limit; private configured new-grant notification
+  only, no resend. Host Ask is required; annotations do not enforce approval.
+
 - nuntius_status(): an object with frozen, freeze time/reason and lanes. Each lane
   has state idle/running/ended/ended_no_report, goal/run IDs, start, elapsed,
   last event time and age, exit, outcome and report existence.

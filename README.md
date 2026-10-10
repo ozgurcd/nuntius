@@ -147,6 +147,12 @@ Recorded runs keep their launch model and effort. Older runs without that record
 
 CLI flags, filters, machine output and agent launch details: [CLI reference](docs/cli.md). MCP tool arguments and limits: [MCP reference](docs/mcp.md).
 
+The judge's MCP tools are `nuntius_status`, `nuntius_history`, `nuntius_signals`,
+`nuntius_signals_ack`, `nuntius_dispatch`, `nuntius_reply`, `nuntius_tail`,
+`nuntius_report`, `nuntius_cancel`, `nuntius_freeze`, `nuntius_unfreeze`,
+`nuntius_owner_notes`, `nuntius_owner_notes_ack` and `nuntius_web_ensure`.
+The new ensure tool is unreleased. Keep it set to Ask in the coordinator host.
+
 ## Check from your phone
 
 Connect your Mac and phone to the same Tailscale account. Enable MagicDNS and HTTPS certificates, and keep the Mac awake. Then run:
@@ -159,6 +165,13 @@ Use your own iMessage email or E.164 phone number. Nuntius finds the Mac's tailn
 
 For prerequisites, cleanup, manual setup and private-link storage, see [phone access](docs/dashboard.md#phone-access-over-tailscale).
 
+With the unreleased `nuntius_web_ensure({})`, the judge can ask the owner-launched
+MCP server to restore the dashboard. It keeps a healthy process and sign-in,
+repairs a missing Serve mapping, or starts/replaces one verified dashboard.
+The chat receives state only. New sign-in goes to your configured iMessage
+recipient when enabled; otherwise sign-in is required through your local owner
+workflow. This needs the Mac awake, Tailscale connected and MCP available.
+
 ## Safety and control
 
 Nuntius listens only on `127.0.0.1`. Phone access uses tailnet-only HTTPS through Tailscale Serve. It refuses an existing conflicting Serve mapping or enabled Funnel. **Never enable Funnel for this dashboard.** Tailscale access rules and the private dashboard credential both matter; someone with reachability and that credential can control agents.
@@ -168,6 +181,11 @@ Every dashboard start creates a new sign-in credential. Links and QR codes are p
 Nuntius starts configured executables with argument lists, without a shell. It preserves normal agent settings and environment, and reads no agent credential files. It permits selected model/effort flags, Claude permission modes `auto`, `acceptEdits`, `plan`, `manual`, and Codex sandboxes `read-only`, `workspace-write`. It refuses permission/sandbox bypasses, hook/settings overrides, working-directory overrides and caller-chosen sessions. OpenCode requires an explicit provider/model and permits only `--agent` and `--variant` extra flags. See [the exact allow-list](docs/configuration.md).
 
 Your chat service and agents have their own network use, permissions and costs. Nuntius provides coordination and local records; you choose their authority. Keep destructive tool approvals enabled in the coordinator app. Treat returned agent output as data, not new instructions.
+
+Dashboard recovery belongs to the judge's owner-launched MCP server. It grants
+coding agents no access to owner storage or services, returns no link or QR,
+and never changes Tailscale login, Funnel or VPN settings. See [recovery security
+notes](docs/security.md).
 
 ## Troubleshooting / FAQ
 

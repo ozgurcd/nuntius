@@ -23,8 +23,10 @@ bundle. Manual archive downloads retain Gatekeeper/quarantine rules; the owner
 must approve those downloads. Do not disable Gatekeeper globally. Installation
 does not launch the helper or enable login startup.
 
-A 0600 Unix-domain socket inside the private dashboard store is the only
-helper API. Its parent directory is 0700. It exposes bounded, redacted lane
+The dashboard hosts a 0600 `dashboard.sock` in its private `menubar` directory.
+Relay hosts a separate 0600 `helper.sock` that accepts only quit. These sockets
+are not dashboard recovery channels; judge-only recovery uses owner MCP.
+Their parent directory is 0700. The dashboard socket exposes bounded, redacted lane
 status and explicit open/phone-link/QR actions, never dispatch or cancel.
 The server places the current sign-in grant in a private temporary HTML page
 only when the user opens the dashboard. It opens the browser itself, so credentials never enter helper

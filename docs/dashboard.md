@@ -1,5 +1,54 @@
 ## Local oversight dashboard
 
+### Judge-only dashboard recovery
+
+Unreleased: `nuntius_web_ensure({})` runs inside the existing owner-launched
+stdio MCP server. Register that server for the judge only and set this tool to
+Ask for each call. It takes no configuration or executable arguments.
+
+The operation uses the dashboard lifecycle lock shared with CLI/helper start
+and stop. Busy returns immediately. It distinguishes missing state from
+unreadable, malformed or linked state, checks PID plus kernel start identity,
+and preflights Tailscale with fixed, bounded commands. Running, an exact
+MagicDNS name in the certificate domains, no Funnel on any port and an absent
+or exact HTTPS 443 mapping are required. Foreign or unavailable configuration
+is refused; the tool never logs in, resets, installs or changes VPN settings.
+
+A healthy dashboard with the exact host policy keeps its process and grant.
+A missing mapping is repaired without restarting. An absent dashboard starts
+in required tailnet mode, without loopback fallback. One identity-verified
+unhealthy or incompatible process may be replaced gracefully. An uncertain
+stop remains pending; no force-kill, port-based kill or duplicate start occurs.
+The absent dashboard uses the fixed default `127.0.0.1:8123`; a validated prior
+dashboard record retains its owner-selected loopback port.
+
+Readiness uses a local authenticated `/data` request with the credential only
+in its header and the exact tailnet Host. Redirects, environment proxies and
+response-body logging are disabled. Mapping writes are read back. Repairs
+record private identity-bound ownership, and cleanup reads Serve again before
+removing an exact mapping. External Tailscale changes cannot be made atomic;
+readback failure stays visible and foreign mappings are left alone.
+
+The result fields are `local` (unknown/ready/pending), `operation`
+(none/started/restarted/serve_repaired), `tailnet` (unknown/absent/ready),
+`notification` (disabled/sent/failed), `sign_in_required` (boolean),
+`remote_client` (always unknown), and a stable `reason`. No private paths,
+recipient, token, link, QR, command output or file content are returned.
+Local readiness and exact Serve configuration do not prove phone connectivity.
+
+After a new grant, the enabled configured iMessage recipient receives one
+private sign-in link through the fixed Messages stdin transport. Healthy reuse
+does not resend. Disabled or failed delivery leaves the healthy dashboard up
+and reports that sign-in is required. There is no chat-link fallback or resend
+tool. The operation is bounded to two minutes, commands to five seconds,
+probes to two seconds and notification to ten seconds, without background retries.
+
+The Mac must be awake and logged in, and the owner MCP and Tailscale must be
+available. This adds no KeepAlive, login item, watchdog, helper recovery socket
+or unauthenticated HTTP recovery route. Freeze and agent goal controls are
+unchanged. Offline tests use temporary state and fake transports; owner phone
+recovery and authenticated access remain separate pilot checks.
+
 ```sh
 nuntius web
 ```
@@ -82,7 +131,7 @@ status --json`. If `https:443` already proxies to this dashboard's loopback
 port, it reuses that mapping and leaves it alone. Otherwise it runs
 `tailscale serve --bg --https=443 localhost:PORT` with the dashboard's port and
 confirms the mapping with serve status. On a normal exit (Ctrl-C or SIGTERM)
-it removes only a mapping it created in this run with
+it re-reads Serve and removes only a still-exact mapping it created in this run with
 `tailscale serve --https=443 off`; `--tailnet-keep` leaves it in place. If 443
 serves anything else, nuntius does not touch it and prints the exact
 `tailscale serve --https=443 off` command you can run yourself. If Funnel is on

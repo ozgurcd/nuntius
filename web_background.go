@@ -162,7 +162,8 @@ func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.
 	replace := wf.Bool("replace", false, "restart background dashboard")
 	noMenubar := wf.Bool("no-menubar", false, "skip menu bar helper")
 	job := wf.String("job", "", "internal background job")
-	if wf.Parse(args) != nil || len(wf.Args()) != 0 || (!*tnMode && (*optional || *keep)) || (*notify != "" && !*tnMode && len(hosts) == 0) || (*replace && action != "start") || (*job != "" && action != "__background") {
+	ensure := wf.Bool("ensure", false, "internal owner recovery")
+	if wf.Parse(args) != nil || len(wf.Args()) != 0 || (!*tnMode && (*optional || *keep)) || (*notify != "" && !*tnMode && len(hosts) == 0) || (*replace && action != "start") || (*job != "" && action != "__background") || (*ensure && (action != "__background" || !*tnMode || *optional || *notify != "" || *keep)) {
 		fmt.Fprintln(errOut, "invalid web flags")
 		return 2
 	}
@@ -254,6 +255,9 @@ func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.
 	if *notify != "" {
 		w.notify = *notify
 	}
+	if *ensure {
+		w.notify = ""
+	} // Parent sends only after authenticated verification.
 	if *tnMode {
 		exe, e := findTailscale()
 		host := ""
@@ -302,6 +306,23 @@ func webStatusLine(state *webState) string {
 }
 
 func (m *Manager) startWeb(ctx context.Context, args []string) (result error) {
+	ensuring := false
+	for _, arg := range args {
+		if arg == "--ensure" {
+			ensuring = true
+		}
+	}
+	launchctl := func(args ...string) ([]byte, error) {
+		if ensuring {
+			b, err := ensureCommand(ctx, "launchctl", args...)
+			var exit *exec.ExitError
+			if errors.As(err, &exit) && exit.ExitCode() == 113 {
+				return nil, errJobAbsent
+			}
+			return b, err
+		}
+		return webLaunchctl(args...)
+	}
 	dir := filepath.Join(m.store, "web-launch")
 	if err := privateDir(dir); err != nil {
 		return err
@@ -314,7 +335,7 @@ func (m *Manager) startWeb(ctx context.Context, args []string) (result error) {
 	}
 	launched := false
 	defer func() {
-		if result != nil && launched {
+		if result != nil && launched && !ensuring {
 			cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if err := m.stopWeb(cleanup); err != nil {
@@ -324,7 +345,7 @@ func (m *Manager) startWeb(ctx context.Context, args []string) (result error) {
 	}()
 	if webPlatform == "darwin" {
 		target := fmt.Sprintf("gui/%d/nuntius.web", os.Getuid())
-		if _, err := webLaunchctl("print", target); !errors.Is(err, errJobAbsent) {
+		if _, err := launchctl("print", target); !errors.Is(err, errJobAbsent) {
 			if err == nil {
 				return errors.New("web: launchd job already exists; no second job started")
 			}
@@ -366,11 +387,11 @@ func (m *Manager) startWeb(ctx context.Context, args []string) (result error) {
 		if err = saveWebFile(filepath.Join(dir, "process.json"), webState{Job: domain + "/nuntius.web"}); err != nil {
 			return err
 		}
-		if _, err = webLaunchctl("bootstrap", domain, path); err != nil {
+		if _, err = launchctl("bootstrap", domain, path); err != nil {
 			return err
 		}
 		launched = true
-		if _, err = webLaunchctl("kickstart", "-p", domain+"/nuntius.web"); err != nil {
+		if _, err = launchctl("kickstart", "-p", domain+"/nuntius.web"); err != nil {
 			return err
 		}
 	} else {

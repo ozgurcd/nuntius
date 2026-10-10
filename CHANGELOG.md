@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Add judge-only stdio `nuntius_web_ensure` with a closed empty schema,
+  state-changing/idempotent annotations and bounded, allowlisted state results.
+- Serialize dashboard recovery with the existing lifecycle lock; preserve
+  healthy process/grant, repair missing Serve, or start/replace one verified
+  dashboard with required tailnet policy and graceful-only shutdown.
+- Bound fixed-argv Tailscale preflight/output, validate unambiguous Serve JSON,
+  refuse foreign 443/Funnel, read back writes and recheck exact ownership before
+  cleanup. Record identity-bound mapping repairs without grant rotation.
+- Probe authenticated readiness with header-only grants, exact Host, no proxy,
+  redirect or body logging. Send new grants only to enabled configured Messages
+  recipients on stdin, never in MCP results, audit, argv or environment.
+- Add fake-only recovery, refusal, concurrency, cancellation, transport, private
+  mode, request-guard and leakage tests; document limits and owner phone pilot.
+
 - Classify complete OpenCode terminal turns without a current report as
   report_delivery_failed / ended_no_report; suppress automatic crash recovery
   while preserving unknown exit attribution and the existing recovery limit.

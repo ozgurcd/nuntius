@@ -7,6 +7,21 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+The judge can use `nuntius_web_ensure` to ask the owner-launched MCP server to
+restore phone dashboard access. Set this tool to Ask for each call in the host.
+A healthy dashboard keeps its sign-in; a missing Tailscale Serve mapping is
+repaired without restarting. A missing or verified unhealthy dashboard can
+start again with required tailnet access. Unsafe or unavailable state is refused.
+The chat receives only status. A new sign-in link goes privately to your enabled,
+configured iMessage recipient; failed or disabled delivery leaves web running
+and reports that sign-in is needed. Existing sign-in is not resent.
+
+Keep the Mac awake and Tailscale connected. This does not add automatic login
+startup, restart supervision or a recovery HTTP endpoint, and does not change
+Funnel, VPN settings or coding-agent permissions. It cannot recover a stopped
+owner MCP. This tool is awaiting owner-approved release and installation;
+no upgrade or restart is automatic.
+
 OpenCode work that ends its final turn but fails to write the report now shows
 `Ended · report missing` with amber attention. Read its final answer and parked
 questions in the tail. Nuntius does not replay that work automatically or treat
