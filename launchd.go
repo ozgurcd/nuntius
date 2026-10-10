@@ -17,6 +17,7 @@ import (
 )
 
 var errJobAbsent = errors.New("launchd job absent")
+var errBeforeKickstart = errors.New("launchd start was not attempted")
 
 type jobLauncher struct {
 	domain string
@@ -52,7 +53,13 @@ func plistString(s string) string {
 	return "<string>" + b.String() + "</string>"
 }
 
-func (j *jobLauncher) start(dir string, lane Lane, session string) error {
+func (j *jobLauncher) start(dir string, lane Lane, session string) (err error) {
+	kickstarted := false
+	defer func() {
+		if err != nil && !kickstarted {
+			err = errors.Join(errBeforeKickstart, err)
+		}
+	}()
 	r, err := loadRun(dir, filepath.Base(dir))
 	if err != nil || r == nil {
 		return errors.New("launchd run unavailable")
@@ -99,6 +106,7 @@ func (j *jobLauncher) start(dir string, lane Lane, session string) error {
 	if _, err = j.call("bootstrap", j.domain, path); err != nil {
 		return err
 	}
+	kickstarted = true
 	if _, err = j.call("kickstart", "-p", j.domain+"/"+r.LaunchdLabel); err != nil {
 		return err
 	}
@@ -207,7 +215,8 @@ func (m *Manager) startAgent(dir string, lane Lane, session string, input, stdou
 	if m.launcher == nil {
 		return detachAgent(dir, lane, session, input, stdout, stderr, lock)
 	}
-	if err := m.launcher.start(dir, lane, session); err == nil {
+	launchErr := m.launcher.start(dir, lane, session)
+	if launchErr == nil {
 		return nil
 	}
 	r, err := loadRun(dir, filepath.Base(dir))
@@ -216,8 +225,14 @@ func (m *Manager) startAgent(dir string, lane Lane, session string, input, stdou
 	}
 	// If a failed start partially launched the job, remove it safely before
 	// dispatching the fallback. Never duplicate an agent on an ambiguous failure.
-	if err = m.cleanupJob(r); err != nil {
+	cleanupErr := m.cleanupJob(r)
+	if cleanupErr != nil && !errors.Is(launchErr, errBeforeKickstart) {
 		return errors.New("launchd fallback cleanup unavailable; goal remains recorded")
+	}
+	// No kickstart was attempted, so our job cannot have started an agent.
+	// Keep its recorded label for later cleanup if launchctl itself is absent.
+	if cleanupErr != nil {
+		_ = m.audit("launchd_cleanup", r.Lane, r.GoalID, r.SHA256, "failed")
 	}
 	for deadline := time.Now().Add(5 * time.Second); sameProcess(*r); {
 		if time.Now().After(deadline) {
@@ -225,7 +240,10 @@ func (m *Manager) startAgent(dir string, lane Lane, session string, input, stdou
 		}
 		time.Sleep(time.Millisecond)
 	}
-	r.PID, r.ProcessStart, r.LaunchdLabel = 0, "", ""
+	r.PID, r.ProcessStart = 0, ""
+	if cleanupErr == nil {
+		r.LaunchdLabel = ""
+	}
 	r.LaunchdCleaned = false
 	r.LaunchFallback = true
 	if err = saveAt(dir, r); err != nil {

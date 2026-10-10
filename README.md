@@ -224,6 +224,8 @@ Linux keeps the double-fork/session start used in v0.2.3.
   event and `launch_fallback` status flag warn that app-quit survival is unavailable.
   If a partial start cannot be safely identified and removed, the recorded goal
   stays pending rather than starting a duplicate or killing an unknown process.
+  Before any start is attempted, an unavailable launchctl still permits fallback;
+  an unconfirmed inactive job label remains recorded for cleanup retries.
 - Nuntius upgrade: replacing/removing the nuntius executable does not affect
   an already running agent. Nuntius does not reinstall or restart owner apps.
 - Reboot, power loss or agent crash: the process can end, but the durable goal

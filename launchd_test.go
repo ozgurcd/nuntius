@@ -26,7 +26,7 @@ func (f *fakeLaunchctl) call(args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, strings.Join(args, " "))
-	if args[0] == f.fail {
+	if args[0] == f.fail || f.fail == "all" {
 		return nil, errors.New("fixture launchctl failure")
 	}
 	switch args[0] {
@@ -155,7 +155,7 @@ func TestLaunchdRunLifecycle(t *testing.T) {
 }
 
 func TestLaunchdFallback(t *testing.T) {
-	for _, step := range []string{"bootstrap", "kickstart"} {
+	for _, step := range []string{"bootstrap", "kickstart", "all"} {
 		t.Run(step, func(t *testing.T) {
 			m, f, store := launchdManager(t, step)
 			id, err := m.Dispatch("codex", "LAUNCHD-FALLBACK", "wait")
@@ -163,7 +163,7 @@ func TestLaunchdFallback(t *testing.T) {
 				t.Fatal(err)
 			}
 			r, _ := loadRun(filepath.Join(store, "runs", id), id)
-			if r == nil || !r.LaunchFallback || r.LaunchdLabel != "" || !sameProcess(*r) {
+			if r == nil || !r.LaunchFallback || (step != "all" && r.LaunchdLabel != "") || !sameProcess(*r) {
 				t.Fatal("fallback unavailable")
 			}
 			rows, err := m.Status()

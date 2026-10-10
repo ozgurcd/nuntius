@@ -95,6 +95,8 @@ Pending job PIDs remain busy and unsignalable until bootstrap supplies a start
 identity. A launchctl failure safely removes any partial job and uses detached
 start, adding a fixed launchd_fallback event and launch_fallback status flag.
 An unverifiable partial job prevents duplicate fallback; the goal remains recorded.
+Failures before kickstart still dispatch through detached start when launchctl
+cannot be queried; the inactive job label remains recorded for cleanup retries.
 All standard descriptors are files; there is no controlling terminal. No
 bootstrap, wrapper, watchdog, daemon, service or login item remains while the
 agent runs. Server shutdown leaves runs alive. Every signal requires a live
