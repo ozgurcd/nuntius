@@ -13,7 +13,9 @@ const cases = [
  [{state:'ended',display_state:'Ended · resumed 1/2'},'finished'],
  [{state:'ended_no_report',display_state:'Ended · resumed 1/2',badge:'amber'},'failed'],
  [{state:'running',display_state:'Running · resumed 1/2'},'running'],
- [{state:'ended',display_state:'Failed · resumed 1/2'},'failed']
+ [{state:'ended',display_state:'Failed · resumed 1/2'},'failed'],
+ [{state:'ended_no_report',outcome:'report_delivery_failed',display_state:'Ended · report missing',badge:'amber'},'attention'],
+ [{state:'ended_no_report',outcome:'report_delivery_failed',display_state:'Ended · report missing · resumed 1/2',badge:'amber'},'attention']
 ];
 for (const [s,want] of cases) {
  const value = ctx.laneIndicator(s);

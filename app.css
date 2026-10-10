@@ -24,6 +24,7 @@
 .indicator-running { background: var(--green); }
 .indicator-finished { background: #6178df; }
 .indicator-stuck { background: var(--amber); }
+.indicator-attention { background: var(--amber); }
 .indicator-failed { background: var(--red); }
 .lane-detail { margin-top: 1rem; }
 .live-tail { max-height: 24rem; overflow: auto; }

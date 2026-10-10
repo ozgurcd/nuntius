@@ -289,6 +289,7 @@ function fillFilter(select, values, label) {
 }
 function laneIndicator(s) {
   const state = (s.display_state || s.state || 'idle').toLowerCase();
+  if (s.state !== 'running' && s.outcome === 'report_delivery_failed') return {kind:'attention', label:'Finished with attention: report missing'};
   if (s.exit > 0 || s.badge === 'red' || s.state === 'ended_no_report' || /^(failed|interrupted|cancelled|timed_out|timed out|ended_no_report)/.test(state)) return {kind:'failed', label:'Failed, interrupted or missing report'};
   if (state === 'stuck?' || (s.state === 'running' && (s.last_event_age_seconds > 900 || (!s.last_event && s.elapsed_seconds > 900)))) return {kind:'stuck', label:'Stuck: no recent progress'};
   if (/^(ended|completed)/.test(state)) return {kind:'finished', label:'Finished'};
