@@ -171,7 +171,15 @@ func (t *tailnet) ensure(port string) (string, error) {
 		return state, err
 	}
 	if _, err = runTailscale(t.exe, "serve", "--bg", "--https=443", "localhost:"+port); err != nil {
-		return "", errors.New("tailscale serve could not be set up; run: tailscale serve --bg --https=443 localhost:" + port)
+		setupErr := errors.New("tailscale serve could not be set up; run: tailscale serve --bg --https=443 localhost:" + port)
+		// The command may apply its mapping before failing. Reuse release's
+		// readback and ownership checks, even when keep was requested: a
+		// failed creation must not leave a forwarding rule behind.
+		attempt := &tailnet{exe: t.exe, host: t.host, port: port, created: true}
+		if cleanupErr := attempt.release(); cleanupErr != nil {
+			return "", errors.Join(setupErr, errors.New("Serve cleanup failed"), cleanupErr)
+		}
+		return "", setupErr
 	}
 	t.created = true
 	if out, err = runTailscale(t.exe, "serve", "status", "--json"); err == nil {

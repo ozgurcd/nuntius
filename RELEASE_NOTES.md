@@ -7,6 +7,13 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+If dashboard startup fails after creating its Tailscale HTTPS mapping, Nuntius
+now removes that mapping only when it still points exactly to its own port.
+Foreign or uncertain mappings stay untouched, and cleanup failures are reported.
+Recovery safety checks have additional offline regression coverage. Judge-only
+recovery relies on MCP registration and OS user authority, not authentication
+of the stdio caller. This fix changes no lane permissions or owner settings.
+
 After first sign-in, bookmark the cleaned dashboard address on your iPhone.
 Sign-in is remembered in that browser profile for seven days, so tab discard
 and reload no longer require finding the original message. Use Sign out in

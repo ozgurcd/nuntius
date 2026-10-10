@@ -52,6 +52,13 @@ each call. MCP annotations are descriptive; they provide no caller identity
 or approval enforcement. Never register the server in coding-agent lanes or
 relax their sandbox, storage or IPC permissions.
 
+"Judge-only" ensure is enforced by MCP registration and OS user authority,
+not by caller authentication. Any stdio client that can launch a separate
+server with access to the owner configuration, store and system transports
+can call ensure. Same-user file modes do not isolate an unsandboxed lane.
+Host Ask approval applies in the registered host; it is not a server-side
+identity check. Actual lane access restrictions need separate owner validation.
+
 The request is an empty object. No executable, argv, path, address, recipient,
 PID, grant or Tailscale setting is caller-selectable. Store/config come from
 the owner process. The default listener is loopback-only, and a validated prior

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Clean up an exact owned HTTPS mapping after a partially failed child Serve
+  create, even with --tailnet-keep; preserve foreign or uncertain mappings and
+  report cleanup failures alongside setup failure.
+- Add offline regressions for recorded loopback state, graceful signaling,
+  last-moment process identity, final tailnet/Serve readback, redirect refusal,
+  no-store readiness and exact private state mode. Clarify that judge-only
+  ensure relies on registration and OS authority rather than caller identity.
+
 - Remember dashboard sign-in per browser origin for seven days without renewal
   on reload, so phone bookmarks survive tab discard. Keep header-only API auth,
   exact Host/Origin checks and per-start grant revocation.

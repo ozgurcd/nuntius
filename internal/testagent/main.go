@@ -39,6 +39,9 @@ func fakeTailscale() {
 		}
 		os.Stdout.Write(b)
 	case args == "serve status --json":
+		if _, err := os.Stat(filepath.Join(dir, "serve-status-fail")); err == nil {
+			os.Exit(1)
+		}
 		b, err := os.ReadFile(filepath.Join(dir, "serve.json"))
 		if err != nil {
 			b = []byte("null\n")
@@ -59,6 +62,15 @@ func fakeTailscale() {
 		config := map[string]any{"TCP": map[string]any{"443": map[string]any{"HTTPS": true}}, "Web": map[string]any{host + ":443": map[string]any{"Handlers": map[string]any{"/": map[string]any{"Proxy": "http://127.0.0.1:" + port}}}}}
 		b, _ = json.Marshal(config)
 		if err := os.WriteFile(filepath.Join(dir, "serve.json"), b, 0600); err != nil {
+			os.Exit(1)
+		}
+		if partial, err := os.ReadFile(filepath.Join(dir, "serve-partial-fail")); err == nil {
+			if len(partial) > 0 {
+				_ = os.WriteFile(filepath.Join(dir, "serve.json"), partial, 0600)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "serve-status-fail-after-create")); err == nil {
+				_ = os.WriteFile(filepath.Join(dir, "serve-status-fail"), nil, 0600)
+			}
 			os.Exit(1)
 		}
 		fmt.Println("Available within your tailnet:")

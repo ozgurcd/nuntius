@@ -48,6 +48,14 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	_ = os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// All external dashboard transports resolve to compiled offline fakes,
+	// including when a regression removes a request or lifecycle guard.
+	for _, name := range []string{"tailscale", "osascript"} {
+		if os.Symlink(fakeBinary, filepath.Join(dir, name)) != nil {
+			os.Exit(1)
+		}
+	}
+	tailscaleAppPath = filepath.Join(dir, "absent-app")
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
