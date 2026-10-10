@@ -183,6 +183,9 @@ func TestLaunchdFallback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Detached bootstrap records its identity before exec. Require the
+			// fake agent to have reached its wait loop before judging that PID.
+			waitReady(t, m, "codex")
 			r, _ := loadRun(filepath.Join(store, "runs", id), id)
 			if r == nil || !r.LaunchFallback || (step != "all" && r.LaunchdLabel != "") || !sameProcess(*r) {
 				t.Fatal("fallback unavailable")
