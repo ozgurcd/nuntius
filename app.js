@@ -165,7 +165,7 @@ function makeCard(s) {
 }
 function updateCard(v, s) {
   if (busy(v.root)) return;
-  setText(v.kind, s.kind || 'Agent');
+  setText(v.kind, [s.kind || 'Agent', s.model].filter(Boolean).join(' · '));
   stateBadge(v.badge, s.display_state || s.state);
   v.goal.className = s.goal_id ? 'goal' : 'goal goal-placeholder';
   setText(v.goal, s.goal_id || 'Ready for the next goal');
@@ -220,7 +220,7 @@ function makeRun(r) {
   return view;
 }
 function updateRunContent(v, r) {
-  setText(v.chain, r.relation || 'first run');
+  setText(v.chain, [r.relation || 'first run', r.kind, r.model].filter(Boolean).join(' · '));
   for (const name of ['QUESTIONS', 'DECISIONS']) setText(v.sections[name], r.sections[name] || 'None recorded.');
   setText(v.goalText, r.goal || 'No goal text available.');
   setText(v.report, r.report || 'No report available.');

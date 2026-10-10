@@ -13,6 +13,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "run" {
+		opencode()
+		return
+	}
 	// Like Codex, exec-only sandbox options are not resume options.
 	if len(os.Args) > 1 && os.Args[1] == "exec" {
 		resumed := false
@@ -85,6 +89,68 @@ func main() {
 		<-ch
 		return
 	}
+	if strings.Contains(mode, "exit-seven") {
+		os.Exit(7)
+	}
+}
+
+func opencode() {
+	args := os.Args[1:]
+	if len(args) < 5 || args[0] != "run" || args[1] != "--format" || args[2] != "json" || args[3] != "--model" || args[4] != "opencode/fixture-free" {
+		os.Exit(2)
+	}
+	for i := 5; i < len(args); i++ {
+		key, _, eq := strings.Cut(args[i], "=")
+		if key != "--session" && key != "--agent" && key != "--variant" {
+			os.Exit(2)
+		}
+		if !eq {
+			i++
+			if i >= len(args) {
+				os.Exit(2)
+			}
+		}
+	}
+	b, _ := io.ReadAll(os.Stdin)
+	mode := string(b)
+	emit := func(kind string, part any) {
+		v := map[string]any{"type": kind, "timestamp": time.Now().UnixMilli(), "part": part}
+		if !strings.Contains(mode, "no-session") {
+			v["sessionID"] = "ses_fixture"
+		}
+		data, _ := json.Marshal(v)
+		fmt.Println(string(data))
+	}
+	text := func(s string) { emit("text", map[string]any{"type": "text", "text": s}) }
+	data, _ := json.Marshal(args)
+	text("args=" + string(data))
+	cwd, _ := os.Getwd()
+	text("cwd=" + cwd)
+	emit("step_start", map[string]any{"type": "step-start"})
+	emit("tool_use", map[string]any{"type": "tool", "tool": "bash", "callID": "fixture-call", "state": map[string]any{"status": "running", "input": map[string]any{"command": "fixture command"}}})
+	if strings.Contains(mode, "ignore-int") {
+		signal.Ignore(os.Interrupt)
+		text("ready")
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
+	if strings.Contains(mode, "wait") {
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+		text("ready")
+		<-ch
+	}
+	if strings.Contains(mode, "slow-finish") {
+		text("ready")
+		time.Sleep(750 * time.Millisecond)
+	}
+	if strings.HasPrefix(mode, "You were interrupted by a restart or crash at ") {
+		text("recovery-message=" + mode)
+	}
+	emit("tool_use", map[string]any{"type": "tool", "tool": "bash", "callID": "fixture-call", "state": map[string]any{"status": "completed", "input": map[string]any{"command": "fixture command"}, "output": "must-not-return"}})
+	text("done")
+	emit("step_finish", map[string]any{"type": "step-finish", "reason": "stop"})
 	if strings.Contains(mode, "exit-seven") {
 		os.Exit(7)
 	}

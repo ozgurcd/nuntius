@@ -21,7 +21,7 @@ func (c Config) expanded() ([]Lane, error) {
 		return c.Lanes, nil
 	}
 	var lanes []Lane
-	for _, kind := range []string{"claude", "codex"} {
+	for _, kind := range []string{"claude", "codex", "opencode"} {
 		p, ok := c.Pools[kind]
 		if !ok {
 			continue
@@ -37,7 +37,7 @@ func (c Config) expanded() ([]Lane, error) {
 		}
 	}
 	for kind := range c.Pools {
-		if kind != "claude" && kind != "codex" {
+		if kind != "claude" && kind != "codex" && kind != "opencode" {
 			return nil, errors.New("unknown pool kind")
 		}
 	}
@@ -211,6 +211,7 @@ func (m *Manager) SetPool(path, kind string, size int, convert bool) error {
 }
 
 type AgentStatus struct {
+	Model        string   `json:"model,omitempty"`
 	Name         string   `json:"name"`
 	Kind         string   `json:"kind"`
 	StartMode    string   `json:"start_mode"`
@@ -233,7 +234,7 @@ func (m *Manager) Agents() ([]AgentStatus, error) {
 		if e != nil {
 			return nil, e
 		}
-		out = append(out, AgentStatus{Name: v.Lane, Kind: l.Kind, StartMode: l.mode(), Flags: l.ExtraArgs, State: v.State, Goal: v.GoalID, DisplayState: v.DisplayState})
+		out = append(out, AgentStatus{Name: v.Lane, Kind: l.Kind, Model: l.Model, StartMode: l.mode(), Flags: l.ExtraArgs, State: v.State, Goal: v.GoalID, DisplayState: v.DisplayState})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const Version = "v0.2.5"
+const Version = "v0.2.6"
 
 type Lane struct {
 	Name         string   `json:"name"`
@@ -20,6 +20,7 @@ type Lane struct {
 	Workdir      string   `json:"workdir"`
 	Binary       string   `json:"binary"`
 	ExtraArgs    []string `json:"extra_args"`
+	Model        string   `json:"model,omitempty"`
 	StartMode    string   `json:"start_mode,omitempty"`
 	ContinueText string   `json:"continue_text,omitempty"`
 }
@@ -105,10 +106,18 @@ func (c Config) Validate() (time.Duration, error) {
 	}
 	seen := map[string]bool{}
 	for _, l := range c.Lanes {
-		if (l.StartMode != "" && l.StartMode != "as_is" && l.StartMode != "goal_then_continue") || (l.Kind == "codex" && l.StartMode == "goal_then_continue") || len(l.ContinueText) > 12000 {
+		if (l.StartMode != "" && l.StartMode != "as_is" && l.StartMode != "goal_then_continue") || (l.Kind != "claude" && l.StartMode == "goal_then_continue") || len(l.ContinueText) > 12000 {
 			return fail()
 		}
-		if !namePattern.MatchString(l.Name) || seen[l.Name] || (l.Kind != "claude" && l.Kind != "codex") || !filepath.IsAbs(l.Binary) || !filepath.IsAbs(l.Workdir) {
+		if !namePattern.MatchString(l.Name) || seen[l.Name] || (l.Kind != "claude" && l.Kind != "codex" && l.Kind != "opencode") || !filepath.IsAbs(l.Binary) || !filepath.IsAbs(l.Workdir) {
+			return fail()
+		}
+		if l.Kind == "opencode" {
+			provider, model, ok := strings.Cut(l.Model, "/")
+			if !ok || provider == "" || model == "" || len(l.Model) > 128 || !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_./:-]*$`).MatchString(l.Model) {
+				return fail()
+			}
+		} else if l.Model != "" {
 			return fail()
 		}
 		seen[l.Name] = true
@@ -130,7 +139,10 @@ func (c Config) Validate() (time.Duration, error) {
 			if l.Kind == "codex" && key == "--skip-git-repo-check" && !eq {
 				continue
 			}
-			if key != "--model" && key != "-m" && !(l.Kind == "claude" && (key == "--effort" || key == "--max-budget-usd" || key == "--permission-mode")) && !(l.Kind == "codex" && key == "--sandbox") {
+			if l.Kind == "opencode" && key != "--agent" && key != "--variant" {
+				return fail()
+			}
+			if key != "--model" && key != "-m" && !(l.Kind == "opencode" && (key == "--agent" || key == "--variant")) && !(l.Kind == "claude" && (key == "--effort" || key == "--max-budget-usd" || key == "--permission-mode")) && !(l.Kind == "codex" && key == "--sandbox") {
 				return fail()
 			}
 			if !eq {

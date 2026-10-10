@@ -109,7 +109,15 @@ func activity(b []byte) string {
 	}
 	for _, line := range bytes.Split(b, []byte("\n")) {
 		var v struct {
-			Type    string `json:"type"`
+			Type string `json:"type"`
+			Part struct {
+				Tool  string `json:"tool"`
+				State struct {
+					Input struct {
+						Command string `json:"command"`
+					} `json:"input"`
+				} `json:"state"`
+			} `json:"part"`
 			Message struct {
 				Content []struct {
 					Type, Name string
@@ -122,6 +130,18 @@ func activity(b []byte) string {
 		}
 		if json.Unmarshal(line, &v) != nil {
 			continue
+		}
+		if v.Type == "tool_use" {
+			switch v.Part.Tool {
+			case "bash":
+				last = commandKind(v.Part.State.Input.Command)
+			case "edit", "write", "patch", "apply_patch", "multiedit":
+				last = "editing files"
+			case "read", "grep", "glob", "list":
+				last = "reading files"
+			default:
+				last = "using tool"
+			}
 		}
 		if v.Type == "assistant" {
 			for _, c := range v.Message.Content {
@@ -173,7 +193,7 @@ func (m *Manager) writeStatus(out io.Writer, view any, long ...bool) error {
 	}
 	fmt.Fprintf(out, "frozen=%s  data=%s\n", freeze, cell(m.store))
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	heading := "AGENT\tSTATE\tRUN\tGOAL\tELAPSED\tETA\tEVENT AGE\tACTIVITY\tREPORT"
+	heading := "AGENT\tSTATE\tRUN\tGOAL\tELAPSED\tETA\tEVENT AGE\tACTIVITY\tREPORT\tKIND\tMODEL"
 	if len(long) > 0 && long[0] {
 		heading += "\tCURRENT ACTION"
 	}
@@ -210,7 +230,7 @@ func (m *Manager) writeStatus(out io.Writer, view any, long ...bool) error {
 		if id == "" {
 			id = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", cell(s.Lane), state, id, goal, elapsed, eta, age, current, report)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", cell(s.Lane), state, id, goal, elapsed, eta, age, current, report, cell(s.Kind), cell(s.Model))
 		if len(long) > 0 && long[0] {
 			fmt.Fprintf(w, "\t%s", actionText(s.CurrentAction))
 		}

@@ -1,11 +1,11 @@
-# Nuntius v0.2.5 — specification as built
+# Nuntius v0.2.6 — specification as built
 
 ## Boundary
 
 Nuntius is a Go, standard-library-only stdio MCP server for an owner-approved
 judge on macOS or Linux. Linux CI tests the same process and file contracts. The module
 is `github.com/ozgurcd/nuntius`. It has no network client, LLM or shell runner.
-Version v0.2.5 is compiled in; publication is a separate release workflow.
+Version v0.2.6 is compiled in; publication is a separate release workflow.
 
 Do not register it for coding agents. The MCP host owns approval. The server
 cannot verify that a caller is the judge or force a host to display a click.
@@ -13,22 +13,22 @@ The owner must keep dispatch/reply/cancel approvals enabled in Desktop.
 
 ## Lanes
 
-The preferred format is pools: one entry per claude/codex kind, size 0..8,
-and one template (binary, workdir, extra_args, start_mode, continue_text).
-Agents expand to claude-1..N and codex-1..N. Templates are validated even
-at size zero. Both pools can be disabled. Legacy lanes still load; lanes
+The preferred format is pools: one entry per claude/codex/opencode kind, size 0..8,
+and one template (binary, workdir, extra_args, model, start_mode, continue_text).
+Agents expand to claude-1..N, codex-1..N and opencode-1..N. Templates are validated even
+at size zero. Pools can be disabled. Legacy lanes still load; lanes
 and pools cannot be mixed in the file.
 
 config convert numbers each kind in original order (identuum -> claude-1)
 and preserves stored session associations. Busy lanes, more than eight of
 one kind, or differing templates refuse conversion. set claude-agent-pool N
-and set codex-agent-pool N change size only, refuse removal of a busy agent,
+set codex-agent-pool N and set opencode-agent-pool N change size only, refuse removal of a busy agent,
 and rewrite config atomically as 0600. A pool needs an owner template.
 No MCP tool changes config. Servers reload it on checks and before dispatch.
 The store control lock serializes these changes with starts and freeze.
 
 The owner supplies `lanes`, `max_runtime` and `reports_dir` in lanes.json.
-Each lane has name, kind (claude/codex), absolute binary, absolute workdir and
+Each lane has name, kind (claude/codex/opencode), absolute binary, absolute workdir and
 optional extra_args, start_mode and continue_text. Names are 1..64 ASCII letters,
 digits, dots or hyphens and begin with a letter or digit. Names are unique.
 There are 1..32 lanes. Binary must exist and be executable; workdir must exist.
@@ -48,6 +48,13 @@ No agent settings are injected; normal owner CLI settings apply. The configured
 workdir uses exec.Command's standard PWD behavior through the launch stages.
 auto_resume defaults to true; false disables automatic crash-recovery launches.
 
+OpenCode requires a printable 1..128-byte provider/model in the model field.
+Its start_mode is as_is only. Only --agent and --variant are permitted extra
+arguments; --auto, --pure, interactive, remote/attachment, model and session/output
+overrides are refused. Nuntius reads no agent settings and injects no permissions.
+Model choice and the guard/permission installation remain owner actions; the
+Identuum pointer is wiki/tools/opencode/README.md, owned by OPENCODE-GUARD-1.
+
 ## Runs
 
 Each dispatch validates its lane, goal ID and 1..12000-byte prompt. Goal IDs
@@ -59,6 +66,21 @@ Claude argv: `-p --output-format stream-json --verbose`, then optional
 `--resume ID`, then owner extra_args. Codex argv: `exec --json`, then
 extra_args, then optional `resume ID`, then `-`. Exec-only options precede
 resume. CLI help and the strict offline fake verify option scope, not a real run.
+
+OpenCode argv: run --format json --model MODEL, then extra_args and optional
+--session ID. The unchanged file-backed stdin carries the full brief, including
+12,000 bytes and literal quotes/newlines. No model is called by tests. Installed
+CLI help was verified at 1.18.35; upstream run.ts defines piped message handling
+and JSON fixtures. Real model event capture is unverified. Native sessionID is
+captured safely; millisecond timestamp, part.text, tool/state/input, step_start,
+step_finish and error are normalized through the shared action summarizer.
+Tool results never enter returned summaries. Unknown events retain type and
+first eligible string. Native MCP IDs server_tool display as server.tool with
+the first underscore as separator; underscore-bearing server names are ambiguous.
+Upstream tool events arrive at completion/error, so no running duration is claimed
+without a start event. Recover/resume/cancel/freeze/timeout share existing paths.
+Status/agents expose configured kind/model; runs persist launch kind/model for
+history, MCP and web data. Old records omit those additive fields.
 
 The data directory resolves from --store, NUNTIUS_DATA_DIR, then macOS
 ~/Library/Application Support/nuntius or Linux $XDG_DATA_HOME/nuntius

@@ -1,12 +1,12 @@
 # nuntius
 
-Nuntius v0.2.5 is a small local Go MCP server for a judge using Claude Desktop.
-It starts and follows configured Claude Code and Codex agent pools on macOS or Linux.
+Nuntius v0.2.6 is a small local Go MCP server for a judge using Claude Desktop.
+It starts and follows configured Claude Code, Codex and OpenCode agent pools on macOS or Linux.
 It contains no LLM and makes no network requests of its own. Agent programs may
 use the network under their existing settings.
 
 Register nuntius in Claude Desktop only. Do not register it in Claude Code or
-Codex. Coding agents must not dispatch other agents. Configure the host to ask
+Codex or OpenCode. Coding agents must not dispatch other agents. Configure the host to ask
 the owner before every dispatch, reply, cancel and unfreeze. MCP annotations describe
 side effects; they do not enforce a click or identify who called the server.
 
@@ -55,12 +55,12 @@ paths from your machine. The following paths are placeholders, not defaults:
 `notifications` is optional and defaults to true. Lane `start_mode` defaults
 to `goal_then_continue` for Claude and `as_is` for Codex. `continue_text`
 defaults to `continue`. Set Claude to `as_is` to disable automatic continuation.
-Codex supports `as_is` only. The text and start mode cannot be supplied by MCP.
+Codex and OpenCode support `as_is` only. The text and start mode cannot be supplied by MCP.
 `auto_resume` is optional and defaults to true. Set it to false to keep
 interrupted goals visible without automatically starting another agent.
 
 Each kind has one template and a size from 0 to 8. Agents are named
-`claude-1` through `claude-N` and `codex-1` through `codex-N`. A disabled
+`claude-1` through `claude-N`, `codex-1` through `codex-N`, and `opencode-1` through `opencode-N`. A disabled
 pool retains its template. Templates are validated even when their size is zero.
 No MCP tool changes pool sizes or templates. The CLI rewrites configuration
 atomically with mode 0600; shrinking below a busy agent is refused.
@@ -88,7 +88,7 @@ lane sets, more than 32 lanes, and invalid durations are refused. `max_runtime`
 must be positive and no longer than seven days. Configuration is limited to
 64 KiB. No setting is read from agent configuration files by nuntius.
 
-`extra_args` supports `--model`/`-m` for both kinds, and `--effort` and
+`extra_args` supports `--model`/`-m` for Claude and Codex, and `--effort` and
 `--max-budget-usd` for Claude. Claude also permits `--permission-mode` with
 exactly `auto`, `acceptEdits`, `plan` or `manual`. Codex permits
 `--skip-git-repo-check` without a value and `--sandbox` with exactly `read-only`
@@ -99,6 +99,82 @@ working-directory changes, session selection and output-format overrides.
 This also closes indirect bypasses through Codex `-c` and Claude `--settings`.
 The child inherits the server environment unchanged. The owner must start
 Desktop with the intended normal environment and agent settings.
+
+## opencode lanes
+
+Install [OpenCode](https://opencode.ai/docs/) separately and log in using its
+own tools. Login stays in OpenCode's own configuration; nuntius never reads or
+copies it. Add an owner-chosen provider/model to the pool template:
+
+```json
+{
+  "pools": {
+    "opencode": {
+      "size": 1,
+      "template": {
+        "workdir": "/absolute/workspace/repository",
+        "binary": "/absolute/bin/opencode",
+        "model": "opencode/minimax-m2.7",
+        "extra_args": [],
+        "start_mode": "as_is"
+      }
+    }
+  },
+  "max_runtime": "8h",
+  "reports_dir": "/absolute/workspace/reports",
+  "notifications": true
+}
+```
+
+The model is an example, not a free-model claim or a default. Choose the exact
+OpenCode Zen model ID and check its current cost with OpenCode. Nuntius requires
+an explicit `provider/model` and never chooses, upgrades or falls back to another
+model. Keep it in the template's `model` field; `--model` in `extra_args` is
+refused to prevent conflicting selections. Optional `--agent` and `--variant`
+accept split or equals forms. No MCP request can select a model or change flags.
+
+For Identuum, follow the owner-install steps in
+`wiki/tools/opencode/README.md` for the guard plugin and
+`wiki/tools/opencode/opencode.permission.json` template. OPENCODE-GUARD-1 owns
+those files. Install the plugin in the documented plural `plugins/` directory
+and merge only the permission member, preserving the owner's other settings.
+Review effective agent overrides and launch inside the configured repository
+so its parent `AGENTS.md` rules apply. Nuntius installs or edits none of these.
+The guard is a tool hook, not an OS sandbox; see its guide for containment limits.
+
+Run `nuntius config check`, then `nuntius set opencode-agent-pool 1` or
+`nuntius agents` to inspect the pool. The template must already exist. Legacy
+OpenCode lanes also support `config convert`; different models within one kind
+refuse conversion. Status, agents, history, MCP and the dashboard show kind and
+model; historical runs retain their launch model even after configuration changes.
+
+Starts use `opencode run --format json --model MODEL [extra_args]`, with the
+brief supplied intact on stdin. Resume adds `--session ID`; missing IDs use the
+same brief with the existing interruption note during crash recovery. Darwin
+uses the same transient launchd job and identity checks as other agents. Cancel,
+timeout, freeze and the bounded recovery chain follow the same rules.
+
+Verified CLI help: OpenCode 1.18.35. Its `--auto` flag automatically approves
+permissions not denied, but nuntius refuses permission overrides, including
+`--auto`, as well as `--pure`, attachments, remote-server selection, interactive
+mode and output/session overrides. Configure permitted mechanical tools in
+OpenCode's normal permissions instead. Nuntius inherits the environment without
+injecting `OPENCODE_PERMISSION` or changing settings.
+
+Event fixtures are derived from
+[upstream run source](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/cli/cmd/run.ts),
+not a live model capture. They remain unverified against real 1.18.35 model
+output. An isolated free-only Step 5 attempt returned an error event and no
+successful model text; no paid model or owner configuration was supplied.
+The documented JSON stream supplies `sessionID`, millisecond timestamps,
+text, step events, errors and nested tool state/input. Summaries exclude results.
+Current upstream emits tool parts at completion/error only, so running-command
+duration is unavailable without a start event. Native MCP names use
+`server_tool`; display splits at the first underscore, and server names containing
+underscores can be ambiguous. Unknown event types retain a bounded first string
+argument, excluding identity/result metadata. Raw private streams stay on disk.
+
+## Run views
 
 ```sh
 nuntius config check
@@ -114,7 +190,7 @@ nuntius watch claude-1
 `status` and `agents` print human views by default; add `--json` for machine
 output. Status JSON keeps existing fields and adds `current_action` for running lanes.
 The aligned status view shows agent, state, short run ID, goal, elapsed, ETA, last event age,
-last activity kind and report presence. Its header shows freeze state and the
+last activity kind, report presence, kind and model. Its header shows freeze state and the
 data directory. Idle agents show `frozen` during a freeze; active and ended
 agents keep their run state. No terminal colour escapes are emitted.
 
@@ -144,7 +220,7 @@ to the last 20, newest completion first; `--limit` accepts 1..200. Lane and
 goal filters are exact and can be combined. `--since` is a positive Go duration
 measured from now against completion time. The human table shows ENDED in local
 time, AGENT, RUN, GOAL, OUTCOME, DURATION, REPORT (yes/no), EXIT (`-` if unknown)
-and RELATION. Relations say `first run`, `continue step of the 01:04 run`,
+RELATION, KIND and MODEL. Relations say `first run`, `continue step of the 01:04 run`,
 `resumed 1/2 after interruption at 23:31`, or `resumed by the 23:40 run`.
 The selected runs group by their recorded chain, newest chain first, with child
 runs indented. Separate goals that reuse the same name are not merged.

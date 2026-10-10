@@ -30,23 +30,36 @@ func actionSummary(v map[string]any) string {
 	}
 	summary := ""
 	switch name {
-	case "Bash", "exec_command", "command_execution":
+	case "Bash", "bash", "exec_command", "command_execution":
 		summary = get("command", "cmd")
-	case "Edit", "MultiEdit":
-		summary = "edit " + get("file_path", "path")
-	case "Write":
-		summary = "write " + get("file_path", "path")
+	case "Edit", "MultiEdit", "edit", "multiedit":
+		summary = "edit " + get("file_path", "filePath", "path")
+	case "Write", "write":
+		summary = "write " + get("file_path", "filePath", "path")
+	case "patch", "apply_patch":
+		var paths []string
+		for _, line := range strings.Split(get("patchText", "patch"), "\n") {
+			for _, prefix := range []string{"*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "} {
+				if strings.HasPrefix(line, prefix) {
+					paths = append(paths, strings.TrimPrefix(line, prefix))
+				}
+			}
+		}
+		summary = "patch " + strings.Join(paths, "; ")
+		if len(paths) == 0 {
+			summary = "patch " + get("filePath", "file_path", "path")
+		}
 	case "NotebookEdit":
 		summary = "edit notebook " + get("notebook_path", "file_path", "path")
-	case "Read":
-		summary = "read " + get("file_path", "path")
-	case "Grep", "Glob":
+	case "Read", "read":
+		summary = "read " + get("file_path", "filePath", "path")
+	case "Grep", "Glob", "grep", "glob":
 		summary = name + " " + get("pattern") + " " + get("path")
-	case "WebFetch":
+	case "WebFetch", "webfetch":
 		summary = name + " " + get("url")
 	case "WebSearch", "ToolSearch", "web_search":
 		summary = name + " " + get("query")
-	case "Task", "Agent":
+	case "Task", "Agent", "task":
 		summary = name + " " + get("description")
 	case "text", "reasoning", "agent_message":
 		summary = get("text")
@@ -146,7 +159,13 @@ func eventActions(line []byte) []actionEvent {
 	if at.IsZero() {
 		at, _ = time.Parse(time.RFC3339Nano, stringField(v, "time"))
 	}
+	if millis, ok := v["timestamp"].(float64); ok && millis > 0 && millis < 1e15 {
+		at = time.UnixMilli(int64(millis)).UTC()
+	}
 	var out []actionEvent
+	if _, hasPart := v["part"]; hasPart || stringField(v, "sessionID") != "" {
+		return openCodeActions(v, kind, at, line)
+	}
 	add := func(item map[string]any, index int, started, finished bool) {
 		t := stringField(item, "type")
 		name := stringField(item, "name")

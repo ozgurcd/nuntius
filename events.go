@@ -13,16 +13,21 @@ import (
 )
 
 type event struct {
-	IsError   bool   `json:"is_error"`
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	ThreadID  string `json:"thread_id"`
-	Session   struct {
+	IsError           bool   `json:"is_error"`
+	Type              string `json:"type"`
+	SessionID         string `json:"session_id"`
+	OpenCodeSessionID string `json:"sessionID"`
+	ThreadID          string `json:"thread_id"`
+	Session           struct {
 		ID string `json:"id"`
 	} `json:"session"`
 	Thread struct {
 		ID string `json:"id"`
 	} `json:"thread"`
+	Part struct {
+		Text string `json:"text"`
+		Tool string `json:"tool"`
+	} `json:"part"`
 	Message struct {
 		Content []struct {
 			Type string `json:"type"`
@@ -47,7 +52,7 @@ func (m *Manager) session(id string) string {
 		if json.Unmarshal(line, &v) != nil {
 			continue
 		}
-		for _, s := range []string{v.SessionID, v.ThreadID, v.Session.ID, v.Thread.ID} {
+		for _, s := range []string{v.SessionID, v.ThreadID, v.Session.ID, v.Thread.ID, v.OpenCodeSessionID} {
 			if sessionPattern.MatchString(s) {
 				return s
 			}
@@ -150,6 +155,14 @@ func questionSummary(b []byte) (string, bool) {
 			continue
 		}
 		var parts []string
+		if v.OpenCodeSessionID != "" || v.Part.Text != "" || v.Part.Tool != "" {
+			if v.Type == "text" {
+				parts = append(parts, v.Part.Text)
+			}
+			if v.Type == "tool_use" && (v.Part.Tool == "question" || strings.Contains(v.Part.Tool, "request_user_input")) {
+				asked = true
+			}
+		}
 		if v.Type == "assistant" {
 			for _, c := range v.Message.Content {
 				if c.Type == "text" {

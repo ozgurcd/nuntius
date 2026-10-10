@@ -1,0 +1,14 @@
+{"type":"step_start","timestamp":1791620000000,"sessionID":"ses_fixture","part":{"type":"step-start"}}
+{"type":"tool_use","timestamp":1791620000100,"sessionID":"ses_fixture","part":{"type":"tool","callID":"call_bash","tool":"bash","state":{"status":"completed","input":{"command":"go test ./..."},"output":"must-not-return","time":{"start":1791620000000,"end":1791620000100}}}}
+{"type":"tool_use","timestamp":1791620000200,"sessionID":"ses_fixture","part":{"tool":"edit","state":{"status":"completed","input":{"filePath":"src/main.go"},"output":"must-not-return"}}}
+{"type":"tool_use","timestamp":1791620000300,"sessionID":"ses_fixture","part":{"tool":"write","state":{"status":"completed","input":{"filePath":"src/new.go"}}}}
+{"type":"tool_use","timestamp":1791620000400,"sessionID":"ses_fixture","part":{"tool":"apply_patch","state":{"status":"completed","input":{"patchText":"*** Begin Patch\n*** Update File: src/patch.go\n@@\n-old\n+new\n*** End Patch"}}}}
+{"type":"tool_use","timestamp":1791620000500,"sessionID":"ses_fixture","part":{"tool":"read","state":{"status":"completed","input":{"filePath":"README.md"}}}}
+{"type":"tool_use","timestamp":1791620000600,"sessionID":"ses_fixture","part":{"tool":"grep","state":{"status":"completed","input":{"pattern":"TODO","path":"src"}}}}
+{"type":"tool_use","timestamp":1791620000700,"sessionID":"ses_fixture","part":{"tool":"glob","state":{"status":"completed","input":{"pattern":"*.go"}}}}
+{"type":"tool_use","timestamp":1791620000800,"sessionID":"ses_fixture","part":{"tool":"webfetch","state":{"status":"completed","input":{"url":"https://example.org"}}}}
+{"type":"tool_use","timestamp":1791620000900,"sessionID":"ses_fixture","part":{"tool":"docs_lookup","state":{"status":"completed","input":{"query":"nuntius"}}}}
+{"type":"future_event","timestamp":1791620001000,"sessionID":"ses_fixture","detail":"useful"}
+{"type":"error","timestamp":1791620001100,"sessionID":"ses_fixture","error":{"name":"FixtureError","data":{"message":"fixture failure"}}}
+{"type":"step_finish","timestamp":1791620001200,"sessionID":"ses_fixture","part":{"type":"step-finish","reason":"stop"}}
+{"type":"text","timestamp":1791620001300,"sessionID":"ses_fixture","part":{"type":"text","text":"Final Report — OPENCODE-TEST\nQUESTIONS: none\nend of report"}}

@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.6 — 2026-10-10
+
+- Add OpenCode pools and legacy lanes, explicit owner-selected provider/model,
+  as_is starts, conversion/resize and model visibility in CLI, MCP and dashboard.
+- Start JSON runs with intact brief stdin and resume captured OpenCode sessions;
+  retain transient Darwin launchd, identity checks and detached fallback.
+- Normalize OpenCode text, tool inputs, step events, errors and timestamps through
+  shared redacted action summaries; never return tool results.
+- Cover cancel, timeout, freeze, session/fresh crash recovery, job cleanup and
+  history chains with offline fake OpenCode tests; never call a real model.
+- Document guard/permission installation pointers and explicit model choice;
+  fixtures follow upstream schema and remain unverified by live model output.
+
 ## v0.2.5 — 2026-10-10
 
 - Share redacted one-line action summaries across watch, MCP and dashboard tails:

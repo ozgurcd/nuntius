@@ -16,6 +16,8 @@ import (
 )
 
 type Run struct {
+	Kind                 string     `json:"kind,omitempty"`
+	Model                string     `json:"model,omitempty"`
 	ID                   string     `json:"run_id"`
 	Lane                 string     `json:"lane"`
 	GoalID               string     `json:"goal_id"`
@@ -45,6 +47,8 @@ type Run struct {
 	LaunchdCleaned       bool       `json:"launchd_cleaned,omitempty"`
 }
 type Status struct {
+	Kind                string         `json:"kind,omitempty"`
+	Model               string         `json:"model,omitempty"`
 	CurrentAction       *CurrentAction `json:"current_action,omitempty"`
 	LaunchFallback      bool           `json:"launch_fallback,omitempty"`
 	LaunchdLabel        string         `json:"launchd_label,omitempty"`
@@ -246,7 +250,7 @@ func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, p
 	if e := os.Mkdir(dir, 0700); e != nil {
 		return "", errors.New("cannot create run directory")
 	}
-	r := Run{ID: id, Lane: name, GoalID: goal, SHA256: digest, Brief: text, Started: time.Now().UTC(), State: "running"}
+	r := Run{ID: id, Lane: name, Kind: lane.Kind, Model: lane.Model, GoalID: goal, SHA256: digest, Brief: text, Started: time.Now().UTC(), State: "running"}
 	r.Resumed = session != ""
 	r.SessionID = session
 	if parent != nil {
@@ -314,6 +318,14 @@ func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, p
 	return id, nil
 }
 func agentArgs(l Lane, session string) []string {
+	if l.Kind == "opencode" {
+		args := []string{"run", "--format", "json", "--model", l.Model}
+		args = append(args, l.ExtraArgs...)
+		if session != "" {
+			args = append(args, "--session", session)
+		}
+		return args
+	}
 	if l.Kind == "claude" {
 		args := []string{"-p", "--output-format", "stream-json", "--verbose"}
 		if session != "" {
@@ -523,7 +535,7 @@ func (m *Manager) Status() ([]Status, error) {
 	}
 	out := make([]Status, 0, len(m.config.Lanes))
 	for _, l := range m.config.Lanes {
-		s := Status{Lane: l.Name, State: "idle", Freeze: frozen}
+		s := Status{Lane: l.Name, Kind: l.Kind, Model: l.Model, State: "idle", Freeze: frozen}
 		r, e := m.latest(l.Name)
 		if e != nil {
 			return nil, e
