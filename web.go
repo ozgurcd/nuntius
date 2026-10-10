@@ -196,9 +196,17 @@ func (w *Web) data() (any, error) {
 		historyRuns = historyRuns[:50]
 	}
 	views := []any{}
+	index := runIndex(runs)
+	groups := make([]HistoryEntry, 0, len(historyRuns))
 	for _, r := range historyRuns {
+		_, chain, depth := runRelation(r, index)
+		groups = append(groups, HistoryEntry{RunID: r.ID, ChainID: chain, ChainDepth: depth})
+	}
+	for _, entry := range groupedHistory(groups) {
+		r := index[entry.RunID]
+		relation, chain, depth := runRelation(r, index)
 		report, _ := m.Report(r.GoalID)
-		views = append(views, map[string]any{"run_id": r.ID, "lane": r.Lane, "goal_id": r.GoalID, "started": r.Started, "ended": r.Ended, "state": r.State, "display_state": terminalDisplay(r, r.State), "resume_count": r.ResumeCount, "parent_run_id": r.ParentRunID, "continue_run_id": r.ContinueRunID, "exit": r.Exit, "goal": readDisplay(filepath.Join(m.store, "runs", r.ID, "goal.txt"), 12000), "report": report, "sections": reportSections(report)})
+		views = append(views, map[string]any{"run_id": shortRunID(r.ID), "chain_id": shortRunID(chain), "chain_depth": depth, "relation": relation, "lane": r.Lane, "goal_id": r.GoalID, "started": r.Started, "ended": r.Ended, "state": r.State, "display_state": terminalDisplay(r, r.State), "resume_count": r.ResumeCount, "exit": r.Exit, "goal": readDisplay(filepath.Join(m.store, "runs", r.ID, "goal.txt"), 12000), "report": report, "sections": reportSections(report)})
 	}
 	tails := map[string][]string{}
 	lanes := []webLane{}
@@ -212,6 +220,8 @@ func (w *Web) data() (any, error) {
 				eta = m.etaFromHistory(runs, Run{ID: s.RunID, Started: *s.Started}, kind, m.runSize(s.RunID), time.Duration(s.ElapsedSeconds)*time.Second)
 			}
 		}
+		s.RunID = shortRunID(s.RunID)
+		s.LaunchdLabel = ""
 		lanes = append(lanes, webLane{Status: s, Kind: kind, ETA: eta, Activity: current})
 	}
 	m.mu.Unlock()

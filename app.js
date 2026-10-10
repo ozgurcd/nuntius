@@ -128,12 +128,12 @@ function makeCard(s) {
   const kind = node('p', 'kind'), badge = node('span', 'badge');
   const identity = node('div'); identity.append(name, kind); head.append(identity, badge);
   const goal = node('p', 'goal'), stats = node('dl', 'card-stats'), fields = {};
-  for (const label of ['Elapsed', 'ETA', 'Last event', 'Report']) {
+  for (const label of ['Run', 'Elapsed', 'ETA', 'Last event', 'Report']) {
     const group = node('div'), value = node('dd');
     group.append(node('dt', '', label), value); stats.append(group); fields[label] = value;
   }
   const activity = node('p', 'activity'), activityText = node('span');
-  activity.append(node('span', 'activity-label', 'Current activity'), activityText);
+  activity.append(node('span', 'activity-label', 'Current action'), activityText);
   const tail = node('details'), tailText = node('pre', 'log');
   tail.append(node('summary', '', 'View tail'), tailText);
   const controls = node('div', 'card-actions'), cancelControls = node('span');
@@ -170,12 +170,17 @@ function updateCard(v, s) {
   v.goal.className = s.goal_id ? 'goal' : 'goal goal-placeholder';
   setText(v.goal, s.goal_id || 'Ready for the next goal');
   setText(v.fields.Elapsed, s.goal_id ? duration(s.elapsed_seconds) : '—');
+  setText(v.fields.Run, s.run_id || '—');
   v.fields.Elapsed.title = s.started ? 'Started ' + new Date(s.started).toLocaleString() : '';
   setText(v.fields.ETA, s.eta === '-' ? 'Not enough history' : s.eta || '—');
   setText(v.fields['Last event'], s.last_event_age_seconds == null ? '—' : duration(s.last_event_age_seconds) + ' ago');
   v.fields['Last event'].title = s.last_event ? new Date(s.last_event).toLocaleString() : '';
   setText(v.fields.Report, s.report_exists ? 'Yes' : 'No');
-  setText(v.activityText, s.activity === '-' ? 'No recent activity' : s.activity || 'No recent activity');
+  const a = s.current_action;
+  const estimate = a && a.age_source !== 'event' ? '~' : '';
+  setText(v.activityText, a ? a.summary + ' (' + estimate + a.age_seconds + 's ago)' +
+    (a.running_seconds == null ? '' : '; running for ' + estimate + a.running_seconds + 's') :
+    s.activity === '-' ? 'No recent activity' : s.activity || 'No recent activity');
   v.activityText.title = v.activityText.textContent;
   // An open tail is a reading surface: resume text updates when it is closed.
   if (!v.tail.open) setText(v.tailText, (lastData.tails[s.lane] || []).join('\n') || 'No output yet.');
@@ -185,7 +190,7 @@ function updateCard(v, s) {
 function makeRun(r) {
   // Each tbody is a keyed group of its compact row and expanded detail row.
   const root = node('tbody'), row = node('tr', 'run-row'), detail = node('tr', 'run-detail');
-  const lane = node('td', 'run-lane'), goal = node('td', 'run-goal'), state = node('td', 'run-state'), started = node('td', 'run-started'), elapsed = node('td', 'run-duration');
+  const lane = node('td', 'run-lane'), runID = node('td', 'run-id'), goal = node('td', 'run-goal'), state = node('td', 'run-state'), started = node('td', 'run-started'), elapsed = node('td', 'run-duration'), relation = node('td', 'run-relation');
   const toggle = button('', 'run-toggle', () => {
     detail.hidden = !detail.hidden;
     toggle.setAttribute('aria-expanded', String(!detail.hidden));
@@ -193,12 +198,12 @@ function makeRun(r) {
     if (!detail.hidden) updateRunContent(view, view.data);
   });
   toggle.setAttribute('aria-expanded', 'false');
-  const content = node('td'); content.colSpan = 5;
+  const content = node('td'); content.colSpan = 7;
   content.id = 'run-' + nextRunID++;
   toggle.setAttribute('aria-controls', content.id);
   const badge = node('span', 'badge'), timestamp = node('time');
   goal.append(toggle); state.append(badge); started.append(timestamp);
-  row.append(lane, goal, state, started, elapsed);
+  row.append(lane, runID, goal, state, started, elapsed, relation);
   const sections = {};
   for (const name of ['QUESTIONS', 'DECISIONS']) {
     const box = node('div', name.toLowerCase()), pre = node('pre', 'report-text');
@@ -211,15 +216,11 @@ function makeRun(r) {
     const block = node('div', 'report-block'); block.append(node('h3', '', name), pre); content.append(block);
   }
   detail.append(content); detail.hidden = true; root.append(row, detail);
-  const view = {root, lane, toggle, badge, timestamp, elapsed, detail, sections, chain, goalText, report, data: r};
+  const view = {root, lane, runID, relation, toggle, badge, timestamp, elapsed, detail, sections, chain, goalText, report, data: r};
   return view;
 }
 function updateRunContent(v, r) {
-  const links = [];
-  if (r.parent_run_id) links.push('Previous run: ' + r.parent_run_id);
-  if (r.continue_run_id) links.push('Next run: ' + r.continue_run_id);
-  if (r.resume_count) links.push('Recovery: ' + r.resume_count + '/2');
-  setText(v.chain, links.join(' · ')); v.chain.hidden = links.length === 0;
+  setText(v.chain, r.relation || 'first run');
   for (const name of ['QUESTIONS', 'DECISIONS']) setText(v.sections[name], r.sections[name] || 'None recorded.');
   setText(v.goalText, r.goal || 'No goal text available.');
   setText(v.report, r.report || 'No report available.');
@@ -227,6 +228,9 @@ function updateRunContent(v, r) {
 function updateRun(v, r) {
   v.data = r;
   setText(v.lane, r.lane);
+  setText(v.runID, r.run_id);
+  setText(v.relation, r.relation || 'first run');
+  v.toggle.className = r.chain_depth > 0 ? 'run-toggle chain-child' : 'run-toggle';
   setText(v.toggle, (v.detail.hidden ? '▸ ' : '▾ ') + r.goal_id);
   const state = r.display_state || r.state;
   stateBadge(v.badge, state === 'ended' && r.exit != null && r.exit !== 0 ? 'failed' : state);

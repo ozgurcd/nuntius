@@ -163,7 +163,7 @@ func cell(s string) string {
 	}, Redact(s))
 }
 
-func (m *Manager) writeStatus(out io.Writer, view any) error {
+func (m *Manager) writeStatus(out io.Writer, view any, long ...bool) error {
 	v := view.(map[string]any)
 	rows := v["lanes"].([]Status)
 	frozen := v["frozen"].(bool)
@@ -173,7 +173,11 @@ func (m *Manager) writeStatus(out io.Writer, view any) error {
 	}
 	fmt.Fprintf(out, "frozen=%s  data=%s\n", freeze, cell(m.store))
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "AGENT\tSTATE\tGOAL\tELAPSED\tETA\tEVENT AGE\tACTIVITY\tREPORT")
+	heading := "AGENT\tSTATE\tRUN\tGOAL\tELAPSED\tETA\tEVENT AGE\tACTIVITY\tREPORT"
+	if len(long) > 0 && long[0] {
+		heading += "\tCURRENT ACTION"
+	}
+	fmt.Fprintln(w, heading)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	runs, _ := m.history()
@@ -202,7 +206,15 @@ func (m *Manager) writeStatus(out io.Writer, view any) error {
 		if s.LaunchFallback {
 			current += " (launchd fallback; app-quit survival unavailable)"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", cell(s.Lane), state, goal, elapsed, eta, age, current, report)
+		id := shortRunID(s.RunID)
+		if id == "" {
+			id = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", cell(s.Lane), state, id, goal, elapsed, eta, age, current, report)
+		if len(long) > 0 && long[0] {
+			fmt.Fprintf(w, "\t%s", actionText(s.CurrentAction))
+		}
+		fmt.Fprintln(w)
 	}
 	return w.Flush()
 }

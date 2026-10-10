@@ -1,25 +1,155 @@
 {
   "freeze": null,
   "lanes": [
-    {"lane":"claude-1","kind":"claude","state":"running","run_id":"sample-run-1","goal_id":"DASHBOARD-POLISH","started":"2026-10-09T20:00:00Z","elapsed_seconds":1463,"last_event":"2026-10-09T20:24:15Z","last_event_age_seconds":8,"report_exists":false,"asked_interactively":false,"eta":"~12m left (n=5)","activity":"running tests"},
-    {"lane":"codex-1","kind":"codex","state":"idle","elapsed_seconds":0,"report_exists":false,"asked_interactively":false,"eta":"-","activity":"-"},
-    {"lane":"codex-2","kind":"codex","state":"ended","run_id":"sample-run-2","goal_id":"REVIEW-RELEASE","started":"2026-10-09T19:00:00Z","elapsed_seconds":1840,"last_event":"2026-10-09T19:30:40Z","last_event_age_seconds":3223,"exit":0,"report_exists":true,"asked_interactively":false,"eta":"-","activity":"reading files"},
-    {"lane":"claude-2","kind":"claude","state":"ended_no_report","run_id":"sample-run-3","goal_id":"CHECK-DOCS","started":"2026-10-09T18:00:00Z","elapsed_seconds":902,"last_event":"2026-10-09T18:15:02Z","last_event_age_seconds":7758,"exit":1,"report_exists":false,"asked_interactively":false,"eta":"-","activity":"editing files"}
+    {
+      "lane": "claude-1",
+      "kind": "claude",
+      "state": "running",
+      "run_id": "sample01",
+      "goal_id": "DASHBOARD-POLISH",
+      "started": "2026-10-09T20:00:00Z",
+      "elapsed_seconds": 1463,
+      "last_event": "2026-10-09T20:24:15Z",
+      "last_event_age_seconds": 8,
+      "report_exists": false,
+      "asked_interactively": false,
+      "eta": "~12m left (n=5)",
+      "activity": "running tests",
+      "current_action": {
+        "summary": "go test ./...",
+        "age_seconds": 8,
+        "age_source": "observed",
+        "running_seconds": 8
+      }
+    },
+    {
+      "lane": "codex-1",
+      "kind": "codex",
+      "state": "idle",
+      "elapsed_seconds": 0,
+      "report_exists": false,
+      "asked_interactively": false,
+      "eta": "-",
+      "activity": "-"
+    },
+    {
+      "lane": "codex-2",
+      "kind": "codex",
+      "state": "ended",
+      "run_id": "sample02",
+      "goal_id": "REVIEW-RELEASE",
+      "started": "2026-10-09T19:00:00Z",
+      "elapsed_seconds": 1840,
+      "last_event": "2026-10-09T19:30:40Z",
+      "last_event_age_seconds": 3223,
+      "exit": 0,
+      "report_exists": true,
+      "asked_interactively": false,
+      "eta": "-",
+      "activity": "reading files"
+    },
+    {
+      "lane": "claude-2",
+      "kind": "claude",
+      "state": "ended_no_report",
+      "run_id": "sample03",
+      "goal_id": "CHECK-DOCS",
+      "started": "2026-10-09T18:00:00Z",
+      "elapsed_seconds": 902,
+      "last_event": "2026-10-09T18:15:02Z",
+      "last_event_age_seconds": 7758,
+      "exit": 1,
+      "report_exists": false,
+      "asked_interactively": false,
+      "eta": "-",
+      "activity": "editing files"
+    }
   ],
   "tails": {
-    "claude-1":["Checking the dashboard layout.","running tests","All focused checks passed."],
-    "codex-1":[],
-    "codex-2":["Reviewed release metadata.","Report saved."],
-    "claude-2":["Documentation check ended without a report.","Sensitive value: [REDACTED]"]
+    "claude-1": [
+      "Checking the dashboard layout.",
+      "go test ./...",
+      "All focused checks passed."
+    ],
+    "codex-1": [],
+    "codex-2": [
+      "Reviewed release metadata.",
+      "Report saved."
+    ],
+    "claude-2": [
+      "Documentation check ended without a report.",
+      "Sensitive value: [REDACTED]"
+    ]
   },
   "history": [
-    {"run_id":"sample-run-2","lane":"codex-2","goal_id":"REVIEW-RELEASE","started":"2026-10-09T19:00:00Z","ended":"2026-10-09T19:30:40Z","state":"ended","exit":0,"goal":"Review the release metadata and report any owner choices.","report":"PLAIN SUMMARY: Release metadata is ready.\nQUESTIONS:\n(a) publish today (recommended)\n(b) hold for review\nDECISIONS:\nKeep the existing release pipeline.\nIDS:\nnone","sections":{"QUESTIONS":"(a) publish today (recommended)\n(b) hold for review\n","DECISIONS":"Keep the existing release pipeline.\n"}},
-    {"run_id":"sample-run-3","lane":"claude-2","goal_id":"CHECK-DOCS","started":"2026-10-09T18:00:00Z","ended":"2026-10-09T18:15:02Z","state":"ended","exit":1,"goal":"Check documentation against the current public interface.","report":"","sections":{"QUESTIONS":"","DECISIONS":""}},
-    {"run_id":"sample-run-4","lane":"claude-1","goal_id":"VERIFY-ASSETS","started":"2026-10-09T17:00:00Z","ended":"2026-10-09T17:18:12Z","state":"cancelled","exit":null,"goal":"Verify offline assets and preserve request guards.","report":"QUESTIONS: none\nDECISIONS: Keep assets local.\nIDS: none","sections":{"QUESTIONS":"none\n","DECISIONS":"Keep assets local.\n"}}
+    {
+      "run_id": "sample02",
+      "lane": "codex-2",
+      "goal_id": "REVIEW-RELEASE",
+      "started": "2026-10-09T19:00:00Z",
+      "ended": "2026-10-09T19:30:40Z",
+      "state": "ended",
+      "exit": 0,
+      "goal": "Review the release metadata and report any owner choices.",
+      "report": "PLAIN SUMMARY: Release metadata is ready.\nQUESTIONS:\n(a) publish today (recommended)\n(b) hold for review\nDECISIONS:\nKeep the existing release pipeline.\nIDS:\nnone",
+      "sections": {
+        "QUESTIONS": "(a) publish today (recommended)\n(b) hold for review\n",
+        "DECISIONS": "Keep the existing release pipeline.\n"
+      },
+      "chain_id": "sample02",
+      "chain_depth": 0,
+      "relation": "first run"
+    },
+    {
+      "run_id": "sample03",
+      "lane": "claude-2",
+      "goal_id": "CHECK-DOCS",
+      "started": "2026-10-09T18:00:00Z",
+      "ended": "2026-10-09T18:15:02Z",
+      "state": "ended",
+      "exit": 1,
+      "goal": "Check documentation against the current public interface.",
+      "report": "",
+      "sections": {
+        "QUESTIONS": "",
+        "DECISIONS": ""
+      },
+      "chain_id": "sample03",
+      "chain_depth": 0,
+      "relation": "first run"
+    },
+    {
+      "run_id": "sample04",
+      "lane": "claude-1",
+      "goal_id": "VERIFY-ASSETS",
+      "started": "2026-10-09T17:00:00Z",
+      "ended": "2026-10-09T17:18:12Z",
+      "state": "cancelled",
+      "exit": null,
+      "goal": "Verify offline assets and preserve request guards.",
+      "report": "QUESTIONS: none\nDECISIONS: Keep assets local.\nIDS: none",
+      "sections": {
+        "QUESTIONS": "none\n",
+        "DECISIONS": "Keep assets local.\n"
+      },
+      "chain_id": "sample04",
+      "chain_depth": 0,
+      "relation": "first run"
+    }
   ],
   "notes": [
-    {"id":"sample-note-1","time":"2026-10-09T20:10:00Z","text":"Keep the dashboard quiet while I read run reports.","read":false},
-    {"id":"sample-note-2","time":"2026-10-09T19:45:00Z","text":"Use the existing release pipeline. I will upgrade my install.","read":true}
+    {
+      "id": "sample-note-1",
+      "time": "2026-10-09T20:10:00Z",
+      "text": "Keep the dashboard quiet while I read run reports.",
+      "read": false
+    },
+    {
+      "id": "sample-note-2",
+      "time": "2026-10-09T19:45:00Z",
+      "text": "Use the existing release pipeline. I will upgrade my install.",
+      "read": true
+    }
   ],
   "audit": "{\"time\":\"2026-10-09T20:00:00Z\",\"tool\":\"nuntius_dispatch\",\"lane\":\"claude-1\",\"goal_id\":\"DASHBOARD-POLISH\",\"result\":\"started\"}\n{\"time\":\"2026-10-09T19:45:00Z\",\"tool\":\"nuntius_owner_notes\",\"result\":\"read\"}",
   "oversight": "# Operations are steady\nDashboard polish is running. Release review is complete.\n## Owner attention\nReview the release timing question in REVIEW-RELEASE.\n## Next step\nUpgrade through Homebrew after the release completes."

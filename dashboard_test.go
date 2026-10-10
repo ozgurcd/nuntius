@@ -212,8 +212,13 @@ function rendered(h, id) {
   check(fresh.ids.runs.textContent.includes('Timed out'), 'history timeout badge');
   vm.runInContext("selectTab('agents'); lastData.lanes[0].display_state = 'interrupted; waiting to resume'; lastData.lanes[1].display_state = 'resumed (1/2)'; render(lastData)", fresh.context);
   check(fresh.ids.lanes.textContent.includes('waiting to resume') && fresh.ids.lanes.textContent.includes('Resumed (1/2)'), 'cards expose interrupted waiting and recovery count');
-  vm.runInContext("lastData.history[0].display_state = 'resumed (1/2)'; lastData.history[0].resume_count = 1; lastData.history[0].parent_run_id = 'previous-fixture-run'; lastData.history[0].continue_run_id = 'next-fixture-run'; selectTab('runs')", fresh.context);
-  check(fresh.ids.runs.textContent.includes('Resumed (1/2)') && fresh.ids.runs.textContent.includes('Previous run: previous-fixture-run') && fresh.ids.runs.textContent.includes('Next run: next-fixture-run') && fresh.ids.runs.textContent.includes('Recovery: 1/2'), 'history exposes the recovery chain');
+  vm.runInContext("lastData.history[0].display_state = 'resumed (1/2)'; lastData.history[0].resume_count = 1; lastData.history[0].relation = 'resumed 1/2 after interruption at 23:31; resumed by the 23:40 run'; lastData.history[0].chain_depth = 1; selectTab('runs')", fresh.context);
+  check(fresh.ids.runs.textContent.includes('Resumed (1/2)') && fresh.ids.runs.textContent.includes('resumed 1/2 after interruption at 23:31') && fresh.ids.runs.textContent.includes('resumed by the 23:40 run') && !fresh.ids.runs.textContent.includes('Previous run:'), 'history exposes readable recovery relations');
+  check(fresh.ids.runs.querySelector('.chain-child') !== null, 'history indents descendants');
+  check(fresh.ids.runs.textContent.includes(input.data.history[0].run_id), 'history shows the short run ID');
+  vm.runInContext("selectTab('agents'); lastData.lanes[0].current_action = {summary: 'go test ./...', age_seconds: 42, age_source: 'observed', running_seconds: 42}; render(lastData)", fresh.context);
+  check(fresh.ids.lanes.textContent.includes('go test ./... (~42s ago); running for ~42s'), 'cards show action and observed duration');
+  check(fresh.ids.lanes.textContent.includes(input.data.lanes[0].run_id), 'cards show the same short run ID');
   vm.runInContext("render(lastData)", fresh.context);
   check(fresh.ids.freeze.textContent.includes('Enabled') && fresh.ids.freeze.title === 'Dispatch enabled' && fresh.ids.freeze.getAttribute('aria-label') === 'Dispatch enabled', 'short enabled label has full accessible text');
   vm.runInContext("lastData.freeze = {since: '2026-10-09T10:00:00Z', reason: 'Owner pause'}; render(lastData)", fresh.context);
@@ -233,6 +238,9 @@ function rendered(h, id) {
 // the existing history, notes and freeze JSON shape, including optional fields.
 func TestDashboardFixtureMatchesData(t *testing.T) {
 	type historyView struct {
+		Relation      string            `json:"relation"`
+		ChainID       string            `json:"chain_id"`
+		ChainDepth    int               `json:"chain_depth"`
 		RunID         string            `json:"run_id"`
 		Lane          string            `json:"lane"`
 		GoalID        string            `json:"goal_id"`

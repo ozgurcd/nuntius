@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.5 — 2026-10-10
+
+- Share redacted one-line action summaries across watch, MCP and dashboard tails:
+  actual commands, edit/read paths, searches, MCP arguments and task descriptions.
+- Add status --long and running-lane current_action with action age and matched
+  unfinished-command duration; mark untimestamped observation ages approximate.
+- Replace opaque history links with readable continuation/recovery relations;
+  group recorded goal chains and indent descendants in human/MCP/web history.
+- Use consistent eight-character run IDs in human, MCP and web views; retain
+  full IDs and existing numeric/boolean/null types in CLI --json output.
+- Add sanitized real Claude/Codex action-event fixtures and offline parser,
+  CLI/MCP/web, timing, history and dashboard tests; exclude tool output/results.
+- Keep v0.2.4 transient launchd, detached fallback and recovery behaviour unchanged.
+
 ## v0.2.4 — 2026-10-10
 
 - Start macOS agents in transient, one-shot GUI launchd jobs outside the app's

@@ -1,6 +1,6 @@
 # nuntius
 
-Nuntius v0.2.3 is a small local Go MCP server for a judge using Claude Desktop.
+Nuntius v0.2.5 is a small local Go MCP server for a judge using Claude Desktop.
 It starts and follows configured Claude Code and Codex agent pools on macOS or Linux.
 It contains no LLM and makes no network requests of its own. Agent programs may
 use the network under their existing settings.
@@ -103,6 +103,7 @@ Desktop with the intended normal environment and agent settings.
 ```sh
 nuntius config check
 nuntius status
+nuntius status --long
 nuntius status --json
 nuntius history
 nuntius history --json --limit 50 --lane codex-1 --since 24h
@@ -111,8 +112,8 @@ nuntius watch claude-1
 ```
 
 `status` and `agents` print human views by default; add `--json` for machine
-output. Status JSON retains the v0.2.0 shape, and MCP tools always return JSON.
-The aligned status view shows agent, state, goal, elapsed, ETA, last event age,
+output. Status JSON keeps existing fields and adds `current_action` for running lanes.
+The aligned status view shows agent, state, short run ID, goal, elapsed, ETA, last event age,
 last activity kind and report presence. Its header shows freeze state and the
 data directory. Idle agents show `frozen` during a freeze; active and ended
 agents keep their run state. No terminal colour escapes are emitted.
@@ -125,14 +126,34 @@ history it shows `-`; otherwise it shows `~12m left (n=5)` or
 Activity shows fixed kinds such as `editing files`, `running tests` and
 `git push`, never tool arguments or command text. Unknown kinds use a generic label.
 
+`status --long` also shows the latest action: the actual command's first line,
+edited/read file, search query or tool argument. Running lanes expose the same
+`current_action` object in MCP and on the dashboard: `summary`, `age_seconds`,
+`age_source`, and `running_seconds` while a matched command has not finished.
+An event timestamp gives an exact age (`age_source: event`). Native streams
+usually omit timestamps; ages then use the first observation, initially
+estimated from event-file modification time (`age_source: observed`, shown
+with `~`). Unrelated output does not reset an observed action's age. Observation
+times live only in memory and restart with the reader. Commands lacking a start
+event or identity do not claim a running duration. Parsing uses the latest 1 MiB
+of complete events; an action outside that window can be unavailable.
+
 `history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h]` shows
 finished runs, including cancelled, timed-out and no-report runs. It defaults
 to the last 20, newest completion first; `--limit` accepts 1..200. Lane and
 goal filters are exact and can be combined. `--since` is a positive Go duration
 measured from now against completion time. The human table shows ENDED in local
-time, AGENT, GOAL, OUTCOME, DURATION, REPORT (yes/no), and EXIT (`-` if unknown).
+time, AGENT, RUN, GOAL, OUTCOME, DURATION, REPORT (yes/no), EXIT (`-` if unknown)
+and RELATION. Relations say `first run`, `continue step of the 01:04 run`,
+`resumed 1/2 after interruption at 23:31`, or `resumed by the 23:40 run`.
+The selected runs group by their recorded chain, newest chain first, with child
+runs indented. Separate goals that reuse the same name are not merged.
 JSON retains timestamps, numeric seconds/exit codes, booleans and null unknown
 exits; it excludes session IDs, process identity, prompts and report text.
+CLI `--json` alone retains full run/link/chain IDs. Human status/history, the
+dashboard and MCP use the same first eight characters. MCP history adds readable
+`relation`, `chain_id` and `chain_depth`; CLI JSON also supplies `short_run_id`.
+MCP dispatch/reply responses use the same short run ID; actions still target lanes.
 
 Human status, agents and the dashboard distinguish `timed_out` and `cancelled`.
 Existing status/agents JSON `state` values remain compatible; an optional
@@ -163,8 +184,16 @@ prints a warning. No files move automatically. macOS notifications are skipped
 on other systems. Release checks reject every build OS except Darwin/Linux.
 
 The data directory must be outside source repositories.
-`watch` prints changed tail snapshots until the
-lane ends; it is not a raw transcript. Ctrl-C stops watching.
+`watch`, MCP `nuntius_tail` and dashboard tails share one action-summary parser.
+Commands show their first line; edits show a verb and file; searches show their
+pattern/query; MCP tools show `server.tool` and a key argument; agent tasks show
+their description. Codex file changes show add/update/delete with each path.
+Unknown tools/items show their name and first eligible string argument.
+Summaries are redacted before truncation, stay on one line and contain at most
+120 Unicode characters. Tool output/results and edit bodies are excluded.
+`watch` prints changed tail snapshots until the lane ends; it is not a raw
+transcript. Ctrl-C stops watching. The existing ended-without-report exception
+still returns the bounded final assistant message.
 
 ## Claude Desktop entry
 
@@ -315,7 +344,7 @@ The phone header uses two lines: brand and freeze controls, then counts and
 update age. Its pill shows `Enabled` / `Frozen` at narrow widths, with full
 dispatch/freeze text in its title and accessible label. The tab bar scrolls
 within phone-width windows.
-Compact agent cards show kind, state, goal, elapsed time, ETA, event age, activity and
+Compact agent cards show kind, state, short run ID, goal, elapsed time, ETA, event age, current action and
 report presence. Open a card's tail to read its bounded output. Cancel uses
 an in-page confirmation before interrupting a running agent; Keep running or
 the timeout restores the initial button. Message opens that agent's composer.
@@ -344,7 +373,11 @@ Cancel, Freeze, Unfreeze and owner-note entry are local owner actions.
 ## Measured CLI interface
 
 Measured using help only on 2026-10-09: Claude Code 2.1.295 and Codex CLI
-0.159.2. No real agent run was used to verify event shapes.
+0.159.2. That measurement did not verify real event shapes. For v0.2.5,
+`testdata/action-events.jsonl` captures sanitized action envelopes from existing
+Claude stream-json and Codex exec --json run files. Its provenance note describes
+the replaced arguments and excluded private data. Tests replay these fixtures
+offline; this change does not start a real agent.
 
 - Claude start: `claude -p --output-format stream-json --verbose [extra_args]`.
 - Claude resume: the same flags plus `--resume SESSION_ID` before extra args.

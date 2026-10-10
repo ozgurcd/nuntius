@@ -45,39 +45,41 @@ type Run struct {
 	LaunchdCleaned       bool       `json:"launchd_cleaned,omitempty"`
 }
 type Status struct {
-	LaunchFallback      bool         `json:"launch_fallback,omitempty"`
-	LaunchdLabel        string       `json:"launchd_label,omitempty"`
-	Freeze              *FreezeState `json:"freeze,omitempty"`
-	LastEventAgeSeconds *int64       `json:"last_event_age_seconds,omitempty"`
-	Lane                string       `json:"lane"`
-	State               string       `json:"state"`
-	RunID               string       `json:"run_id,omitempty"`
-	GoalID              string       `json:"goal_id,omitempty"`
-	Started             *time.Time   `json:"started,omitempty"`
-	ElapsedSeconds      int64        `json:"elapsed_seconds"`
-	LastEvent           *time.Time   `json:"last_event,omitempty"`
-	Exit                *int         `json:"exit,omitempty"`
-	ReportExists        bool         `json:"report_exists"`
-	AskedInteractively  bool         `json:"asked_interactively"`
-	Outcome             string       `json:"outcome,omitempty"`
-	DisplayState        string       `json:"display_state,omitempty"`
+	CurrentAction       *CurrentAction `json:"current_action,omitempty"`
+	LaunchFallback      bool           `json:"launch_fallback,omitempty"`
+	LaunchdLabel        string         `json:"launchd_label,omitempty"`
+	Freeze              *FreezeState   `json:"freeze,omitempty"`
+	LastEventAgeSeconds *int64         `json:"last_event_age_seconds,omitempty"`
+	Lane                string         `json:"lane"`
+	State               string         `json:"state"`
+	RunID               string         `json:"run_id,omitempty"`
+	GoalID              string         `json:"goal_id,omitempty"`
+	Started             *time.Time     `json:"started,omitempty"`
+	ElapsedSeconds      int64          `json:"elapsed_seconds"`
+	LastEvent           *time.Time     `json:"last_event,omitempty"`
+	Exit                *int           `json:"exit,omitempty"`
+	ReportExists        bool           `json:"report_exists"`
+	AskedInteractively  bool           `json:"asked_interactively"`
+	Outcome             string         `json:"outcome,omitempty"`
+	DisplayState        string         `json:"display_state,omitempty"`
 }
 type activeRun struct {
 	done chan struct{}
 	stop chan string
 }
 type Manager struct {
-	mu       sync.Mutex
-	config   Config
-	store    string
-	runtime  time.Duration
-	Grace    time.Duration
-	active   map[string]*activeRun
-	closed   bool
-	closing  chan struct{}
-	watcher  sync.WaitGroup
-	recovery bool
-	launcher *jobLauncher
+	actionClocks map[string]actionObservation
+	mu           sync.Mutex
+	config       Config
+	store        string
+	runtime      time.Duration
+	Grace        time.Duration
+	active       map[string]*activeRun
+	closed       bool
+	closing      chan struct{}
+	watcher      sync.WaitGroup
+	recovery     bool
+	launcher     *jobLauncher
 }
 
 func NewManager(c Config, store string) (*Manager, error) {
@@ -595,6 +597,9 @@ func (m *Manager) Status() ([]Status, error) {
 			}
 			if b, err := readWindow(filepath.Join(m.store, "runs", r.ID, "events.jsonl"), true); err == nil {
 				_, s.AskedInteractively = questionSummary(b)
+				if s.State == "running" && s.LastEvent != nil {
+					s.CurrentAction = m.currentAction(r.ID, b, *s.LastEvent, time.Now())
+				}
 			}
 		}
 		out = append(out, s)

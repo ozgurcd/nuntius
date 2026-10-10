@@ -112,7 +112,11 @@ func TestHistoryCLIAndMCP(t *testing.T) {
 			t.Fatal("history MCP unavailable")
 		}
 		rows := historyRows(t, v)
-		if len(rows) != tc.count || toolText(v) != strings.TrimSpace(out.String()) {
+		var fullRows []HistoryEntry
+		if json.Unmarshal(out.Bytes(), &fullRows) != nil {
+			t.Fatal("CLI JSON history")
+		}
+		if len(rows) != tc.count || toolText(v) != toolText(publicHistory(fullRows)) {
 			t.Fatal("CLI MCP parity")
 		}
 		if len(rows) > 0 {

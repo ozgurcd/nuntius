@@ -82,32 +82,9 @@ func (m *Manager) Tail(lane string, lines int) ([]string, error) {
 			return []string{bounded(final, 8192)}, nil
 		}
 	}
-	for _, line := range bytes.Split(b, []byte("\n")) {
-		var v event
-		if json.Unmarshal(line, &v) != nil {
-			continue
-		}
-		if v.Type == "assistant" {
-			for _, c := range v.Message.Content {
-				switch c.Type {
-				case "text":
-					out = append(out, c.Text)
-				case "tool_use":
-					out = append(out, "tool: "+c.Name)
-				}
-			}
-		}
-		if v.Type == "item.completed" || v.Type == "item.started" {
-			switch v.Item.Type {
-			case "agent_message":
-				out = append(out, v.Item.Text)
-			case "command_execution":
-				out = append(out, "tool: command_execution")
-			case "mcp_tool_call":
-				out = append(out, "tool: "+v.Item.Tool)
-			case "file_change":
-				out = append(out, "tool: file_change")
-			}
+	for _, action := range streamActions(b) {
+		if action.Summary != "" {
+			out = append(out, action.Summary)
 		}
 	}
 	out = strings.Split(Redact(strings.Join(out, "\n")), "\n")

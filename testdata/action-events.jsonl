@@ -1,0 +1,16 @@
+{"type": "item.completed", "item": {"id": "fixture-action", "type": "agent_message", "text": "Checking the change.\nSecond line."}}
+{"type": "item.started", "item": {"id": "fixture-action", "type": "command_execution", "command": "go test ./...\ngo vet ./...", "status": "in_progress"}}
+{"type": "item.completed", "item": {"id": "fixture-action", "type": "command_execution", "command": "go test ./...\ngo vet ./...", "status": "completed"}}
+{"type": "item.started", "item": {"id": "fixture-action", "type": "file_change", "changes": [{"path": "/workspace/example.go", "kind": "add"}, {"path": "/workspace/example.go", "kind": "add"}], "status": "in_progress"}}
+{"type": "item.completed", "item": {"id": "fixture-action", "type": "file_change", "changes": [{"path": "/workspace/example.go", "kind": "add"}, {"path": "/workspace/example.go", "kind": "add"}], "status": "completed"}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "fixture-action", "name": "Bash", "input": {"command": "go test ./...\ngo vet ./...", "description": "inspect the change"}}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "fixture-action", "name": "Edit", "input": {"replace_all": false, "file_path": "/workspace/example.go"}}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "fixture-action", "name": "Write", "input": {"file_path": "/workspace/example.go"}}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "fixture-action", "name": "ToolSearch", "input": {"query": "select:gograph", "max_results": 1}}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "fixture-action", "name": "Read", "input": {"file_path": "/workspace/example.go"}}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "fixture-action", "name": "mcp__gograph-idp-oss__gograph_source", "input": {"symbol": "Status"}}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "fixture-action", "name": "Agent", "input": {"description": "inspect the change"}}]}}
+{"type": "item.started", "item": {"id": "fixture-action", "type": "mcp_tool_call", "server": "node_repl", "tool": "js", "arguments": {"code": "inspect();", "title": "fixture action"}, "status": "in_progress"}}
+{"type": "item.completed", "item": {"id": "fixture-action", "type": "mcp_tool_call", "server": "node_repl", "tool": "js", "arguments": {"code": "inspect();", "title": "fixture action"}, "status": "failed"}}
+{"type": "item.started", "item": {"id": "fixture-action", "type": "web_search", "query": "select:gograph", "action": {"type": "other"}}}
+{"type": "item.completed", "item": {"id": "fixture-action", "type": "web_search", "query": "select:gograph", "action": {"type": "open_page"}}}

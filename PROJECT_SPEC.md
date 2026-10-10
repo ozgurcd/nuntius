@@ -1,11 +1,11 @@
-# Nuntius v0.2.4 — specification as built
+# Nuntius v0.2.5 — specification as built
 
 ## Boundary
 
 Nuntius is a Go, standard-library-only stdio MCP server for an owner-approved
 judge on macOS or Linux. Linux CI tests the same process and file contracts. The module
 is `github.com/ozgurcd/nuntius`. It has no network client, LLM or shell runner.
-Version v0.2.4 is compiled in; publication is a separate release workflow.
+Version v0.2.5 is compiled in; publication is a separate release workflow.
 
 Do not register it for coding agents. The MCP host owns approval. The server
 cannot verify that a caller is the judge or force a host to display a click.
@@ -163,17 +163,22 @@ notification precede tools. The tools are:
 - nuntius_status(): an object with frozen, freeze time/reason and lanes. Each lane
   has state idle/running/ended/ended_no_report, goal/run IDs, start, elapsed,
   last event time and age, exit, outcome and report existence.
+  Running lanes add current_action: summary, age_seconds, age_source and optional
+  running_seconds until a matching command completion/tool result. IDs are short.
 - nuntius_history(limit=20, lane, goal_id, since): read-only finished-run list,
-  newest completion first, limit 1..200. Optional exact lane/goal filters combine;
+  select newest completions, then group by recorded chain, limit 1..200. Optional exact lane/goal filters combine;
   since is a positive Go duration (e.g. 24h) relative to completion time.
   Rows include run_id, lane, goal_id, ended (timestamp), outcome (redacted,
   at most 256 bytes), duration_seconds (number), report_exists (boolean), exit
-  (number or null). Running and undated records are excluded. No private run
+  (number or null), relation, short_run_id, chain_id and chain_depth. MCP IDs and
+  link IDs are the first eight characters; only CLI --json has full IDs.
+  Running and undated records are excluded. No private run
   text or process/session identity is returned. Empty results are [].
 - nuntius_dispatch(lane, goal_id, text): start when idle; return run_id.
 - nuntius_reply(lane, text): resume the ended last run when its session ID exists.
-- nuntius_tail(lane, lines=50): 1..200 physical lines of assistant text and tool
-  names; no raw tool results. The last complete-event window is at most 1 MiB.
+- nuntius_tail(lane, lines=50): 1..200 one-line action summaries, each at most
+  120 Unicode characters; no tool output/results or edit bodies. The last
+  complete-event window is at most 1 MiB.
   A line is limited to 4096 bytes; returned text totals at most 60,000 bytes.
   Exception: an ended run without a report returns the final assistant message
   in one entry, capped at 8 KiB after redaction, without the line-count limit.
@@ -215,7 +220,7 @@ shapes and Desktop permission interaction remain owner-pilot questions.
 
 ## CLI and validation
 
-Commands: mcp, status [--json], agents [--json],
+Commands: mcp, status [--long] [--json], agents [--json],
 history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h],
 paths, web [--bind 127.0.0.1:PORT], unfreeze,
 recover, watch LANE, config check, config convert, set KIND-agent-pool N, version and help. Global config
@@ -225,16 +230,42 @@ use optional display_state for cancelled, timed_out and stuck?, while retaining
 legacy machine state values. Status also carries launchd_label and launch_fallback
 when applicable; human status shows a fixed warning for fallback runs.
 History defaults to the last 20 completed runs;
-its table has ENDED (local time), AGENT, GOAL, OUTCOME, DURATION, REPORT yes/no
-and EXIT (- for unknown), using the same redaction and duration helpers.
-History JSON preserves numeric/boolean/null types and matches the MCP list.
+its table has ENDED (local time), AGENT, RUN, GOAL, OUTCOME, DURATION, REPORT yes/no,
+EXIT (- for unknown) and RELATION, using the same redaction and duration helpers.
+Relations name continuation start times, interruption times and successor start
+times, never opaque IDs. Chains group together and descendants are indented.
+Limits/filters select rows before grouping; missing relatives get an honest
+earlier-run label. Cycles and cross-goal/lane links cannot extend ancestry.
+History JSON preserves numeric/boolean/null types and full IDs; MCP has short IDs.
 Status columns
-show name/state/goal/elapsed/ETA/event age/activity/report; the header shows
+show name/state/short run ID/goal/elapsed/ETA/event age/activity/report; the header shows
 freeze state and data directory. Idle agents become frozen in the human view
 only. ETA needs at least three earlier completed same-kind/same-size runs;
 goal size comes only from the first line. Median minus elapsed is shown as
 approximate minutes left, or minutes over the median. Missing history gives -.
 Activity uses fixed labels without command arguments. No colour escapes.
+Status --long adds the latest shared action summary and its age. All running
+CLI JSON/MCP/web lanes have current_action. Native streams omit wall times, so
+age_source observed uses first observation, initially estimated from file mtime;
+human/web ages carry ~. Timestamped events use age_source event. Matching
+command starts/completions and Claude tool_use/tool_result IDs govern running
+duration; output/results never enter summaries or reset an observed action age.
+Observation clocks are in memory and reset on reader restart. Actions outside
+the last 1 MiB of complete events may be unavailable. No launcher or supervision
+behaviour changes to obtain event timestamps.
+
+One actionSummary function supplies watch, MCP/web tails and current action.
+Claude Bash uses command's first line; Edit/Write/MultiEdit/NotebookEdit use verb
+and path; Read uses read/path; Grep/Glob use pattern/path; WebFetch/WebSearch and
+ToolSearch use URL/query; MCP uses server.tool/key argument; Task/Agent use
+description. Codex command_execution uses command, file_change lists each
+add/update/delete path, mcp_tool_call uses server.tool/key argument, web_search
+uses query, reasoning/agent_message use first text line. Unknown tools/items use
+name/type and the first eligible string argument. Redact precedes first-line
+selection, control removal and the 120-character Unicode bound. Private-key
+blocks spanning text events remain redacted. The no-report final-message
+exception retains its existing bounds. Full run IDs occur only in CLI --json;
+other views and MCP responses use the first eight characters.
 Paths prints resolved config/data and provenance without opening either.
 An empty selected run store and nonempty default store produce a stderr warning
 without moving data. The app needs explicit env entries to share shell overrides.
@@ -278,11 +309,11 @@ the selected view on start and reload. Arrow keys and
 Home/End move tab focus and selection; hidden panels defer updates until shown.
 Tab counts show running agents, unread notes and runs with open QUESTIONS.
 Compact two-column desktop cards include agent kind, state text/colour,
-goal, human elapsed time, ETA, event age, fixed activity label and report status.
+goal, short run ID, human elapsed time, ETA, event age, current action and report status.
 Only running cards offer cancel, with a two-step in-page confirmation.
 The initial cancel button hides until Keep running or the confirmation timeout.
 Every card's Message button selects that agent in the Messages composer.
-Phone history stacks lane/state, goal, then started/duration; badges, lanes and
+Phone history stacks lane/state, goal, run ID, started/duration and relation; badges, lanes and
 durations do not split words. The phone tab bar scrolls within its own bounds.
 The phone header has brand/freeze controls above counts/update age. At widths
 up to 720px the pill shows Enabled/Frozen; title and aria-label retain the full
