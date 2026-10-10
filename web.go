@@ -231,7 +231,7 @@ func (w *Web) action(out http.ResponseWriter, r *http.Request) {
 	case "message":
 		e = w.manager.SendMessage(a.Lane, a.Text, a.Stop)
 	case "note":
-		e = w.manager.AddOwnerNote(a.Text)
+		e = w.manager.AddOwnerNote(a.Text, a.Lane)
 	default:
 		e = errors.New("unknown action")
 	}
@@ -315,7 +315,7 @@ func (w *Web) data() (any, error) {
 		if m.reportExists(r) {
 			report, _ = m.Report(r.GoalID)
 		}
-		views = append(views, map[string]any{"kind": r.Kind, "model": r.Model, "run_id": shortRunID(r.ID), "chain_id": shortRunID(chain), "chain_depth": depth, "relation": relation, "lane": r.Lane, "goal_id": r.GoalID, "started": r.Started, "ended": r.Ended, "state": r.State, "display_state": terminalDisplay(r, r.State), "badge": badgeTone(r, r.State), "resume_count": r.ResumeCount, "exit": r.Exit, "goal": readDisplay(filepath.Join(m.store, "runs", r.ID, "goal.txt"), 12000), "report": report, "sections": reportSections(report)})
+		views = append(views, map[string]any{"kind": r.Kind, "model": identityValue(r.Model), "effort": identityValue(r.Effort), "run_id": shortRunID(r.ID), "chain_id": shortRunID(chain), "chain_depth": depth, "relation": relation, "lane": r.Lane, "goal_id": r.GoalID, "started": r.Started, "ended": r.Ended, "state": r.State, "display_state": terminalDisplay(r, r.State), "badge": badgeTone(r, r.State), "resume_count": r.ResumeCount, "exit": r.Exit, "goal": readDisplay(filepath.Join(m.store, "runs", r.ID, "goal.txt"), 12000), "report": report, "sections": reportSections(report)})
 	}
 	tails := map[string][]string{}
 	lanes := []webLane{}
@@ -345,12 +345,27 @@ func (w *Web) data() (any, error) {
 	if oversight == "" {
 		oversight = filepath.Join(filepath.Dir(config.ReportsDir), "OVERSIGHT.md")
 	}
-	audit, _ := readWindow(filepath.Join(m.store, "audit.jsonl"), true)
+	audit, e := m.Audit("")
+	if e != nil {
+		return nil, e
+	}
+	signals, e := m.Signals()
+	if e != nil {
+		return nil, e
+	}
+	laneSignals := map[string][]string{}
+	for _, signal := range signals {
+		for _, s := range status {
+			if strings.HasPrefix(signal, s.Lane+".") {
+				laneSignals[s.Lane] = append(laneSignals[s.Lane], signal)
+			}
+		}
+	}
 	frozen, e := m.freezeState()
 	if e != nil {
 		return nil, e
 	}
-	return map[string]any{"freeze": frozen, "lanes": lanes, "tails": tails, "history": views, "notes": notes, "audit": bounded(Redact(string(audit)), 64000), "oversight": readDisplay(oversight, 64000)}, nil
+	return map[string]any{"freeze": frozen, "lanes": lanes, "tails": tails, "history": views, "notes": notes, "audit": audit, "signals": laneSignals, "oversight": readDisplay(oversight, 64000)}, nil
 }
 
 // webLane adds presentation fields without changing Status JSON for CLI or MCP.

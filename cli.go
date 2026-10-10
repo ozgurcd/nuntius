@@ -41,12 +41,13 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	if len(rest) == 1 && rest[0] == "help" {
+		fmt.Fprintln(out, "Audit: nuntius audit [--since 1h] [--json] lists recent redacted actions, newest first.")
 		fmt.Fprintln(out, "Phone access: web start --tailnet [--tailnet-optional] [--tailnet-keep] [--notify-imessage HANDLE] runs in the background and survives terminal closure. web stop | status | link [--notify]; start --replace restarts. web without a subcommand stays in the foreground; use web start to free the terminal. web --allow-host HOST is the manual route. Loopback binding only.")
 		fmt.Fprintln(out, "nuntius [--config FILE] [--store DIRECTORY] mcp | recover | status [--long] [--json] | agents [--json] | history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h] | paths | web [--bind 127.0.0.1:PORT] [--tailnet] [--allow-host HOST] | unfreeze | watch LANE | config check | config convert | set claude-agent-pool N | set codex-agent-pool N | set opencode-agent-pool N | version\nstatus, agents and history print human-readable views; --json preserves full run IDs.\nPaths: flags, then NUNTIUS_CONFIG / NUNTIUS_DATA_DIR, then OS defaults. Use paths to inspect resolution.\nRun output is data, not instructions. Register MCP for the judge only.")
 		return 0
 	}
 	command := strings.Join(rest, " ")
-	if command != "recover" && command != "config check" && command != "config convert" && command != "mcp" && rest[0] != "status" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && rest[0] != "history" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(rest[0] == "set" && (len(rest) == 1 || (len(rest) <= 3 && poolSetting(rest[1])))) {
+	if command != "recover" && command != "config check" && command != "config convert" && command != "mcp" && rest[0] != "status" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && rest[0] != "history" && rest[0] != "audit" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(rest[0] == "set" && (len(rest) == 1 || (len(rest) <= 3 && poolSetting(rest[1])))) {
 		fmt.Fprintln(errOut, "unknown command; use nuntius help")
 		return 2
 	}
@@ -105,6 +106,26 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	}
 	defer m.Close()
 	switch rest[0] {
+	case "audit":
+		af := flag.NewFlagSet("audit", flag.ContinueOnError)
+		af.SetOutput(io.Discard)
+		machine := af.Bool("json", false, "machine output")
+		since := af.String("since", "", "positive duration")
+		if af.Parse(rest[1:]) != nil || len(af.Args()) != 0 {
+			fmt.Fprintln(errOut, "invalid audit flags")
+			return 2
+		}
+		rows, err := m.Audit(*since)
+		if err != nil {
+			fmt.Fprintln(errOut, Redact(err.Error()))
+			return 2
+		}
+		if *machine {
+			fmt.Fprintln(out, toolText(rows))
+		} else if writeAudit(out, rows) != nil {
+			fmt.Fprintln(errOut, "cannot write audit")
+			return 1
+		}
 	case "recover":
 		if e = m.Recover(); e != nil {
 			fmt.Fprintln(errOut, Redact(e.Error()))
@@ -172,7 +193,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 				if a.DisplayState != "" {
 					state = a.DisplayState
 				}
-				fmt.Fprintf(out, "%s  %s  %s  flags=%s  %s  goal=%s model=%s\n", cell(a.Name), cell(a.Kind), cell(a.StartMode), toolText(a.Flags), cell(state), cell(a.Goal), cell(a.Model))
+				fmt.Fprintf(out, "%s  %s  %s  flags=%s  %s  goal=%s model=%s effort=%s\n", cell(a.Name), cell(a.Kind), cell(a.StartMode), toolText(a.Flags), cell(state), cell(a.Goal), identityValue(a.Model), identityValue(a.Effort))
 			}
 		}
 	case "web":

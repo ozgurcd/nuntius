@@ -5,15 +5,26 @@ User-facing changes and upgrade actions are listed newest first. See the
 restart an existing server. Choose when to upgrade through the Homebrew tap
 and restart your MCP server or background dashboard to load the new binary.
 
-## v0.2.11 — Unreleased
+## v0.2.11 — 2026-10-10
 
-This release is not published. Release documentation now includes this guide
-in download archives. Release checks require a nonempty section here and in
-the changelog, and GitHub releases use the selected section from this guide.
-No owner action is needed for this documentation change. The requested model,
-effort and dashboard improvements are not shipped by this draft.
+See each agent's model and effort directly in `agents`, `status --long`, history
+and the dashboard. Claude and Codex model flags now show their values. Codex
+effort shows the agent's structured startup value when available, or `default`
+when its stream omits that value. Nuntius does not inspect your agent settings.
+Historical runs keep their recorded launch values after you change a template.
 
-Details: [CHANGELOG — Unreleased](CHANGELOG.md#unreleased).
+Use `nuntius audit --since 1h` to read recent actions, or add `--json` for tools.
+The dashboard Audit view has readable rows and lane/action filters; Raw reveals
+the redacted original record. Agents now has an All view and a tab for each
+lane, including its live output, recent history, report links, notes and signals.
+You can bookmark a lane, for example `#agents/codex-2`. Select an agent in the
+owner-note form to keep that note with its lane.
+
+Upgrade through the Homebrew tap when convenient, then restart your MCP server
+or dashboard to load the new views. No agent configuration change is required.
+This guide is included in archives; release checks require a matching section.
+
+Details: [CHANGELOG — v0.2.11](CHANGELOG.md#v0211--2026-10-10).
 
 ## v0.2.10 — 2026-10-10
 

@@ -18,6 +18,7 @@ import (
 type Run struct {
 	Kind                 string     `json:"kind,omitempty"`
 	Model                string     `json:"model,omitempty"`
+	Effort               string     `json:"effort,omitempty"`
 	ID                   string     `json:"run_id"`
 	Lane                 string     `json:"lane"`
 	GoalID               string     `json:"goal_id"`
@@ -49,6 +50,7 @@ type Run struct {
 type Status struct {
 	Kind                string         `json:"kind,omitempty"`
 	Model               string         `json:"model,omitempty"`
+	Effort              string         `json:"effort"`
 	CurrentAction       *CurrentAction `json:"current_action,omitempty"`
 	LaunchFallback      bool           `json:"launch_fallback,omitempty"`
 	LaunchdLabel        string         `json:"launchd_label,omitempty"`
@@ -157,9 +159,6 @@ func (m *Manager) start(name, goal, text string, resume bool) (id string, err er
 	if e = m.reload(); e != nil {
 		return "", e
 	}
-	if e = m.checkFrozen(); e != nil {
-		return "", e
-	}
 	tool := "nuntius_dispatch"
 	if resume {
 		tool = "nuntius_reply"
@@ -168,9 +167,12 @@ func (m *Manager) start(name, goal, text string, resume bool) (id string, err er
 	digest := hex.EncodeToString(sum[:])
 	defer func() {
 		if err != nil {
-			_ = m.audit(tool, name, goal, digest, "refused")
+			_ = m.audit(tool, name, goal, digest, "refused", err.Error())
 		}
 	}()
+	if e = m.checkFrozen(); e != nil {
+		return "", e
+	}
 	if m.closed {
 		return "", errors.New("server is closing")
 	}
@@ -251,7 +253,8 @@ func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, p
 	if e := os.Mkdir(dir, 0700); e != nil {
 		return "", errors.New("cannot create run directory")
 	}
-	r := Run{ID: id, Lane: name, Kind: lane.Kind, Model: lane.Model, GoalID: goal, SHA256: digest, Brief: text, Started: time.Now().UTC(), State: "running"}
+	model, effort := effectiveIdentity(lane)
+	r := Run{ID: id, Lane: name, Kind: lane.Kind, Model: model, Effort: effort, GoalID: goal, SHA256: digest, Brief: text, Started: time.Now().UTC(), State: "running"}
 	r.Resumed = session != ""
 	r.SessionID = session
 	if parent != nil {
@@ -466,9 +469,15 @@ func (m *Manager) follow(r Run, lock, supervisor *os.File, a *activeRun, grace t
 		go notify(r)
 	}
 }
-func (m *Manager) Cancel(name string) error {
+func (m *Manager) Cancel(name string) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	goal := ""
+	defer func() {
+		if err != nil {
+			_ = m.audit("nuntius_cancel", name, goal, "", "refused", err.Error())
+		}
+	}()
 	if _, e := m.lane(name); e != nil {
 		return e
 	}
@@ -481,6 +490,7 @@ func (m *Manager) Cancel(name string) error {
 	if e != nil || r == nil || r.State != "running" {
 		return errors.New("lane is not running")
 	}
+	goal = r.GoalID
 	if e = m.requestStop(r, "cancelled"); e != nil {
 		return e
 	}
@@ -536,12 +546,19 @@ func (m *Manager) Status() ([]Status, error) {
 	}
 	out := make([]Status, 0, len(m.config.Lanes))
 	for _, l := range m.config.Lanes {
-		s := Status{Lane: l.Name, Kind: l.Kind, Model: l.Model, State: "idle", Freeze: frozen}
+		model, effort := effectiveIdentity(l)
+		s := Status{Lane: l.Name, Kind: l.Kind, Model: model, Effort: effort, State: "idle", Freeze: frozen}
 		r, e := m.latest(l.Name)
 		if e != nil {
 			return nil, e
 		}
 		if r != nil {
+			if m.captureEffort(r) {
+				if err := m.save(r); err != nil {
+					return nil, err
+				}
+			}
+			s.Model, s.Effort = identityValue(r.Model), identityValue(r.Effort)
 			if r.State == "running" && m.active[l.Name] == nil {
 				lock, e := m.lock("supervisor-" + r.ID)
 				if e == nil {

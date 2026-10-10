@@ -115,6 +115,7 @@ func (m *Manager) Unfreeze() error {
 }
 
 type OwnerNote struct {
+	Lane   string    `json:"lane,omitempty"`
 	ID     string    `json:"id"`
 	Time   time.Time `json:"time"`
 	Text   string    `json:"text,omitempty"`
@@ -139,12 +140,19 @@ func (m *Manager) appendNote(v OwnerNote) error {
 	return f.Sync()
 }
 
-func (m *Manager) AddOwnerNote(text string) error {
+func (m *Manager) AddOwnerNote(text string, lanes ...string) error {
 	if len(text) < 1 || len(text) > 12000 {
 		return errors.New("note must contain 1..12000 bytes")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	lane := ""
+	if len(lanes) > 0 && lanes[0] != "" {
+		lane = lanes[0]
+		if _, err := m.lane(lane); err != nil {
+			return err
+		}
+	}
 	guard, e := m.controlLock()
 	if e != nil {
 		return e
@@ -154,7 +162,7 @@ func (m *Manager) AddOwnerNote(text string) error {
 	if _, e = rand.Read(id); e != nil {
 		return e
 	}
-	return m.appendNote(OwnerNote{ID: hex.EncodeToString(id), Time: time.Now().UTC(), Text: Redact(text)})
+	return m.appendNote(OwnerNote{ID: hex.EncodeToString(id), Time: time.Now().UTC(), Text: Redact(text), Lane: lane})
 }
 
 func (m *Manager) readNotes() ([]OwnerNote, error) {

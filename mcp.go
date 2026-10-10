@@ -318,7 +318,16 @@ func Serve(ctx context.Context, m *Manager, in io.Reader, out io.Writer) error {
 				status = "refused"
 			}
 			if m != nil && knownTool(p.Name) && p.Name != "nuntius_dispatch" && p.Name != "nuntius_reply" && p.Name != "nuntius_cancel" {
-				if a := m.audit(p.Name, "", "", "", status); a != nil {
+				var args struct {
+					Lane string `json:"lane"`
+					Goal string `json:"goal_id"`
+				}
+				_ = json.Unmarshal(p.Arguments, &args)
+				reason := ""
+				if e != nil {
+					reason = e.Error()
+				}
+				if a := m.audit(p.Name, args.Lane, args.Goal, "", status, reason); a != nil {
 					e = a
 				}
 			}

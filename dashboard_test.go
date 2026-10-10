@@ -59,7 +59,7 @@ func TestDashboardAssetsBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := string(page)
-	if strings.Count(html, `role="tablist"`) != 1 || strings.Count(html, `role="tab"`) != 5 || strings.Count(html, `role="tabpanel"`) != 5 || strings.Count(html, `aria-selected="true"`) != 1 {
+	if strings.Count(html, `role="tablist"`) != 2 || strings.Count(html, `role="tab"`) != 5 || strings.Count(html, `role="tabpanel"`) != 5 || strings.Count(html, `aria-selected="true"`) != 1 {
 		t.Fatal("dashboard needs five accessible tabs and one initial selection")
 	}
 	for _, id := range []string{"agents", "messages", "digest", "runs", "auditSection"} {
@@ -74,7 +74,7 @@ func TestDashboardAssetsBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, contract := range []string{"selectTab(location.hash.slice(1))", "'/' + location.hash", "'hashchange'", "'ArrowLeft'", "'ArrowRight'", "'Home'", "'End'", "panel.hidden = !selected", "tab.setAttribute('aria-selected', String(selected))", "tab.tabIndex = selected ? 0 : -1"} {
+	for _, contract := range []string{"selectTab(location.hash.slice(1), false, false)", "'/' + location.hash", "'hashchange'", "'ArrowLeft'", "'ArrowRight'", "'Home'", "'End'", "panel.hidden = !selected", "tab.setAttribute('aria-selected', String(selected))", "tab.tabIndex = selected ? 0 : -1"} {
 		if !strings.Contains(string(script), contract) {
 			t.Fatalf("tab source contract missing: %s", contract)
 		}
@@ -117,14 +117,14 @@ const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
 let predicate = 'harness initialization';
 function check(ok, label) { predicate = label; if (!ok) throw new Error(); }
 class Element {
-  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.attrs = {}; this.value = ''; this.hidden = false; this.open = false; this.dataset = {}; this.listeners = {}; this.className = ''; this.text = ''; }
+  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.attrs = {}; this.value = ''; this.hidden = false; this.open = false; this.checked = false; this.dataset = {}; this.listeners = {}; this.className = ''; this.text = ''; }
   get textContent() { return this.text + this.children.map(n => n.textContent).join(''); }
   set textContent(value) { this.replaceChildren(); this.text = String(value); }
   get firstElementChild() { return this.children[0] || null; }
   get nextElementSibling() { const siblings = this.parentElement.children; return siblings[siblings.indexOf(this) + 1] || null; }
   get options() { return this.children; }
   get classList() { return {add: c => { this.className += ' ' + c; }, remove: c => { this.className = this.className.split(' ').filter(x => x !== c).join(' '); }, contains: c => this.className.split(' ').includes(c)}; }
-  setAttribute(key, value) { this.attrs[key] = String(value); if (key === 'id') this.id = value; if (key === 'class') this.className = value; if (key === 'hidden') this.hidden = true; }
+  setAttribute(key, value) { this.attrs[key] = String(value); if (key === 'id') this.id = value; if (key === 'class') this.className = value; if (key === 'hidden') this.hidden = true; if (key === 'checked') this.checked = true; }
   getAttribute(key) { return this.attrs[key]; }
   contains(n) { return n === this || this.children.some(child => child.contains(n)); }
   matches(s) { return s.startsWith('.') ? this.classList.contains(s.slice(1)) : s === '[role="tab"]' ? this.attrs.role === 'tab' : this.tagName === s.toUpperCase(); }
@@ -153,7 +153,7 @@ function start(hash, store = new Map(), query = '', blocked = false) {
   function attach(n) { n.document = doc; n.children.forEach(attach); } attach(root);
   const calls = [], timers = [], win = {getSelection: () => ({isCollapsed: true}), addEventListener: (n, fn) => { win[n] = fn; }};
   const location = {href: 'http://localhost:8123/' + query + hash, hash, search: query};
-  const context = vm.createContext({document: doc, window: win, location, URL, history: {replaceState: (_, __, path) => { location.href = 'http://localhost:8123' + path; location.hash = path.includes('#') ? path.slice(path.indexOf('#')) : ''; location.search = ''; }}, sessionStorage: {getItem: k => { if (blocked) throw new Error(); return store.get(k) || null; }, setItem: (k, v) => { if (blocked) throw new Error(); store.set(k, v); }}, fetch: async (path, options) => { calls.push({path, options}); return {ok: true, json: async () => input.data}; }, setInterval: fn => { timers.push(fn); }, setTimeout: () => 1, clearTimeout: () => {}});
+  const context = vm.createContext({document: doc, window: win, location, URL, history: {pushState: (_, __, path) => { location.hash = path.slice(path.indexOf('#')); }, replaceState: (_, __, path) => { location.href = 'http://localhost:8123' + path; location.hash = path.includes('#') ? path.slice(path.indexOf('#')) : ''; location.search = ''; }}, sessionStorage: {getItem: k => { if (blocked) throw new Error(); return store.get(k) || null; }, setItem: (k, v) => { if (blocked) throw new Error(); store.set(k, v); }}, fetch: async (path, options) => { calls.push({path, options}); return {ok: true, json: async () => input.data}; }, setInterval: fn => { timers.push(fn); }, setTimeout: () => 1, clearTimeout: () => {}});
   vm.runInContext(input.script, context);
   return {context, ids, calls, timers, doc, win, location};
 }
@@ -162,13 +162,12 @@ function rendered(h, id) {
   if (id === 'runs') return h.ids.runs.querySelectorAll('tbody').length === input.data.history.length;
   if (id === 'messages') return h.ids.notes.children.length === input.data.notes.length && h.ids.lane.options.length === input.data.lanes.length;
   if (id === 'digest') return h.ids.oversight.children.length > 0;
-  return h.ids.audit.textContent === input.data.audit;
+  return h.ids.auditRows.children.length === input.data.audit.length;
 }
 (async () => {
   for (const id of ['runs', 'messages', 'digest', 'auditSection']) {
     predicate = 'hash-load ' + id;
     const h = start('#' + id, new Map(), '?token=fixture-auth');
-    if (id === 'auditSection') h.ids.auditSection.querySelector('details').open = true;
     await settle();
     check(rendered(h, id), 'focused hash panel renders: ' + id);
     check(h.calls.length === 1 && h.calls[0].path === '/data', 'authenticated initial data fetch');
@@ -181,11 +180,10 @@ function rendered(h, id) {
     // A hidden panel can retain focus and a recent hold from a prior interaction.
     vm.runInContext("holds.set(el('" + id + "'), Date.now() + 5000)", h.context);
     vm.runInContext("selectTab('agents')", h.context);
-    vm.runInContext("lastData = JSON.parse(JSON.stringify(lastData)); lastData.notes[0].text = 'Updated owner note'; lastData.oversight = 'Updated digest'; lastData.audit = 'Updated audit'; lastData.history = lastData.history.slice(0, 1); render(lastData)", h.context);
-    if (id === 'auditSection') h.ids.auditSection.querySelector('details').open = false;
+    vm.runInContext("lastData = JSON.parse(JSON.stringify(lastData)); lastData.notes[0].text = 'Updated owner note'; lastData.oversight = 'Updated digest'; lastData.audit = [{time: '2026-10-10T00:00:00Z', action: 'freeze', summary: 'Updated audit', result: 'ok', lane: '', goal_id: '', reason: '', digest: '', raw: '{}'}]; lastData.history = lastData.history.slice(0, 1); render(lastData)", h.context);
     if (id === 'runs') h.ids.filter.value = input.data.history[0].goal_id;
     vm.runInContext("selectTab('" + id + "')", h.context);
-    const updated = id === 'runs' ? h.ids.runs.querySelectorAll('tbody').length === 1 : id === 'messages' ? h.ids.notes.textContent.includes('Updated owner note') : id === 'digest' ? h.ids.oversight.textContent.includes('Updated digest') : h.ids.audit.textContent === 'Updated audit';
+    const updated = id === 'runs' ? h.ids.runs.querySelectorAll('tbody').length === 1 : id === 'messages' ? h.ids.notes.textContent.includes('Updated owner note') : id === 'digest' ? h.ids.oversight.textContent.includes('Updated digest') : h.ids.auditRows.textContent.includes('Updated audit');
     check(updated, 'busy panel receives changed data when made visible: ' + id);
     if (id === 'runs') check(h.ids.runs.querySelectorAll('tbody').filter(n => !n.hidden).length === 1, 'history applies deferred filter on visibility');
     check(vm.runInContext("busy(el('" + id + "'))", h.context), 'recent interaction still pauses subsequent refresh');
@@ -194,6 +192,33 @@ function rendered(h, id) {
     h.ids.filter.focus();
     check(vm.runInContext("busy(el('runs'))", h.context), 'input focus remains protected');
   }
+  const lane = start('#agents/codex-2', new Map(), '?token=fixture-auth'); await settle();
+  check(lane.location.hash === '#agents/codex-2', 'lane hash retained on load');
+  check(lane.ids.agentTabs.children.length === input.data.lanes.length + 1, 'All and per-lane tabs');
+  check(lane.ids.lanes.children.filter(n => !n.hidden).length === 1 && lane.ids.lanes.textContent.includes('codex-2'), 'selected lane card only');
+  check(lane.ids.laneHistory.textContent.includes('REVIEW-RELEASE') && !lane.ids.laneHistory.textContent.includes('CHECK-DOCS'), 'lane history isolates runs');
+  check(lane.ids.laneTail.textContent.startsWith('Report saved.'), 'lane tail newest first');
+  check(lane.ids.laneNotes.textContent.includes('codex-2 note') && !lane.ids.laneNotes.textContent.includes('claude-1 note'), 'lane owner notes isolated');
+  check(lane.ids.laneSignals.textContent.includes('codex-2.REVIEW-RELEASE.ended'), 'lane signals visible');
+  vm.runInContext("lastData = JSON.parse(JSON.stringify(lastData)); lastData.lanes.push({lane:'codex-3',kind:'codex',model:'runtime',effort:'default',state:'idle',eta:'-',activity:'-'}); render(lastData)",lane.context);
+  check(lane.ids.agentTabs.children.length === input.data.lanes.length + 2, 'runtime lane added');
+  vm.runInContext("selectTab('agents/codex-3')",lane.context);
+  check(lane.location.hash === '#agents/codex-3' && lane.ids.lanes.textContent.includes('runtime'), 'runtime lane routing and model');
+  lane.location.hash = '#agents/codex-2'; lane.win.hashchange();
+  check(lane.ids.laneHistory.textContent.includes('REVIEW-RELEASE'), 'back/forward hash routing');
+  vm.runInContext("lastData.tails['codex-2'].push('Newest action'); render(lastData)",lane.context);
+  check(lane.ids.laneTail.textContent.startsWith('Newest action'), 'live lane tail follows');
+  vm.runInContext("lastData.lanes = lastData.lanes.filter(s => s.lane !== 'codex-2'); render(lastData)",lane.context);
+  check(lane.location.hash === '#agents' && lane.ids.laneDetail.hidden, 'removed lane falls back to All');
+  const audit = start('#auditSection', new Map(), '?token=fixture-auth'); await settle();
+  check(audit.ids.auditRows.textContent.includes('Read report REVIEW-RELEASE') && !audit.ids.auditRows.children[0].querySelector('details').open, 'audit readable by default');
+  audit.ids.auditLane.value = 'codex-2'; vm.runInContext('filterAudit()', audit.context);
+  check(audit.ids.auditRows.children.filter(n => !n.hidden).length === 1, 'audit lane filter');
+  audit.ids.auditAction.value = 'nuntius_dispatch'; vm.runInContext('filterAudit()', audit.context);
+  check(audit.ids.auditRows.children.filter(n => !n.hidden).length === 0, 'audit combined action filter');
+  audit.ids.auditLane.value = ''; audit.ids.auditAction.value = ''; audit.ids.auditFilter.value = 'DASHBOARD'; vm.runInContext('filterAudit()', audit.context);
+  check(audit.ids.auditRows.children.filter(n => !n.hidden).length === 1, 'audit text filter');
+  check(audit.ids.auditRows.children[0].querySelector('time').title.length > 0, 'audit exact local time on hover');
   const unsigned = start('#runs'); await settle();
   check(unsigned.calls.length === 0 && !unsigned.ids.error.hidden && unsigned.ids.error.textContent === 'Open the link printed by \x60nuntius web\x60 to sign in.', 'empty tab storage shows sign-in instructions without data requests');
   await vm.runInContext("action('unfreeze')", unsigned.context);
@@ -286,6 +311,7 @@ func TestDashboardFixtureMatchesData(t *testing.T) {
 	type historyView struct {
 		Kind          string            `json:"kind"`
 		Model         string            `json:"model"`
+		Effort        string            `json:"effort"`
 		Relation      string            `json:"relation"`
 		ChainID       string            `json:"chain_id"`
 		ChainDepth    int               `json:"chain_depth"`
@@ -311,7 +337,8 @@ func TestDashboardFixtureMatchesData(t *testing.T) {
 		Tails     map[string][]string `json:"tails"`
 		History   []historyView       `json:"history"`
 		Notes     []OwnerNote         `json:"notes"`
-		Audit     string              `json:"audit"`
+		Audit     []AuditEntry        `json:"audit"`
+		Signals   map[string][]string `json:"signals"`
 		Oversight string              `json:"oversight"`
 	}
 	decode := func(b []byte) dashboard {

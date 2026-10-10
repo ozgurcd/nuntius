@@ -80,8 +80,12 @@ first eligible string. Native MCP IDs server_tool display as server.tool with
 the first underscore as separator; underscore-bearing server names are ambiguous.
 Upstream tool events arrive at completion/error, so no running duration is claimed
 without a start event. Recover/resume/cancel/freeze/timeout share existing paths.
-Status/agents expose configured kind/model; runs persist launch kind/model for
-history, MCP and web data. Old records omit those additive fields.
+Status/agents expose kind and effective model/effort. Claude/Codex model comes
+from --model/-m (split or equals); Claude effort comes from --effort. Codex
+effort comes only from structured startup events when present, otherwise
+default; agent settings are never read. OpenCode keeps its template model.
+Runs persist launch values for history, MCP and web data; old records show
+default rather than borrowing current configuration.
 
 The data directory resolves from --store, NUNTIUS_DATA_DIR, then macOS
 ~/Library/Application Support/nuntius or Linux $XDG_DATA_HOME/nuntius
@@ -254,7 +258,7 @@ shapes and Desktop permission interaction remain owner-pilot questions.
 
 Commands: mcp, status [--long] [--json], agents [--json],
 history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h],
-paths, web [--bind 127.0.0.1:PORT] [--tailnet] [--tailnet-optional] [--tailnet-keep] [--notify-imessage HANDLE] [--allow-host HOST], unfreeze,
+audit [--since 1h] [--json], paths, web [--bind 127.0.0.1:PORT] [--tailnet] [--tailnet-optional] [--tailnet-keep] [--notify-imessage HANDLE] [--allow-host HOST], unfreeze,
 recover, watch LANE, config check, config convert, set KIND-agent-pool N, version and help. Global config
 and store flags precede the command. Status and agents default to human views;
 --json preserves their machine shapes. MCP output stays JSON. Status columns
@@ -377,7 +381,12 @@ counts and refresh time in a sticky header. Accessible tabs select Agents
 the selected view on start and reload. Arrow keys and
 Home/End move tab focus and selection; hidden panels defer updates until shown.
 Tab counts show running agents, unread notes and runs with open QUESTIONS.
-Compact two-column desktop cards include agent kind, state text/colour,
+Agents adds All and per-lane sub-tabs, keyed by #agents/LANE, with browser
+history navigation and runtime pool reconciliation. A lane shows its current
+card, newest-first live tail with a Follow control, its rows from the latest
+50 dashboard runs and report links, addressed owner notes and pending signals.
+The strip scrolls horizontally on phones and uses the server badge colour.
+Compact two-column desktop cards include agent kind/model/effort, state text/colour,
 goal, short run ID, human elapsed time, ETA, event age, current action and report status.
 Only running cards offer cancel, with a two-step in-page confirmation.
 The initial cancel button hides until Keep running or the confirmation timeout.
@@ -393,6 +402,14 @@ Data adds kind, eta and activity only to web lanes, reusing the status helpers;
 CLI/MCP retain legacy state values and add optional display_state. Web history
 also has display_state for distinct terminal outcomes. Existing redaction and
 text limits apply.
+
+Audit is parsed in Go into typed, newest-first rows: local time, readable
+action, lane, goal, ok/refused with reason, short digest and redacted raw line.
+CLI audit shares that reader. Malformed/incomplete records are skipped; the
+reader considers the latest 1 MiB and returns at most 200 entries within 64 KiB.
+The dashboard filters by text/lane/action and hides each raw line in a toggle.
+Owner notes may optionally name a configured lane; shared judge notes remain
+in Messages & notes.
 
 Two-second polling updates keyed cards and history rows in place. Expanded
 reports, open tails and open audit content remain stable. Focus, selection and

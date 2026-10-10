@@ -175,7 +175,7 @@ Run `nuntius config check`, then `nuntius set opencode-agent-pool 1` or
 `nuntius agents` to inspect the pool. The template must already exist. Legacy
 OpenCode lanes also support `config convert`; different models within one kind
 refuse conversion. Status, agents, history, MCP and the dashboard show kind and
-model; historical runs retain their launch model even after configuration changes.
+model and effort; historical runs retain their launch values after configuration changes.
 
 Starts use `opencode run --format json --model MODEL [extra_args]`, with the
 brief supplied intact on stdin. Resume adds `--session ID`; missing IDs use the
@@ -212,6 +212,8 @@ nuntius status --long
 nuntius status --json
 nuntius history
 nuntius history --json --limit 50 --lane codex-1 --since 24h
+nuntius audit --since 1h
+nuntius audit --json
 nuntius paths
 nuntius watch claude-1
 ```
@@ -219,9 +221,28 @@ nuntius watch claude-1
 `status` and `agents` print human views by default; add `--json` for machine
 output. Status JSON keeps existing fields and adds `current_action` for running lanes.
 The aligned status view shows agent, state, short run ID, goal, elapsed, ETA, last event age,
-last activity kind, report presence, kind and model. Its header shows freeze state and the
+last activity kind, report presence, kind, model and effort. Its header shows freeze state and the
 data directory. Idle agents show `frozen` during a freeze; active and ended
 agents keep their run state. No terminal colour escapes are emitted.
+
+`agents` displays effective launch flags separately, for example
+`claude-1 ... model=claude-opus-5-5 effort=high` and
+`codex-1 ... model=gpt-6.1-sol effort=default`.
+`status --long` includes MODEL/EFFORT columns such as
+`model=claude-opus-5-5 effort=high`, plus the current action.
+`--model`/`-m` and Claude `--effort` accept split or `=` forms. A missing model
+is `default`. Codex effort comes only from structured startup metadata when
+present; `default` means the stream did not report it. Nuntius never reads
+`~/.codex` or other agent settings. OpenCode keeps its template model.
+Status for a recorded run and history use that run's launch values, not the
+current template. Old records without identity fields display `default`.
+
+`audit [--since 1h] [--json]` shows the latest bounded actions, newest first,
+with local timestamps, action in words, lane, goal, result and a short brief
+digest. Refusals include the recorded reason; older refusals without one say
+`reason not recorded`. JSON includes structured fields and the redacted raw
+record. The reader uses the latest 1 MiB of complete audit lines and returns
+at most 200 entries within a 64 KiB presentation budget.
 
 ETA uses the first line's `size S`, `size M` or `size L` and the median duration
 of earlier finished runs of the same agent kind and size. Only runs that ended
@@ -588,9 +609,20 @@ report presence. Open a card's tail to read its bounded output. Cancel uses
 an in-page confirmation before interrupting a running agent; Keep running or
 the timeout restores the initial button. Message opens that agent's composer.
 
+Within Agents, choose All or one lane. Lane tabs show the server's badge colour
+and scroll horizontally on a phone. A lane link such as `#agents/codex-2`
+survives reload and back/forward navigation. Pool changes update the tab strip;
+removing the selected lane returns to All. A lane view includes model/effort,
+its live tail newest first (Follow can be paused), its rows from the latest 50
+dashboard runs with report links, lane-specific owner notes and pending signals.
+Use the note form's For selector to address a lane; shared judge notes stay in
+Messages & notes.
+
 The other tabs show messages and notes, the judge's `OVERSIGHT.md` digest next
 to the reports directory (or optional absolute `oversight_path` in config),
-the latest 50 runs and the bounded audit log. Filter history by goal ID or lane,
+the latest 50 runs and the bounded audit log. Audit rows show action, lane, goal,
+result/refusal reason and short brief digest, newest first. Filter by text, lane
+or action; each Raw toggle shows the original redacted JSON. Filter history by goal ID or lane,
 then expand a row for highlighted QUESTIONS/DECISIONS, goal and report.
 Times are relative with absolute dates on hover.
 History rows stack on phones without splitting badge, lane or duration words.

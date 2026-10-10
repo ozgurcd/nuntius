@@ -15,8 +15,13 @@ let lastData, lastUpdate = 0, refreshing = false, acting = false;
 const holds = new WeakMap();
 const renderedPanels = new Set();
 const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+const agentTabs = new Map(), laneRuns = new Map(), audits = new Map();
+let laneSelection = '';
 
-function selectTab(id, focus = false) {
+function selectTab(id, focus = false, push = true) {
+  const parts = id.split('/');
+  laneSelection = parts[0] === 'agents' ? parts[1] || '' : laneSelection;
+  id = parts[0];
   const active = tabs.find(tab => tab.getAttribute('aria-controls') === id) || tabs[0];
   let shown = '';
   for (const tab of tabs) {
@@ -26,7 +31,9 @@ function selectTab(id, focus = false) {
     tab.tabIndex = selected ? 0 : -1;
     panel.hidden = !selected;
   }
-  history.replaceState(null, '', '/#' + active.getAttribute('aria-controls'));
+  const panelID = active.getAttribute('aria-controls');
+  const hash = '#' + panelID + (panelID === 'agents' && laneSelection ? '/' + laneSelection : '');
+  if (location.hash !== hash) history[push ? 'pushState' : 'replaceState'](null, '', '/' + hash);
   if (focus) active.focus();
   if (lastData) renderPanels(lastData, shown);
 }
@@ -44,8 +51,8 @@ for (const tab of tabs) {
     selectTab(tabs[next].getAttribute('aria-controls'), true);
   });
 }
-window.addEventListener('hashchange', () => selectTab(location.hash.slice(1)));
-selectTab(location.hash.slice(1));
+window.addEventListener('hashchange', () => selectTab(location.hash.slice(1), false, false));
+selectTab(location.hash.slice(1), false, false);
 
 function node(tag, className, text) {
   const n = document.createElement(tag);
@@ -166,7 +173,7 @@ function makeCard(s) {
 }
 function updateCard(v, s) {
   if (busy(v.root)) return;
-  setText(v.kind, [s.kind || 'Agent', s.model].filter(Boolean).join(' · '));
+  setText(v.kind, (s.kind || 'Agent') + ' · model=' + (s.model || 'default') + ' effort=' + (s.effort || 'default'));
   stateBadge(v.badge, s.display_state || s.state, s.badge);
   v.goal.className = s.goal_id ? 'goal' : 'goal goal-placeholder';
   setText(v.goal, s.goal_id || 'Ready for the next goal');
@@ -184,7 +191,7 @@ function updateCard(v, s) {
     s.activity === '-' ? 'No recent activity' : s.activity || 'No recent activity');
   v.activityText.title = v.activityText.textContent;
   // An open tail is a reading surface: resume text updates when it is closed.
-  if (!v.tail.open) setText(v.tailText, (lastData.tails[s.lane] || []).join('\n') || 'No output yet.');
+  if (!v.tail.open) setText(v.tailText, [...(lastData.tails[s.lane] || [])].reverse().join('\n') || 'No output yet.');
   v.cancelControls.hidden = s.state !== 'running';
   if (s.state !== 'running') v.resetCancel();
 }
@@ -199,12 +206,20 @@ function makeRun(r) {
     if (!detail.hidden) updateRunContent(view, view.data);
   });
   toggle.setAttribute('aria-expanded', 'false');
-  const content = node('td'); content.colSpan = 7;
+  const identity = node('td', 'run-identity');
+  const content = node('td'); content.colSpan = 8;
   content.id = 'run-' + nextRunID++;
   toggle.setAttribute('aria-controls', content.id);
   const badge = node('span', 'badge'), timestamp = node('time');
-  goal.append(toggle); state.append(badge); started.append(timestamp);
-  row.append(lane, runID, goal, state, started, elapsed, relation);
+  const reportLink = node('a', 'report-link', 'Report');
+  reportLink.href = '#runs';
+  reportLink.addEventListener('click', event => {
+    event.preventDefault(); selectTab('runs');
+    const target = runs.get(view.data.run_id);
+    if (target) { target.detail.hidden = false; target.toggle.setAttribute('aria-expanded', 'true'); updateRunContent(target, target.data); target.toggle.focus(); }
+  });
+  goal.append(toggle, reportLink); state.append(badge); started.append(timestamp);
+  row.append(lane, runID, goal, state, started, elapsed, relation, identity);
   const sections = {};
   for (const name of ['QUESTIONS', 'DECISIONS']) {
     const box = node('div', name.toLowerCase()), pre = node('pre', 'report-text');
@@ -217,20 +232,22 @@ function makeRun(r) {
     const block = node('div', 'report-block'); block.append(node('h3', '', name), pre); content.append(block);
   }
   detail.append(content); detail.hidden = true; root.append(row, detail);
-  const view = {root, lane, runID, relation, toggle, badge, timestamp, elapsed, detail, sections, chain, goalText, report, data: r};
+  const view = {root, lane, runID, relation, identity, reportLink, toggle, badge, timestamp, elapsed, detail, sections, chain, goalText, report, data: r};
   return view;
 }
 function updateRunContent(v, r) {
-  setText(v.chain, [r.relation || 'first run', r.kind, r.model].filter(Boolean).join(' · '));
+  setText(v.chain, [r.relation || 'first run', r.kind, 'model=' + (r.model || 'default') + ' effort=' + (r.effort || 'default')].filter(Boolean).join(' · '));
   for (const name of ['QUESTIONS', 'DECISIONS']) setText(v.sections[name], r.sections[name] || 'None recorded.');
   setText(v.goalText, r.goal || 'No goal text available.');
   setText(v.report, r.report || 'No report available.');
 }
 function updateRun(v, r) {
   v.data = r;
+  v.reportLink.hidden = !r.report;
   setText(v.lane, r.lane);
   setText(v.runID, r.run_id);
   setText(v.relation, r.relation || 'first run');
+  setText(v.identity, 'model=' + (r.model || 'default') + ' effort=' + (r.effort || 'default'));
   v.toggle.className = r.chain_depth > 0 ? 'run-toggle chain-child' : 'run-toggle';
   setText(v.toggle, (v.detail.hidden ? '▸ ' : '▾ ') + r.goal_id);
   const state = r.display_state || r.state;
@@ -256,6 +273,78 @@ function makeNote(n) {
   const timestamp = node('time'), read = node('span'), text = node('p');
   header.append(timestamp, read); root.append(header, text);
   return {root, timestamp, read, text};
+}
+function fillFilter(select, values, label) {
+  const chosen = select.value;
+  const wanted = ['', ...new Set(values.filter(Boolean))];
+  for (const option of Array.from(select.options)) if (!wanted.includes(option.value)) option.remove();
+  for (const value of wanted) if (!Array.from(select.options).some(o => o.value === value)) {
+    const option = node('option', '', value || label); option.value = value; select.append(option);
+  }
+  select.value = wanted.includes(chosen) ? chosen : '';
+}
+function renderAgentTabs(d) {
+  if (laneSelection && !d.lanes.some(s => s.lane === laneSelection)) {
+    laneSelection = '';
+    if (!el('agents').hidden) history.replaceState(null, '', '/#agents');
+  }
+  reconcile(el('agentTabs'), [{lane: '', state:'all'}, ...d.lanes], agentTabs, s => {
+    const root = button(s.lane || 'All', '', () => selectTab('agents' + (s.lane ? '/' + s.lane : '')));
+    root.setAttribute('role', 'tab'); root.setAttribute('aria-controls', 'lanes');
+    root.addEventListener('keydown', event => {
+      const names = ['', ...lastData.lanes.map(v => v.lane)], index = names.indexOf(s.lane);
+      let next;
+      if (event.key === 'ArrowLeft') next = (index + names.length - 1) % names.length;
+      if (event.key === 'ArrowRight') next = (index + 1) % names.length;
+      if (event.key === 'Home') next = 0;
+      if (event.key === 'End') next = names.length - 1;
+      if (next === undefined) return;
+      event.preventDefault(); selectTab('agents' + (names[next] ? '/' + names[next] : ''));
+      agentTabs.get(names[next]).root.focus();
+    });
+    return {root};
+  }, (v,s) => {
+    const selected = s.lane === laneSelection;
+    v.root.setAttribute('aria-selected', String(selected)); v.root.tabIndex = selected ? 0 : -1;
+    v.root.className = 'agent-tab' + (s.badge ? ' tone-' + s.badge : '');
+    v.root.title = s.lane ? (s.display_state || s.state) : 'All agents';
+  }, s => s.lane);
+}
+function renderLane(d) {
+  el('laneDetail').hidden = !laneSelection;
+  if (!laneSelection) return;
+  if (el('followTail').checked && !busy(el('laneDetail'))) setText(el('laneTail'), [...(d.tails[laneSelection] || [])].reverse().join('\n') || 'No output yet.');
+  const laneHistory = d.history.filter(r => r.lane === laneSelection);
+  reconcile(el('laneHistory'), laneHistory, laneRuns, makeRun, updateRun, r => r.run_id);
+  el('laneHistoryEmpty').hidden = laneHistory.length !== 0;
+  const own = d.notes.filter(n => n.lane === laneSelection);
+  setText(el('laneNotes'), own.map(n => n.text).join('\n\n') || 'No owner notes for this agent.');
+  setText(el('laneSignals'), ((d.signals || {})[laneSelection] || []).join('\n') || 'No pending signals.');
+}
+function makeAudit(e) {
+  const root = node('tr'), timestamp = node('time'), summary = node('td'), lane = node('td'), goal = node('td'), result = node('td'), digest = node('td');
+  const when = node('td'); when.append(timestamp);
+  const raw = node('details'), rawText = node('pre', 'log'); raw.append(node('summary', '', 'Raw'), rawText);
+  summary.append(node('span'), raw);
+  root.append(when, summary, lane, goal, result, digest);
+  return {root, timestamp, summary: summary.firstElementChild, lane, goal, result, digest, rawText};
+}
+function updateAudit(v,e) {
+  v.data = e; timeText(v.timestamp,e.time);
+  setText(v.summary,e.summary); setText(v.lane,e.lane || '—'); setText(v.goal,e.goal_id || '—');
+  setText(v.result,e.result + (e.reason ? ': ' + e.reason : '')); setText(v.digest,e.digest || '—'); setText(v.rawText,e.raw);
+}
+function filterAudit() {
+  const query = el('auditFilter').value.toLowerCase().trim();
+  let visible = 0;
+  for (const v of audits.values()) {
+    const e = v.data;
+    const match = (!el('auditLane').value || e.lane === el('auditLane').value) &&
+      (!el('auditAction').value || e.action === el('auditAction').value) &&
+      [e.summary,e.lane,e.goal_id,e.result,e.reason,e.digest].join(' ').toLowerCase().includes(query);
+    v.root.hidden = !match; if (match) visible++;
+  }
+  el('auditEmpty').hidden = visible !== 0;
 }
 function render(d) {
   lastData = d;
@@ -290,10 +379,14 @@ function panelReady(id, shown) {
 }
 function renderPanels(d, shown = '') {
   if (!el('agents').hidden) {
+    renderAgentTabs(d);
     reconcile(el('lanes'), d.lanes, cards, makeCard, updateCard, s => s.lane);
+    for (const [lane,v] of cards) v.root.hidden = !d.lanes.some(s => s.lane === lane) || (!!laneSelection && lane !== laneSelection);
+    renderLane(d);
     el('agentsEmpty').hidden = d.lanes.length !== 0;
   }
   if (panelReady('messages', shown)) {
+    fillFilter(el('noteLane'), d.lanes.map(s => s.lane), 'Judge (shared)');
     const select = el('lane'), chosen = select.value;
     for (const option of Array.from(select.options)) if (!d.lanes.some(s => s.lane === option.value)) option.remove();
     for (const s of d.lanes) if (!Array.from(select.options).some(o => o.value === s.lane)) {
@@ -322,13 +415,17 @@ function renderPanels(d, shown = '') {
     filterRuns();
     renderedPanels.add('runs');
   }
-  if (panelReady('auditSection', shown) && (!renderedPanels.has('auditSection') || !el('auditSection').querySelector('details').open)) {
-    setText(el('audit'), d.audit || 'No audit events yet.');
+  if (panelReady('auditSection', shown)) {
+    fillFilter(el('auditLane'), d.audit.map(e => e.lane), 'All lanes');
+    fillFilter(el('auditAction'), d.audit.map(e => e.action), 'All actions');
+    reconcile(el('auditRows'), d.audit.map((e,i) => ({...e, rowKey: e.time + ':' + e.raw + ':' + i})), audits, makeAudit, updateAudit, e => e.rowKey);
+    filterAudit();
     renderedPanels.add('auditSection');
   }
 }
 // The placeholder tbody is removed once; the table head is never reconciled.
 el('history').remove();
+el('laneHistoryPlaceholder').remove();
 async function refresh() {
   if (!token) {
     setText(el('error'), 'Open the link printed by `nuntius web` to sign in.');
@@ -385,9 +482,13 @@ el('stopSend').addEventListener('click', async () => {
 });
 el('noteForm').addEventListener('submit', async event => {
   event.preventDefault();
-  if (await action('note', '', el('note').value)) el('note').value = '';
+  if (await action('note', el('noteLane').value, el('note').value)) el('note').value = '';
 });
 el('filter').addEventListener('input', filterRuns);
+el('auditFilter').addEventListener('input', filterAudit);
+el('auditLane').addEventListener('change', filterAudit);
+el('auditAction').addEventListener('change', filterAudit);
+el('followTail').addEventListener('change', () => { if (lastData) renderLane(lastData); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 setInterval(() => {
   if (lastUpdate) setText(el('updated'), 'Updated ' + Math.floor((Date.now() - lastUpdate) / 1000) + 's ago');

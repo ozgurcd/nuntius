@@ -179,7 +179,7 @@ func (m *Manager) recoverEnded(r *Run) error {
 	r.SessionID = m.session(r.ID)
 	return m.endRun(r)
 }
-func (m *Manager) audit(tool, lane, goal, digest, result string) error {
+func (m *Manager) audit(tool, lane, goal, digest, result string, reasons ...string) error {
 	f, e := privateFile(filepath.Join(m.store, "audit.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND)
 	if e != nil {
 		return e
@@ -195,7 +195,11 @@ func (m *Manager) audit(tool, lane, goal, digest, result string) error {
 	if !goalPattern.MatchString(goal) {
 		goal = ""
 	}
-	b, _ := json.Marshal(map[string]any{"time": time.Now().UTC(), "tool": tool, "lane": lane, "goal_id": goal, "sha256": digest, "result": result})
+	reason := ""
+	if len(reasons) > 0 {
+		reason = cell(bounded(Redact(reasons[0]), 512))
+	}
+	b, _ := json.Marshal(map[string]any{"time": time.Now().UTC(), "tool": tool, "lane": lane, "goal_id": goal, "sha256": digest, "result": result, "reason": reason})
 	if _, e = f.Write(append(b, '\n')); e != nil {
 		return errors.New("cannot append audit")
 	}

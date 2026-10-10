@@ -21,7 +21,9 @@
         "age_source": "observed",
         "running_seconds": 8
       },
-      "badge": "green"
+      "badge": "green",
+      "model": "launch-model",
+      "effort": "high"
     },
     {
       "lane": "codex-1",
@@ -31,7 +33,9 @@
       "report_exists": false,
       "asked_interactively": false,
       "eta": "-",
-      "activity": "-"
+      "activity": "-",
+      "model": "launch-model",
+      "effort": "high"
     },
     {
       "lane": "codex-2",
@@ -48,7 +52,9 @@
       "asked_interactively": false,
       "eta": "-",
       "activity": "reading files",
-      "badge": "green"
+      "badge": "green",
+      "model": "launch-model",
+      "effort": "high"
     },
     {
       "lane": "claude-2",
@@ -65,7 +71,9 @@
       "asked_interactively": false,
       "eta": "-",
       "activity": "editing files",
-      "badge": "red"
+      "badge": "red",
+      "model": "launch-model",
+      "effort": "high"
     }
   ],
   "tails": {
@@ -89,7 +97,7 @@
       "run_id": "sample02",
       "lane": "codex-2",
       "kind": "codex",
-      "model": "",
+      "model": "launch-model",
       "goal_id": "REVIEW-RELEASE",
       "started": "2026-10-09T19:00:00Z",
       "ended": "2026-10-09T19:30:40Z",
@@ -104,13 +112,14 @@
       "chain_id": "sample02",
       "chain_depth": 0,
       "relation": "first run",
-      "badge": "green"
+      "badge": "green",
+      "effort": "high"
     },
     {
       "run_id": "sample03",
       "lane": "claude-2",
       "kind": "claude",
-      "model": "",
+      "model": "launch-model",
       "goal_id": "CHECK-DOCS",
       "started": "2026-10-09T18:00:00Z",
       "ended": "2026-10-09T18:15:02Z",
@@ -125,13 +134,14 @@
       "chain_id": "sample03",
       "chain_depth": 0,
       "relation": "first run",
-      "badge": "red"
+      "badge": "red",
+      "effort": "high"
     },
     {
       "run_id": "sample04",
       "lane": "claude-1",
       "kind": "claude",
-      "model": "",
+      "model": "launch-model",
       "goal_id": "VERIFY-ASSETS",
       "started": "2026-10-09T17:00:00Z",
       "ended": "2026-10-09T17:18:12Z",
@@ -146,7 +156,8 @@
       "chain_id": "sample04",
       "chain_depth": 0,
       "relation": "first run",
-      "badge": "amber"
+      "badge": "amber",
+      "effort": "high"
     }
   ],
   "notes": [
@@ -161,8 +172,50 @@
       "time": "2026-10-09T19:45:00Z",
       "text": "Use the existing release pipeline. I will upgrade my install.",
       "read": true
+    },
+    {
+      "id": "lane-note-1",
+      "time": "2026-10-09T20:00:00Z",
+      "lane": "codex-2",
+      "text": "codex-2 note",
+      "read": false
+    },
+    {
+      "id": "lane-note-2",
+      "time": "2026-10-09T20:00:00Z",
+      "lane": "claude-1",
+      "text": "claude-1 note",
+      "read": false
     }
   ],
-  "audit": "{\"time\":\"2026-10-09T20:00:00Z\",\"tool\":\"nuntius_dispatch\",\"lane\":\"claude-1\",\"goal_id\":\"DASHBOARD-POLISH\",\"result\":\"started\"}\n{\"time\":\"2026-10-09T19:45:00Z\",\"tool\":\"nuntius_owner_notes\",\"result\":\"read\"}",
-  "oversight": "# Operations are steady\nDashboard polish is running. Release review is complete.\n## Owner attention\nReview the release timing question in REVIEW-RELEASE.\n## Next step\nUpgrade through Homebrew after the release completes."
+  "audit": [
+    {
+      "time": "2026-10-09T20:00:00Z",
+      "action": "nuntius_dispatch",
+      "summary": "Dispatched DASHBOARD-POLISH to claude-1",
+      "lane": "claude-1",
+      "goal_id": "DASHBOARD-POLISH",
+      "result": "ok",
+      "reason": "",
+      "digest": "aaaaaaaaaaaa",
+      "raw": "{\"tool\":\"nuntius_dispatch\"}"
+    },
+    {
+      "time": "2026-10-09T19:45:00Z",
+      "action": "nuntius_report",
+      "summary": "Read report REVIEW-RELEASE",
+      "lane": "codex-2",
+      "goal_id": "REVIEW-RELEASE",
+      "result": "ok",
+      "reason": "",
+      "digest": "",
+      "raw": "{\"tool\":\"nuntius_report\"}"
+    }
+  ],
+  "oversight": "# Operations are steady\nDashboard polish is running. Release review is complete.\n## Owner attention\nReview the release timing question in REVIEW-RELEASE.\n## Next step\nUpgrade through Homebrew after the release completes.",
+  "signals": {
+    "codex-2": [
+      "codex-2.REVIEW-RELEASE.ended"
+    ]
+  }
 }

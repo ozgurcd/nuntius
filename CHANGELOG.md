@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased
+## v0.2.11 — 2026-10-10
+
+- Resolve Claude/Codex model flags and Claude effort flags in split and equals
+  forms. Record launch model/effort per run; capture Codex structured startup
+  effort when reported, otherwise use `default`. Never read agent config files.
+  Show identity in CLI agents/status/history, MCP status/history and dashboard.
+- Add readable `audit [--since 1h] [--json]` and structured dashboard audit rows,
+  newest first, with local times, action/lane filters, redacted refusal reasons,
+  short brief digests and optional redacted raw records.
+- Add All and per-agent dashboard tabs with hash routing, live newest-first tails,
+  lane history/report links, lane owner notes and pending signals. Reconcile pool
+  changes at runtime; keep the existing main dashboard views.
+- Cover flag variants/defaults, recorded launch identity after configuration
+  changes, structured effort persistence, audit safety/order/filtering, and
+  dashboard routes/runtime pool changes with offline fake-agent and Node tests.
 
 - Add user-facing release notes for the existing versions. Require matching,
   nonempty release-note and changelog sections in release checks and CI, with

@@ -21,6 +21,7 @@ type HistoryFilter struct {
 type HistoryEntry struct {
 	Kind            string    `json:"kind,omitempty"`
 	Model           string    `json:"model,omitempty"`
+	Effort          string    `json:"effort"`
 	ShortRunID      string    `json:"short_run_id"`
 	Relation        string    `json:"relation"`
 	ChainID         string    `json:"chain_id"`
@@ -66,7 +67,7 @@ func (m *Manager) History(f HistoryFilter) ([]HistoryEntry, error) {
 		}
 		rows = append(rows, HistoryEntry{RunID: r.ID, Lane: r.Lane, GoalID: r.GoalID, Ended: *r.Ended, Outcome: runOutcome(r), DurationSeconds: max(0, int64(r.Ended.Sub(r.Started).Seconds())), ReportExists: m.reportExists(r), Exit: r.Exit, ParentRunID: r.ParentRunID, ContinueRunID: r.ContinueRunID, ResumeCount: r.ResumeCount, DisplayState: terminalDisplay(r, runOutcome(r)), Badge: badgeTone(r, r.State)})
 		row := &rows[len(rows)-1]
-		row.Kind, row.Model = r.Kind, r.Model
+		row.Kind, row.Model, row.Effort = r.Kind, identityValue(r.Model), identityValue(r.Effort)
 		row.ShortRunID = shortRunID(r.ID)
 		row.Relation, row.ChainID, row.ChainDepth = runRelation(r, index)
 	}
@@ -100,7 +101,7 @@ func runOutcome(r Run) string {
 
 func writeHistory(out io.Writer, rows []HistoryEntry) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "ENDED\tAGENT\tRUN\tGOAL\tOUTCOME\tDURATION\tREPORT\tEXIT\tRELATION\tKIND\tMODEL")
+	fmt.Fprintln(w, "ENDED\tAGENT\tRUN\tGOAL\tOUTCOME\tDURATION\tREPORT\tEXIT\tRELATION\tKIND\tMODEL\tEFFORT")
 	for _, r := range groupedHistory(rows) {
 		report, exit := "no", "-"
 		if r.ReportExists {
@@ -117,7 +118,7 @@ func writeHistory(out io.Writer, rows []HistoryEntry) error {
 		if r.ChainDepth > 0 {
 			indent = "  ↳ "
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Ended.Local().Format("2006-01-02 15:04:05 MST"), cell(r.Lane), shortRunID(r.RunID), indent+cell(r.GoalID), cell(state), shortDuration(time.Duration(r.DurationSeconds)*time.Second), report, exit, cell(r.Relation), cell(r.Kind), cell(r.Model))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\tmodel=%s\teffort=%s\n", r.Ended.Local().Format("2006-01-02 15:04:05 MST"), cell(r.Lane), shortRunID(r.RunID), indent+cell(r.GoalID), cell(state), shortDuration(time.Duration(r.DurationSeconds)*time.Second), report, exit, cell(r.Relation), cell(r.Kind), identityValue(r.Model), identityValue(r.Effort))
 	}
 	return w.Flush()
 }

@@ -196,7 +196,7 @@ func (m *Manager) writeStatus(out io.Writer, view any, long ...bool) error {
 		fmt.Fprintln(out, webStatusLine(m.webDashboard()))
 	}
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	heading := "AGENT\tSTATE\tRUN\tGOAL\tELAPSED\tETA\tEVENT AGE\tACTIVITY\tREPORT\tKIND\tMODEL"
+	heading := "AGENT\tSTATE\tRUN\tGOAL\tELAPSED\tETA\tEVENT AGE\tACTIVITY\tREPORT\tKIND\tMODEL\tEFFORT"
 	if len(long) > 0 && long[0] {
 		heading += "\tCURRENT ACTION"
 	}
@@ -233,7 +233,7 @@ func (m *Manager) writeStatus(out io.Writer, view any, long ...bool) error {
 		if id == "" {
 			id = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", cell(s.Lane), state, id, goal, elapsed, eta, age, current, report, cell(s.Kind), cell(s.Model))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\tmodel=%s\teffort=%s", cell(s.Lane), state, id, goal, elapsed, eta, age, current, report, cell(s.Kind), identityValue(s.Model), identityValue(s.Effort))
 		if len(long) > 0 && long[0] {
 			fmt.Fprintf(w, "\t%s", actionText(s.CurrentAction))
 		}
