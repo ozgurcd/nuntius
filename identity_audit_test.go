@@ -68,7 +68,9 @@ func TestLaunchIdentitySurfacesAndHistory(t *testing.T) {
 	if err != nil || r == nil || r.Model != "launch-opus" || r.Effort != "high" {
 		t.Fatal("launch snapshot missing")
 	}
+	m.mu.Lock()
 	m.config.Lanes[0].ExtraArgs = []string{"--model=new-opus", "--effort=low"}
+	m.mu.Unlock()
 	rows, err := m.History(HistoryFilter{Limit: 20})
 	if err != nil || len(rows) != 1 || rows[0].Model != "launch-opus" || rows[0].Effort != "high" {
 		t.Fatal("history followed config change")

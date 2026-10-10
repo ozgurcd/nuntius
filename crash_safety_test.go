@@ -177,7 +177,9 @@ func TestCrashRecoveryExclusionsAndReadOnly(t *testing.T) {
 			}
 			if mode == "auto_resume_off" {
 				off := false
+				m.mu.Lock()
 				m.config.AutoResume = &off
+				m.mu.Unlock()
 			}
 			if err := m.Recover(); err != nil {
 				t.Fatal(err)

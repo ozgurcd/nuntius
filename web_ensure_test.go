@@ -305,9 +305,11 @@ func TestWebEnsureNotification(t *testing.T) {
 	for _, mode := range []string{"disabled", "sent", "failed"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newEnsureFixture(t, false)
+			f.m.mu.Lock()
 			f.m.config.NotifyIMessage = "synthetic@example.test"
 			enabled := mode != "disabled"
 			f.m.config.NotifyIMessageEnabled = &enabled
+			f.m.mu.Unlock()
 			f.notifyErr = mode == "failed"
 			r := ensureCall(t, f.m)
 			if r.Reason != "ready" || r.Notification != mode || !r.SignIn {
@@ -594,7 +596,9 @@ func TestWebEnsureStateModesAndRequestGuards(t *testing.T) {
 func TestWebEnsureNativeBackground(t *testing.T) {
 	m, c, store := manager(t)
 	cliFixture(t, c, store)
+	m.mu.Lock()
 	m.config.SourcePath = os.Getenv("NUNTIUS_CONFIG")
+	m.mu.Unlock()
 	dir := fakeTailscale(t, fixtureTailnetStatus)
 	if os.Symlink(fakeBinary, filepath.Join(dir, "launchctl")) != nil {
 		t.Fatal("fake launchctl setup")

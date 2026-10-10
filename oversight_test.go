@@ -257,7 +257,9 @@ func TestWebRequestGuards(t *testing.T) {
 func TestWebViewsNotesQueuedReplyAndQuestions(t *testing.T) {
 	m, c, _ := manager(t)
 	c.OversightPath = filepath.Join(c.ReportsDir, "OVERSIGHT.md")
+	m.mu.Lock()
 	m.config = c
+	m.mu.Unlock()
 	_ = os.WriteFile(c.OversightPath, []byte("# Owner digest\nwaiting for owner"), 0600)
 	_, err := m.Dispatch("codex", "WEB-1", "wait")
 	if err != nil {
