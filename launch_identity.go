@@ -82,7 +82,7 @@ func (m *Manager) captureEffort(r *Run) bool {
 	if err != nil {
 		return false
 	}
-	if effort := codexEffort(b); effort != "" {
+	if effort := m.eventWindow(r.ID, b, true).effort; effort != "" {
 		r.Effort = effort
 		return true
 	}

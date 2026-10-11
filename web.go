@@ -357,7 +357,7 @@ func (w *Web) data() (any, error) {
 		kind, eta, current := m.agentKind(s.Lane), "-", "-"
 		if s.RunID != "" {
 			b, _ := readWindow(filepath.Join(m.store, "runs", s.RunID, "events.jsonl"), true)
-			current = activity(b)
+			current = m.eventWindow(s.RunID, b, false).activity
 			if s.State == "running" && s.Started != nil {
 				eta = m.etaFromHistory(runs, Run{ID: s.RunID, Started: *s.Started}, kind, m.runSize(s.RunID), time.Duration(s.ElapsedSeconds)*time.Second)
 			}

@@ -76,20 +76,22 @@ type activeRun struct {
 	stop chan string
 }
 type Manager struct {
-	settingsIO   *settingsIO
-	actionClocks map[string]actionObservation
-	mu           sync.Mutex
-	config       Config
-	store        string
-	runtime      time.Duration
-	Grace        time.Duration
-	active       map[string]*activeRun
-	closed       bool
-	closing      chan struct{}
-	watcher      sync.WaitGroup
-	recovery     bool
-	launcher     *jobLauncher
-	webEnsure    *webEnsureRuntime // nil uses owner-process adapters; tests use offline fakes.
+	eventWindows    map[eventWindowID]*parsedEventWindow
+	eventCacheClock uint64
+	settingsIO      *settingsIO
+	actionClocks    map[string]actionObservation
+	mu              sync.Mutex
+	config          Config
+	store           string
+	runtime         time.Duration
+	Grace           time.Duration
+	active          map[string]*activeRun
+	closed          bool
+	closing         chan struct{}
+	watcher         sync.WaitGroup
+	recovery        bool
+	launcher        *jobLauncher
+	webEnsure       *webEnsureRuntime // nil uses owner-process adapters; tests use offline fakes.
 }
 
 func NewManager(c Config, store string) (*Manager, error) {
@@ -353,7 +355,9 @@ func agentArgs(l Lane, session string) []string {
 func (m *Manager) follow(r Run, lock, supervisor *os.File, a *activeRun, grace time.Duration) {
 	launchAllowed := lock != nil
 	defer supervisor.Close()
-	tick := time.NewTicker(50 * time.Millisecond)
+	// Stop requests send SIGINT synchronously. Metadata/identity polling need
+	// not reopen every lane's files twenty times a second while it is busy.
+	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
 	finished := false
 	var lastStuckCheck time.Time
@@ -384,6 +388,9 @@ func (m *Manager) follow(r Run, lock, supervisor *os.File, a *activeRun, grace t
 						finished = true
 					}
 					if sameProcess(r) {
+						if r.StopAt != nil {
+							tick.Reset(50 * time.Millisecond)
+						}
 						if now := time.Now(); now.Sub(lastStuckCheck) >= time.Second {
 							lastStuckCheck = now
 							if _, err := m.checkStuck(&r, now); err != nil {
@@ -651,7 +658,7 @@ func (m *Manager) status(details bool) ([]Status, error) {
 				s.DisplayState = ""
 			}
 			if b, err := readWindow(filepath.Join(m.store, "runs", r.ID, "events.jsonl"), true); err == nil {
-				_, s.AskedInteractively = questionSummary(b)
+				s.AskedInteractively = m.eventWindow(r.ID, b, false).asked
 				if s.State == "running" && s.LastEvent != nil {
 					s.CurrentAction = m.currentAction(r.ID, b, *s.LastEvent, time.Now())
 				}

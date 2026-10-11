@@ -87,20 +87,12 @@ func (m *Manager) Tail(lane string, lines int) ([]string, error) {
 		return nil, e
 	}
 	if r.State != "running" && !m.reportExists(*r) {
-		final, _ := questionSummary(b)
+		final := m.eventWindow(r.ID, b, false).final
 		if final != "" {
 			return []string{bounded(final, 8192)}, nil
 		}
 	}
-	for _, action := range streamActions(b) {
-		if action.Summary != "" {
-			out = append(out, action.Summary)
-		}
-	}
-	out = strings.Split(Redact(strings.Join(out, "\n")), "\n")
-	for i := range out {
-		out[i] = bounded(out[i], 4096)
-	}
+	out = append(out, m.eventWindow(r.ID, b, false).tail...)
 	if len(out) > lines {
 		out = out[len(out)-lines:]
 	}
@@ -155,42 +147,51 @@ func questionSummary(b []byte) (string, bool) {
 	final := ""
 	asked := false
 	for _, line := range bytes.Split(b, []byte("\n")) {
-		var v event
-		if json.Unmarshal(line, &v) != nil {
-			continue
-		}
-		var parts []string
-		if v.OpenCodeSessionID != "" || v.Part.Text != "" || v.Part.Tool != "" {
-			if v.Type == "text" {
-				parts = append(parts, v.Part.Text)
-			}
-			if v.Type == "tool_use" && (v.Part.Tool == "question" || strings.Contains(v.Part.Tool, "request_user_input")) {
-				asked = true
-			}
-		}
-		if v.Type == "assistant" {
-			for _, c := range v.Message.Content {
-				if c.Type == "text" {
-					parts = append(parts, c.Text)
-				}
-				if c.Type == "tool_use" && (c.Name == "AskUserQuestion" || strings.Contains(c.Name, "request_user_input")) {
-					asked = true
-				}
-			}
-		}
-		if v.Type == "item.completed" || v.Type == "item.started" {
-			if v.Item.Type == "agent_message" {
-				parts = append(parts, v.Item.Text)
-			}
-			if strings.Contains(v.Item.Tool, "request_user_input") || v.Item.Type == "request_user_input" {
-				asked = true
-			}
-		}
-		if len(parts) > 0 {
-			final = strings.Join(parts, "\n")
+		text, question, hasText := questionEvent(line)
+		asked = asked || question
+		if hasText {
+			final = text
 		}
 	}
 	return final, asked
+}
+
+// Keep the presence bit: an empty assistant message clears an older final.
+// Redact the complete message before any cached bound is applied.
+func questionEvent(line []byte) (string, bool, bool) {
+	var v event
+	if json.Unmarshal(line, &v) != nil {
+		return "", false, false
+	}
+	var parts []string
+	asked := false
+	if v.OpenCodeSessionID != "" || v.Part.Text != "" || v.Part.Tool != "" {
+		if v.Type == "text" {
+			parts = append(parts, v.Part.Text)
+		}
+		if v.Type == "tool_use" && (v.Part.Tool == "question" || strings.Contains(v.Part.Tool, "request_user_input")) {
+			asked = true
+		}
+	}
+	if v.Type == "assistant" {
+		for _, c := range v.Message.Content {
+			if c.Type == "text" {
+				parts = append(parts, c.Text)
+			}
+			if c.Type == "tool_use" && (c.Name == "AskUserQuestion" || strings.Contains(c.Name, "request_user_input")) {
+				asked = true
+			}
+		}
+	}
+	if v.Type == "item.completed" || v.Type == "item.started" {
+		if v.Item.Type == "agent_message" {
+			parts = append(parts, v.Item.Text)
+		}
+		if strings.Contains(v.Item.Tool, "request_user_input") || v.Item.Type == "request_user_input" {
+			asked = true
+		}
+	}
+	return Redact(strings.Join(parts, "\n")), asked, len(parts) > 0
 }
 
 func (m *Manager) reportExists(r Run) bool {

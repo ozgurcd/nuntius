@@ -246,19 +246,8 @@ func (m *Manager) currentAction(runID string, b []byte, modified, now time.Time)
 		m.actionClocks = map[string]actionObservation{}
 	}
 	old := m.actionClocks[runID]
-	var latest actionEvent
-	pending := map[string]actionEvent{}
-	for _, a := range streamActions(b) {
-		if a.Started && a.Command && a.ID != "" {
-			pending[a.ID] = a
-		}
-		if a.Finished {
-			delete(pending, a.ID)
-		}
-		if a.Summary != "" {
-			latest = a
-		}
-	}
+	window := m.eventWindow(runID, b, false)
+	latest := window.latest
 	if latest.Summary == "" {
 		return nil
 	}
@@ -270,8 +259,8 @@ func (m *Manager) currentAction(runID string, b []byte, modified, now time.Time)
 		}
 	}
 	result := &CurrentAction{Summary: latest.Summary, AgeSeconds: max(0, int64(now.Sub(observed.At).Seconds())), AgeSource: observed.Source}
-	if command, ok := pending[latest.ID]; ok && latest.Command {
-		started := command.At
+	if window.commandRunning && latest.Command {
+		started := window.command.At
 		if started.IsZero() {
 			started = observed.At
 			if old.CommandID == latest.ID && !old.CommandAt.IsZero() {
