@@ -7,6 +7,15 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Sign-out, expiry, sign-out in another tab and server rejection immediately
+  clear the private freeze tooltip and screen-reader name and navigation counts,
+  even while a dashboard action or page reload is pending.
+- Settings reads wait briefly when busy and retry within a limit. Specific
+  messages distinguish busy reads from missing or invalid configuration. Drafts
+  stay intact; saves still refuse busy locks without writing or retrying.
+- Idle background maintenance skips ended-run event details and reuses its
+  history snapshot. Recovery checks remain active, and explicit status reads
+  still include full detail. No upgrade or restart is automatic.
 - If a background dashboard cannot start, the terminal now gives the known
   cause and full web.log path. Tailscale sign-in failures, a busy local port,
   another Serve mapping and Funnel no longer produce only “inspect web.log”.

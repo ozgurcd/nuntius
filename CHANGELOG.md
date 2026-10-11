@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Clear the freeze badge tooltip/accessibility label and navigation counts
+  synchronously on sign-out, expiry, cross-tab sign-out and server rejection,
+  including before reload completes and during pending actions.
+- Wait briefly for Settings GET lock contention with one cancellable deadline;
+  show specific read failures and retry busy reads within a limit while preserving
+  drafts. Saves still refuse busy locks without writing or automatic retries.
+- Use metadata-only idle maintenance and reuse its shared history snapshot,
+  while keeping recovery checks and full detail for explicit status reads.
 - Return known background dashboard startup causes and the full web.log path;
   distinguish Tailscale connection/CLI/status failures, busy local ports,
   conflicting Serve mappings and Funnel. Persist only allowlisted failure codes,

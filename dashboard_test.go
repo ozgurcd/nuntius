@@ -184,6 +184,35 @@ function rendered(h, id) {
 }
 (async () => {
   const tabIDs=['agents','queue','messages','digest','runs','auditSection','settings'];
+  // Reload deliberately leaves this DOM intact: clearing must happen before
+  // navigation completes, including while an action is waiting for a reply.
+  const headerFailures = [];
+  for (const trigger of ['sign-out', 'expiry', 'cross-tab', 'server-rejection']) for (const actionPending of [false, true]) {
+    const clock = {now:1791658800000}, store = new Map();
+    let finishAction;
+    const response = new Promise(resolve => { finishAction = resolve; });
+    const h = start('#queue', store, '?token=fixture-auth', false, clock, 200, null, actionPending ? response : null); await settle();
+    vm.runInContext("lastData = JSON.parse(JSON.stringify(lastData)); lastData.freeze = {since:'2026-10-11T00:00:00Z',reason:'Private fixture reason'}; lastData.lanes = [{lane:'fixture-a',state:'running'},{lane:'fixture-b',state:'running'}]; lastData.notes = [{id:'a',read:false},{id:'b',read:false}]; lastData.history = [{sections:{QUESTIONS:'Fixture question A'}},{sections:{QUESTIONS:'Fixture question B'}}]; render(lastData)", h.context);
+    const headerCounts = ['agentsTabCount','notesTabCount','questionsTabCount','queueTabCount'];
+    check(h.ids.freeze.title.includes('Private fixture reason') && h.ids.freeze.getAttribute('aria-label') === h.ids.freeze.title && headerCounts.every(id => Number(h.ids[id].textContent) > 0), 'private header control is populated');
+    const action = actionPending ? h.ids.freezeButton.click() : null;
+    if (actionPending) check(h.ids.freezeButton.disabled && !h.ids.signOut.disabled, 'header proof holds a pending action');
+    if (trigger === 'sign-out') h.ids.signOut.click();
+    if (trigger === 'expiry') { clock.now += 7*24*60*60*1000; vm.runInContext('authenticated()', h.context); }
+    if (trigger === 'cross-tab') { store.delete('nuntius.web.credential'); h.win.storage({storageArea:vm.runInContext('localStorage', h.context),key:'nuntius.web.credential'}); }
+    if (trigger === 'server-rejection') {
+      if (actionPending) { finishAction({status:403,ok:false}); await action; }
+      else { h.context.fetch = async () => ({status:403,ok:false}); await vm.runInContext('refresh()', h.context); }
+    }
+    const cleared = () => h.ids.freeze.textContent === 'Signed out' && h.ids.freeze.title === 'Signed out' && h.ids.freeze.getAttribute('aria-label') === 'Signed out' && headerCounts.every(id => h.ids[id].textContent === '—');
+    check(!vm.runInContext('authenticated()', h.context) && !store.has('nuntius.web.credential') && h.location.reloads === 1 && !h.ids.freeze.hidden && !h.ids.signInPanel.hidden && tabIDs.every(id => h.ids[id].hidden), 'header proof reaches signed-out view: ' + trigger);
+    if (!cleared()) headerFailures.push(trigger + (actionPending ? ' pending action' : ' held reload'));
+    if (actionPending && trigger !== 'server-rejection') {
+      finishAction({status:200,ok:true}); await action; await settle();
+      if (!cleared()) headerFailures.push(trigger + ' late action');
+    }
+  }
+  check(headerFailures.length === 0, 'private header cleared immediately: ' + headerFailures.join(', '));
   for(const first of tabIDs) {
     const h=start('#'+first);await settle();
     check(h.ids.signInPanel && !h.ids.signInPanel.hidden && tabIDs.every(id=>h.ids[id].hidden), 'one sign-in panel replaces all signed-out content: '+first);
