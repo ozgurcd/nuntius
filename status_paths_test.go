@@ -77,7 +77,7 @@ func TestCLIHumanAndJSONStatus(t *testing.T) {
 				t.Fatal("JSON invalid")
 			}
 			if command[0] == "status" {
-				m, err := NewManager(c, store)
+				m, err := newReadManager(c, store)
 				if err != nil {
 					t.Fatal(err)
 				}

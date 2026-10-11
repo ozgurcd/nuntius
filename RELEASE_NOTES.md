@@ -7,6 +7,11 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Pause a lane from the CLI while its current run finishes. Resume clears only
+  that hold and starts no work. List explains saved holds, including removed
+  lanes; status keeps failures and reports visible. Held messages stay for your
+  explicit review, send or discard. Reading lane state creates no files.
+
 - Reports now put what happened, owner decisions and next steps first.
   Full redacted reports and goals expand below without a second scroll box.
   Unclear answers stay marked as unknown; reported commits are not proof of a push.

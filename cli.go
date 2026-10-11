@@ -2,6 +2,7 @@ package nuntius
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,199 @@ import (
 	"strings"
 	"time"
 )
+
+// laneCLIRequest carries only selectors and a reviewed content identity, never
+// message text or a session value supplied by a caller.
+type laneCLIRequest struct {
+	operation, lane, run, digest string
+	revision                     uint64
+	after, machine               bool
+}
+
+func parseLaneCLI(args []string) (laneCLIRequest, bool) {
+	r := laneCLIRequest{}
+	if len(args) == 0 {
+		return r, false
+	}
+	r.operation = args[0]
+	switch r.operation {
+	case "list":
+		r.machine = len(args) == 2 && args[1] == "--json"
+		return r, len(args) == 1 || r.machine
+	case "pause", "resume":
+		if len(args) < 2 || !namePattern.MatchString(args[1]) {
+			return r, false
+		}
+		r.lane = args[1]
+		r.after = r.operation == "pause" && len(args) == 3 && args[2] == "--after-current"
+		return r, len(args) == 2 || r.after
+	case "held":
+		if len(args) < 4 || !namePattern.MatchString(args[2]) || !runPattern.MatchString(args[3]) {
+			return r, false
+		}
+		r.operation = "held-" + args[1]
+		r.lane = args[2]
+		r.run = args[3]
+		if args[1] == "review" {
+			return r, len(args) == 4
+		}
+		if args[1] != "send" && args[1] != "discard" {
+			return r, false
+		}
+		if len(args) != 8 {
+			return r, false
+		}
+		seen := map[string]bool{}
+		for i := 4; i < 8; i += 2 {
+			if seen[args[i]] {
+				return r, false
+			}
+			seen[args[i]] = true
+			switch args[i] {
+			case "--revision":
+				var err error
+				r.revision, err = strconv.ParseUint(args[i+1], 10, 64)
+				if err != nil || r.revision == 0 || r.revision > laneControlMaxRevision || strconv.FormatUint(r.revision, 10) != args[i+1] {
+					return r, false
+				}
+			case "--digest":
+				r.digest = args[i+1]
+				if len(r.digest) != 64 || strings.Trim(r.digest, "0123456789abcdef") != "" {
+					return r, false
+				}
+			default:
+				return r, false
+			}
+		}
+		return r, seen["--revision"] && seen["--digest"]
+	}
+	return r, false
+}
+
+func (m *Manager) laneCommand(r laneCLIRequest, out, errOut io.Writer) int {
+	fail := func(err error) int { fmt.Fprintln(errOut, laneCLIError(err)); return 1 }
+	if r.operation == "list" {
+		s, err := m.laneControls()
+		code := 0
+		if err != nil {
+			// Control failure is data. Independent lane/run visibility remains usable.
+			m.mu.Lock()
+			s = m.laneControlSnapshotLocked(nil, false)
+			m.mu.Unlock()
+			fmt.Fprintln(errOut, laneCLIError(err))
+			code = 1
+		}
+		if r.machine {
+			fmt.Fprintln(out, toolText(s))
+		} else {
+			for _, v := range s.Lanes {
+				fmt.Fprintf(out, "%s  %s; %s\n", cell(v.Name), v.Phase, cell(v.Explanation))
+			}
+		}
+		return code
+	}
+	if r.operation == "pause" || r.operation == "resume" {
+		if err := m.prepareControlStore(); err != nil {
+			return fail(err)
+		}
+		result, err := m.setLaneControl(laneControlChange{Lane: r.lane, Paused: r.operation == "pause", AfterCurrent: r.after}, "cli")
+		if err != nil {
+			return fail(err)
+		}
+		word := "saved"
+		if !result.Changed {
+			word = "already saved"
+		}
+		fmt.Fprintf(out, "%s: lane hold %s (revision %d).\n", r.lane, word, result.Revision)
+		if s, err := m.laneControls(); err == nil {
+			for _, v := range s.Lanes {
+				if v.Name == r.lane {
+					fmt.Fprintln(out, v.Explanation)
+				}
+			}
+		} else {
+			fmt.Fprintln(out, "Current lane controls cannot be read; check lane list before starting new work.")
+		}
+		if r.operation == "resume" {
+			fmt.Fprintln(out, "This resume started no work. Held messages still need explicit review.")
+		}
+		return 0
+	}
+	h, text, state, err := m.heldCLISelection(r.lane, r.run)
+	if err != nil {
+		return fail(err)
+	}
+	if r.operation == "held-review" {
+		fmt.Fprintln(out, toolText(map[string]any{"lane": h.Lane, "run_id": h.RunID, "goal_id": h.GoalID, "revision": h.Revision, "content_sha256": h.ContentSHA256, "state": state, "text": bounded(Redact(text), 8192), "explanation": "This message stays held until you explicitly send or discard this content revision. Review text is redacted and limited to 8 KiB."}))
+		return 0
+	}
+	if h.Revision != r.revision || h.ContentSHA256 != r.digest {
+		return fail(fmt.Errorf("held_message_changed"))
+	}
+	if r.operation == "held-discard" {
+		if err := m.discardHeld(h, nil); err != nil {
+			return fail(err)
+		}
+		fmt.Fprintln(out, "Reviewed message discarded. This did not cancel any possible child run.")
+		return 0
+	}
+	id, err := m.sendHeld(h, nil)
+	if err != nil {
+		return fail(err)
+	}
+	fmt.Fprintf(out, "Reviewed message delivery confirmed for run %s. A receipt retry does not send it again.\n", shortRunID(id))
+	return 0
+}
+
+func laneCLIError(err error) string {
+	code := err.Error()
+	if strings.HasPrefix(code, "frozen by owner since ") {
+		code = "frozen"
+	}
+	var control *laneControlFault
+	if errors.As(err, &control) {
+		code = control.Code
+	}
+	var admission *laneAdmissionFault
+	if errors.As(err, &admission) {
+		if admission.Paused {
+			message := "This lane is paused by you; new work was refused. Resume the lane before sending."
+			for _, blocker := range admission.Blockers {
+				if blocker == "frozen" {
+					message += " All lanes are also frozen."
+				}
+				if blocker == "freeze_unavailable" {
+					message += " The freeze state cannot be read safely."
+				}
+			}
+			return message
+		}
+	}
+	switch code {
+	case "lane_not_found", "lane_not_configured", "unknown lane":
+		return "This exact lane name is not configured. Only an existing retained hold can be resumed; configuration was not recreated."
+	case "locked":
+		return "Another operation holds the lane control lock. The change is not confirmed; read lane list before retrying."
+	case "save_unconfirmed", "committed_audit_failed", "audit_unavailable":
+		return "The durable change or its audit is uncertain. Read lane list before deciding what to do; no automatic retry was made."
+	case "held_message_session_unavailable":
+		return "The original message session is unavailable or its agent kind changed. Sending is refused; the message remains available for review or discard."
+	case "held_message_launch_uncertain":
+		return "Message delivery is uncertain. The reservation stays held; do not infer delivery from this response."
+	case "held_message_changed":
+		return "The reviewed message revision or digest changed. Review the original run again before sending or discarding."
+	case "held_message_discarded":
+		return "This reviewed message was already discarded; it cannot be sent."
+	case "lane is busy":
+		return "The lane still has a current run. Wait for that run to end before explicit message delivery."
+	case "frozen":
+		return "All lanes are frozen. Resume clears only the lane hold; sending still needs an explicit unfreeze."
+	case "lane_control_capacity":
+		return "The retained lane-control store is full. No saved hold was removed and the change was refused."
+	default:
+		return "Lane controls or the original message cannot be read safely. The operation is refused; saved intent and held content have not been reconciled by a read."
+	}
+}
 
 func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
 	if len(args) == 2 && args[0] == "__nuntius_web_exec" {
@@ -47,6 +241,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	if len(rest) == 1 && rest[0] == "help" {
+		fmt.Fprintln(out, "Lane holds: lane pause LANE [--after-current] | lane resume LANE | lane list [--json]. A pause blocks new work and lets the current run finish; resume starts no work. Held messages: lane held review LANE RUN | lane held send|discard LANE RUN --revision N --digest SHA256; use the values from review.")
 		fmt.Fprintln(out, "Version: version | --version | -v. Settings: set [--json] lists display values; set notify-imessage on|off toggles an existing recipient. Menu-bar Settings… opens the running local dashboard Settings tab; sign in there to save pool sizes and iMessage preference.")
 		fmt.Fprintln(out, "Audit: nuntius audit [--since 1h] [--json] lists recent redacted actions, newest first.")
 		fmt.Fprintln(out, "Menu bar: web start launches the installed helper in a GUI session; --no-menubar skips it. web stop closes both. menubar --at-login on|off manages helper-only startup at the next macOS login (off by default).")
@@ -55,7 +250,16 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	command := strings.Join(rest, " ")
-	if command != "recover" && command != "config check" && command != "config convert" && command != "mcp" && rest[0] != "status" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && rest[0] != "history" && rest[0] != "audit" && rest[0] != "menubar" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(rest[0] == "set" && (len(rest) == 1 || (len(rest) <= 3 && (poolSetting(rest[1]) || rest[1] == "notify-imessage")) || command == "set --json")) {
+	var laneRequest laneCLIRequest
+	if rest[0] == "lane" {
+		var ok bool
+		laneRequest, ok = parseLaneCLI(rest[1:])
+		if !ok {
+			fmt.Fprintln(errOut, "Use lane pause LANE [--after-current], lane resume LANE, lane list [--json], or lane held review|send|discard LANE RUN. Send/discard require --revision N --digest SHA256 from review.")
+			return 2
+		}
+	}
+	if rest[0] != "lane" && command != "recover" && command != "config check" && command != "config convert" && command != "mcp" && rest[0] != "status" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && rest[0] != "history" && rest[0] != "audit" && rest[0] != "menubar" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(rest[0] == "set" && (len(rest) == 1 || (len(rest) <= 3 && (poolSetting(rest[1]) || rest[1] == "notify-imessage")) || command == "set --json")) {
 		fmt.Fprintln(errOut, "unknown command; use nuntius help")
 		return 2
 	}
@@ -111,7 +315,12 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		writeSettings(out, c, key)
 		return 0
 	}
-	m, e := NewManager(c, *store)
+	var m *Manager
+	if rest[0] == "lane" || rest[0] == "status" || rest[0] == "agents" {
+		m, e = newReadManager(c, *store)
+	} else {
+		m, e = NewManager(c, *store)
+	}
 	if e != nil {
 		fmt.Fprintln(errOut, Redact(e.Error()))
 		if command == "mcp" {
@@ -121,6 +330,8 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	}
 	defer m.Close()
 	switch rest[0] {
+	case "lane":
+		return m.laneCommand(laneRequest, out, errOut)
 	case "audit":
 		af := flag.NewFlagSet("audit", flag.ContinueOnError)
 		af.SetOutput(io.Discard)
@@ -220,7 +431,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 				if a.DisplayState != "" {
 					state = a.DisplayState
 				}
-				fmt.Fprintf(out, "%s  %s  %s  flags=%s  %s  goal=%s model=%s effort=%s\n", cell(a.Name), cell(a.Kind), cell(a.StartMode), toolText(a.Flags), cell(state), cell(a.Goal), identityValue(a.Model), identityValue(a.Effort))
+				fmt.Fprintf(out, "%s  %s  %s  flags=%s  %s  goal=%s model=%s effort=%s; %s\n", cell(a.Name), cell(a.Kind), cell(a.StartMode), toolText(a.Flags), cell(state), cell(a.Goal), identityValue(a.Model), identityValue(a.Effort), cell(a.LaneControl.Explanation))
 			}
 		}
 	case "web":

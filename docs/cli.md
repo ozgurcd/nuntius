@@ -1,3 +1,63 @@
+## Lane holds and held messages
+
+```sh
+nuntius lane pause codex-1
+nuntius lane pause claude-1 --after-current
+nuntius lane resume codex-1
+nuntius lane list
+nuntius lane list --json
+```
+
+Use the exact configured name. Both pause forms block new work immediately;
+the current run may finish. Pause sends no stop signal and does not extend its
+timeout. Cancel still stops that run. Human output explains the hold separately
+from its run state, failed outcome, report and attention badge, for example:
+“Paused by you at 14:10 via CLI; current run may finish”. Times use your local clock.
+
+Resume saves a clear hold and starts no work. It does not unfreeze, recover a
+goal, deliver a message or recreate a removed lane. `lane list` includes saved
+names removed from configuration, sorted by name. Re-adding the same name,
+even with a different agent kind, retains its saved hold.
+
+These commands use the existing global `--config FILE` and `--store DIRECTORY`
+selectors before the command, and the same environment defaults. They never
+rewrite configuration. Only pause/resume initialize missing control storage.
+`lane list`, CLI `status` and `agents` create no store, lock, signal or run file,
+reconcile no intent and launch no recovery or supervision. Unknown or unreadable
+controls appear as unavailable and block new work; the other run facts remain
+visible. `lane list` exits 1 when it cannot confirm the controls, while still
+printing that safe snapshot. Mutation exits are 0 for a durable changed or
+unchanged result, 1 for refusal or uncertainty, and 2 for invalid syntax.
+An uncertain response is not proof of a save or a delivery. Read the current
+state before deciding whether to retry.
+
+JSON supplies `lane_control_version: 1`. Each safe control has `paused`,
+`phase` (enabled, draining, paused or unavailable), UTC `since`, `source`,
+`revision`, `configured`, `dispatch_eligible`, fixed `blockers` and a plain
+`explanation`. Status includes the full sorted control snapshot under
+`lane_control`; status/agents rows add their own `lane_control` without replacing
+run `state`, `outcome`, `badge` or `report_exists`. A draining lane can be both
+running and paused. Availability also accounts for freeze and held work.
+Status and list never contain held message text or session values.
+
+To review a held message, use its full original run ID from status/history:
+
+```sh
+nuntius lane held review codex-1 ORIGINAL_RUN_ID
+```
+
+The explicit review returns only safe identifiers, the content revision and
+digest, state, and at most 8 KiB of redacted text. It changes no files. Use that
+exact revision and digest with `lane held send codex-1 ORIGINAL_RUN_ID --revision
+REVISION --digest SHA256`, or replace `send` with `discard`. These names in
+capitals describe values from your review; they are not literal arguments.
+Send requires the original session and agent kind, a clear hold, no freeze and
+an idle lane. Changed content or the wrong original run is refused. Delivery
+uses a durable receipt; repeating the same confirmed send does not start another
+child. Discard deletes only the selected held content and does not cancel a
+possible child. An uncertain delivery stays reserved for explicit investigation.
+Resume never consumes held messages.
+
 ## Run views
 
 ```sh

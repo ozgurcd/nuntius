@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add CLI lane pause/resume/list and explicit held-message review/send/discard
+  with durable content receipts. Keep read-only CLI status/agents/list free of
+  file creation, intent repair and child launch. Expose versioned safe holds
+  separately from run state, failed outcomes, report presence and attention badges.
+
 - Reports & runs shows the report's summary, status, owner questions, commits
   and next steps before its full redacted text. Missing or incomplete answers
   stay visible, and a normal process exit does not prove the work is complete.

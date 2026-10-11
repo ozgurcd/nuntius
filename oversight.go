@@ -20,7 +20,8 @@ type FreezeState struct {
 }
 
 func (m *Manager) StatusView() (any, error) {
-	rows, e := m.Status()
+	var controls laneControlSnapshot
+	rows, e := m.status(true, &controls)
 	if e != nil {
 		return nil, e
 	}
@@ -30,7 +31,7 @@ func (m *Manager) StatusView() (any, error) {
 	if e != nil {
 		return nil, e
 	}
-	return map[string]any{"frozen": f != nil, "freeze": f, "lanes": rows}, nil
+	return map[string]any{"frozen": f != nil, "freeze": f, "lanes": rows, "lane_control_version": 1, "lane_control": controls}, nil
 }
 
 func (m *Manager) freezeState() (*FreezeState, error) {

@@ -30,6 +30,11 @@ func TestDetachedServerHelper(t *testing.T) {
 	if _, err = m.Dispatch("codex", "DETACHED-1", "wait"); err != nil {
 		t.Fatal(err)
 	}
+	// Do not let the observer's startup reconciliation contend with admission.
+	// The survival assertion begins only after the helper confirms dispatch.
+	if err = os.WriteFile(filepath.Join(m.store, "fixture-dispatched"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
 	select {}
 }
 
@@ -48,7 +53,7 @@ func TestDetachedRunSurvivesKilledServer(t *testing.T) {
 	var next *Manager
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(filepath.Join(store, "runs")); err == nil {
+		if _, err := os.Stat(filepath.Join(store, "fixture-dispatched")); err == nil {
 			next, _ = NewManager(c, store)
 			if next != nil {
 				s, _ := next.Status()

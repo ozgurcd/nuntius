@@ -214,15 +214,20 @@ func (m *Manager) SetPool(path, kind string, size int, convert bool) error {
 }
 
 type AgentStatus struct {
-	Model        string   `json:"model,omitempty"`
-	Effort       string   `json:"effort"`
-	Name         string   `json:"name"`
-	Kind         string   `json:"kind"`
-	StartMode    string   `json:"start_mode"`
-	Flags        []string `json:"flags"`
-	State        string   `json:"state"`
-	Goal         string   `json:"goal"`
-	DisplayState string   `json:"display_state,omitempty"`
+	LaneControlVersion int             `json:"lane_control_version"`
+	LaneControl        laneControlView `json:"lane_control"`
+	Outcome            string          `json:"outcome,omitempty"`
+	Badge              string          `json:"badge,omitempty"`
+	ReportExists       bool            `json:"report_exists"`
+	Model              string          `json:"model,omitempty"`
+	Effort             string          `json:"effort"`
+	Name               string          `json:"name"`
+	Kind               string          `json:"kind"`
+	StartMode          string          `json:"start_mode"`
+	Flags              []string        `json:"flags"`
+	State              string          `json:"state"`
+	Goal               string          `json:"goal"`
+	DisplayState       string          `json:"display_state,omitempty"`
 }
 
 func (m *Manager) Agents() ([]AgentStatus, error) {
@@ -242,7 +247,7 @@ func (m *Manager) Agents() ([]AgentStatus, error) {
 		if v.State == "running" || (v.Model == model+" (configured)" && v.Effort == effort+" (configured)") {
 			model, effort = v.Model, v.Effort
 		}
-		out = append(out, AgentStatus{Name: v.Lane, Kind: l.Kind, Model: model, Effort: effort, StartMode: l.mode(), Flags: l.ExtraArgs, State: v.State, Goal: v.GoalID, DisplayState: v.DisplayState})
+		out = append(out, AgentStatus{Name: v.Lane, Kind: l.Kind, Model: model, Effort: effort, StartMode: l.mode(), Flags: l.ExtraArgs, State: v.State, Goal: v.GoalID, DisplayState: v.DisplayState, Outcome: v.Outcome, Badge: v.Badge, ReportExists: v.ReportExists, LaneControlVersion: v.LaneControlVersion, LaneControl: v.LaneControl})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil

@@ -213,10 +213,11 @@ func (m *Manager) writeStatus(out io.Writer, view any, long ...bool) error {
 		fmt.Fprintln(out, webStatusLine(m.webDashboard()))
 	}
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	heading := "AGENT\tSTATE\tRUN\tGOAL\tELAPSED\tETA\tEVENT AGE\tACTIVITY\tREPORT\tKIND\tMODEL\tEFFORT"
+	heading := "AGENT\tSTATE\tRUN\tGOAL\tELAPSED\tETA\tEVENT AGE\tACTIVITY\tREPORT\tKIND\tMODEL\tEFFORT\tOUTCOME"
 	if len(long) > 0 && long[0] {
 		heading += "\tCURRENT ACTION"
 	}
+	heading += "\tLANE HOLD"
 	fmt.Fprintln(w, heading)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -250,14 +251,14 @@ func (m *Manager) writeStatus(out io.Writer, view any, long ...bool) error {
 		if id == "" {
 			id = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\tmodel=%s\teffort=%s", cell(s.Lane), state, id, goal, elapsed, eta, age, current, report, cell(s.Kind), identityValue(s.Model), identityValue(s.Effort))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\tmodel=%s\teffort=%s\t%s", cell(s.Lane), state, id, goal, elapsed, eta, age, current, report, cell(s.Kind), identityValue(s.Model), identityValue(s.Effort), cell(s.Outcome))
 		if len(long) > 0 && long[0] {
 			fmt.Fprintf(w, "\t%s", actionText(s.CurrentAction))
 			if s.ETA != nil {
 				fmt.Fprintf(w, " · %s", s.ETA.Explanation)
 			}
 		}
-		fmt.Fprintln(w)
+		fmt.Fprintf(w, "\t%s\n", cell(s.LaneControl.Explanation))
 	}
 	return w.Flush()
 }

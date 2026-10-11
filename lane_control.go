@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -43,15 +44,19 @@ type laneControlStore struct {
 }
 
 type laneControlView struct {
-	Name       string
-	Configured bool
+	Name       string `json:"name"`
+	Configured bool   `json:"configured"`
 	laneControlRecord
+	Phase            string   `json:"phase"`
+	DispatchEligible bool     `json:"dispatch_eligible"`
+	Blockers         []string `json:"blockers"`
+	Explanation      string   `json:"explanation"`
 }
 
 type laneControlSnapshot struct {
-	Version  int
-	Revision uint64
-	Lanes    []laneControlView
+	Version  int               `json:"lane_control_version"`
+	Revision uint64            `json:"revision"`
+	Lanes    []laneControlView `json:"lanes"`
 }
 
 func laneControlUint(value any) (uint64, bool) {
@@ -235,29 +240,147 @@ func (m *Manager) laneControls() (laneControlSnapshot, error) {
 		return laneControlSnapshot{}, err
 	}
 	defer lock.Close()
-	s, err := readLaneControlsAt(root)
-	if err != nil {
+	if err := m.reload(); err != nil {
 		return laneControlSnapshot{}, err
-	}
-	views := map[string]laneControlView{}
-	for name, r := range s.Lanes {
-		views[name] = laneControlView{Name: name, laneControlRecord: r}
 	}
 	for _, lane := range m.config.Lanes {
 		if !namePattern.MatchString(lane.Name) {
 			return laneControlSnapshot{}, errLaneControlUnavailable
 		}
+	}
+	s, err := readLaneControlsAt(root)
+	if err != nil {
+		return laneControlSnapshot{}, err
+	}
+	runs, err := m.history()
+	if os.IsNotExist(err) {
+		runs, err = []Run{}, nil
+	}
+	if err != nil {
+		return laneControlSnapshot{}, err
+	}
+	return m.projectLaneControls(s, root, runs, true), nil
+}
+
+// Called under the manager/common control locks; intent is observed, never repaired.
+func (m *Manager) laneControlSnapshotLocked(runs []Run, locked bool) laneControlSnapshot {
+	if locked {
+		if root, err := openLaneControlRoot(m.store); err == nil {
+			defer root.Close()
+			if s, err := readLaneControlsAt(root); err == nil {
+				return m.projectLaneControls(s, root, runs, true)
+			}
+		}
+	}
+	return m.projectLaneControls(laneControlStore{Version: 1}, nil, runs, false)
+}
+
+func (m *Manager) projectLaneControls(s laneControlStore, root *os.File, runs []Run, available bool) laneControlSnapshot {
+	views := map[string]laneControlView{}
+	for name, r := range s.Lanes {
+		views[name] = laneControlView{Name: name, laneControlRecord: r}
+	}
+	for _, lane := range m.config.Lanes {
 		r := views[lane.Name]
 		r.Name = lane.Name
 		r.Configured = true
 		views[lane.Name] = r
 	}
 	out := laneControlSnapshot{Version: 1, Revision: s.Revision, Lanes: []laneControlView{}}
+	frozen, freezeErr := m.freezeState()
 	for _, r := range views {
+		r.Phase = "enabled"
+		r.Blockers = []string{}
+		if !available {
+			r.Phase = "unavailable"
+			r.Blockers = append(r.Blockers, "lane_control_unavailable")
+		}
+		if !r.Configured {
+			r.Phase = "unavailable"
+			r.Blockers = append(r.Blockers, "not_configured")
+		}
+		if r.Paused {
+			r.Blockers = append(r.Blockers, "lane_paused")
+			if available && r.Configured {
+				r.Phase = "paused"
+			}
+		}
+		if freezeErr != nil {
+			r.Blockers = append(r.Blockers, "freeze_unavailable")
+		} else if frozen != nil {
+			r.Blockers = append(r.Blockers, "frozen")
+		}
+		for _, run := range runs {
+			if run.Lane != r.Name {
+				continue
+			}
+			if run.State == "running" {
+				r.Blockers = append(r.Blockers, "running")
+				if r.Paused && available && r.Configured {
+					r.Phase = "draining"
+				}
+			}
+			if run.WaitingToResume {
+				r.Blockers = append(r.Blockers, "waiting_to_resume")
+			}
+			break
+		}
+		if root != nil {
+			held, err := laneHasHeldMessage(root, r.Name)
+			if err != nil {
+				r.Blockers = append(r.Blockers, "held_message_unavailable")
+			} else if held {
+				r.Blockers = append(r.Blockers, "held_message")
+			}
+		}
+		r.DispatchEligible = len(r.Blockers) == 0
+		r.Explanation = laneControlExplanation(r)
 		out.Lanes = append(out.Lanes, r)
 	}
 	sort.Slice(out.Lanes, func(i, j int) bool { return out.Lanes[i].Name < out.Lanes[j].Name })
-	return out, nil
+	return out
+}
+
+func laneControlExplanation(v laneControlView) string {
+	parts := []string{}
+	if v.Paused {
+		when := "an unknown time"
+		if t, err := time.Parse(time.RFC3339Nano, v.Since); err == nil {
+			when = t.Local().Format("15:04")
+		}
+		source := map[string]string{"cli": "CLI", "web": "dashboard", "mcp": "judge MCP"}[v.Source]
+		parts = append(parts, "Paused by you at "+when+" via "+source)
+		if v.Phase == "draining" {
+			parts = append(parts, "current run may finish")
+		}
+	} else if slices.Contains(v.Blockers, "lane_control_unavailable") {
+		parts = append(parts, "Lane hold is unknown")
+	} else {
+		parts = append(parts, "Lane hold is clear")
+	}
+	for _, b := range v.Blockers {
+		switch b {
+		case "lane_control_unavailable":
+			parts = append(parts, "lane controls cannot be read; new work is blocked")
+		case "not_configured":
+			parts = append(parts, "retained name is no longer configured; resume does not recreate it")
+		case "frozen":
+			parts = append(parts, "all lanes are still frozen")
+		case "freeze_unavailable":
+			parts = append(parts, "freeze state cannot be read; new work is blocked")
+		case "running":
+			if v.Phase != "draining" {
+				parts = append(parts, "current run is still running")
+			}
+		case "waiting_to_resume":
+			parts = append(parts, "interrupted work is waiting for a separate recovery check")
+		case "held_message":
+			parts = append(parts, "an owner message is held for explicit review")
+		case "held_message_unavailable":
+			parts = append(parts, "message reservations cannot be read; new work is blocked")
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 // NewManager creates locks/. Use the same lock inode as existing mutations,

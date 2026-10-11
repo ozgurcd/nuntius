@@ -63,6 +63,23 @@ interrupted records. `status`, `agents`, `history` and web views only display
 and observe; they never launch recovery. Without MCP, run `recover` again after
 a busy lane frees. Recovery is a local action explicitly enabled by the config.
 
+A lane pause closes admission but lets the current process finish under its
+existing timeout. It also blocks automatic continuation and new recovery
+children. The interrupted goal remains reserved, with its attempt count intact.
+Use `nuntius lane list` to see the plain reason. `lane resume NAME` clears only
+that lane's hold; it starts no work and does not unfreeze. A later explicit
+recovery check or the existing server recovery policy can then consider it.
+CLI list/status/agents do not initialize files, repair history, reconcile
+control intent or adopt a supervisor. If control storage is unavailable, they
+show that uncertainty separately from the current run and report.
+
+An owner message accepted before pause stays held for review, even after resume
+or restart. It is not automatically replayed. Use `lane held review NAME RUN`,
+then explicitly send or discard its content revision and digest as described in
+[cli.md](cli.md). A missing original session or changed agent kind refuses send;
+discard remains available. A delivery timeout or uncertain response is not proof
+that a child started or that the message was consumed.
+
 End detection derives `completed` from a regular report, otherwise
 `ended_no_report`. Exit codes are unknown because no parent waits for the agent.
 For OpenCode, a complete event stream whose last step ends with reason `stop`

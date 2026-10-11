@@ -103,6 +103,56 @@ func cleanReviewedMessage(dir *os.File) error {
 	return dir.Sync()
 }
 
+// The CLI selector is the exact original run plus content revision/digest. Load
+// the private binding locally; never return its session or accept one from argv.
+func (m *Manager) heldCLISelection(lane, run string) (heldMessage, string, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	root, err := openLaneControlRoot(m.store)
+	if err != nil {
+		return heldMessage{}, "", "", err
+	}
+	defer root.Close()
+	guard, err := laneControlReadLock(root)
+	if err != nil {
+		return heldMessage{}, "", "", err
+	}
+	defer guard.Close()
+	if _, err = readLaneControlsAt(root); err != nil {
+		return heldMessage{}, "", "", err
+	}
+	var binding heldMessage
+	state := "held_for_review"
+	err = visitLaneMessages(root, lane, func(dir *os.File, r Run, _ []byte) error {
+		if r.ID != run {
+			return nil
+		}
+		receipt, e := readMessageReceipt(dir, r)
+		if e != nil {
+			return e
+		}
+		if receipt != nil {
+			binding = receipt.Binding
+			state = receipt.State
+			return nil
+		}
+		b, e := readLaneControlPrivate(dir, "message-hold.json", 4096)
+		if e != nil || decodeLaneControlObject(b, &binding) != nil || !validMessageBinding(binding, r) {
+			return errLaneControlUnavailable
+		}
+		return nil
+	})
+	if err != nil || binding.RunID == "" {
+		return heldMessage{}, "", "", errLaneControlUnavailable
+	}
+	dir, _, text, _, err := m.reviewedMessage(binding)
+	if err != nil {
+		return heldMessage{}, "", "", err
+	}
+	dir.Close()
+	return binding, text, state, nil
+}
+
 func (m *Manager) reviewedMessage(h heldMessage) (*os.File, Run, string, *messageReceipt, error) {
 	if !runPattern.MatchString(h.RunID) || !namePattern.MatchString(h.Lane) {
 		return nil, Run{}, "", nil, errLaneControlUnavailable

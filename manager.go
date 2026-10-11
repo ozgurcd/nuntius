@@ -49,34 +49,37 @@ type Run struct {
 	LaunchdCleaned       bool       `json:"launchd_cleaned,omitempty"`
 }
 type Status struct {
-	Kind                string         `json:"kind,omitempty"`
-	Model               string         `json:"model,omitempty"`
-	Effort              string         `json:"effort"`
-	CurrentAction       *CurrentAction `json:"current_action,omitempty"`
-	LaunchFallback      bool           `json:"launch_fallback,omitempty"`
-	LaunchdLabel        string         `json:"launchd_label,omitempty"`
-	Freeze              *FreezeState   `json:"freeze,omitempty"`
-	LastEventAgeSeconds *int64         `json:"last_event_age_seconds,omitempty"`
-	Lane                string         `json:"lane"`
-	State               string         `json:"state"`
-	RunID               string         `json:"run_id,omitempty"`
-	GoalID              string         `json:"goal_id,omitempty"`
-	Started             *time.Time     `json:"started,omitempty"`
-	ElapsedSeconds      int64          `json:"elapsed_seconds"`
-	LastEvent           *time.Time     `json:"last_event,omitempty"`
-	Exit                *int           `json:"exit,omitempty"`
-	ReportExists        bool           `json:"report_exists"`
-	AskedInteractively  bool           `json:"asked_interactively"`
-	Outcome             string         `json:"outcome,omitempty"`
-	DisplayState        string         `json:"display_state,omitempty"`
-	Badge               string         `json:"badge,omitempty"`
-	ETA                 *ETAEstimate   `json:"eta_details,omitempty"`
+	LaneControlVersion  int             `json:"lane_control_version"`
+	LaneControl         laneControlView `json:"lane_control"`
+	Kind                string          `json:"kind,omitempty"`
+	Model               string          `json:"model,omitempty"`
+	Effort              string          `json:"effort"`
+	CurrentAction       *CurrentAction  `json:"current_action,omitempty"`
+	LaunchFallback      bool            `json:"launch_fallback,omitempty"`
+	LaunchdLabel        string          `json:"launchd_label,omitempty"`
+	Freeze              *FreezeState    `json:"freeze,omitempty"`
+	LastEventAgeSeconds *int64          `json:"last_event_age_seconds,omitempty"`
+	Lane                string          `json:"lane"`
+	State               string          `json:"state"`
+	RunID               string          `json:"run_id,omitempty"`
+	GoalID              string          `json:"goal_id,omitempty"`
+	Started             *time.Time      `json:"started,omitempty"`
+	ElapsedSeconds      int64           `json:"elapsed_seconds"`
+	LastEvent           *time.Time      `json:"last_event,omitempty"`
+	Exit                *int            `json:"exit,omitempty"`
+	ReportExists        bool            `json:"report_exists"`
+	AskedInteractively  bool            `json:"asked_interactively"`
+	Outcome             string          `json:"outcome,omitempty"`
+	DisplayState        string          `json:"display_state,omitempty"`
+	Badge               string          `json:"badge,omitempty"`
+	ETA                 *ETAEstimate    `json:"eta_details,omitempty"`
 }
 type activeRun struct {
 	done chan struct{}
 	stop chan string
 }
 type Manager struct {
+	readOnly        bool // CLI observation never initializes, reconciles or supervises.
 	eventWindows    map[eventWindowID]*parsedEventWindow
 	eventCacheClock uint64
 	settingsIO      *settingsIO
@@ -96,39 +99,19 @@ type Manager struct {
 }
 
 func NewManager(c Config, store string) (*Manager, error) {
-	d, e := c.Validate()
+	m, e := newReadManager(c, store)
 	if e != nil {
 		return nil, e
 	}
-	c.Lanes, e = c.expanded()
-	if e != nil {
+	m.readOnly = false
+	if e = m.prepareControlStore(); e != nil {
 		return nil, e
 	}
-	if !filepath.IsAbs(store) {
-		return nil, errors.New("run store must be absolute")
-	}
-	for _, p := range []string{store, filepath.Join(store, "runs"), filepath.Join(store, "locks")} {
-		if e := privateDir(p); e != nil {
-			return nil, e
-		}
-	}
-	if e = syncDir(store); e != nil {
-		return nil, e
-	}
-	if e = syncDir(filepath.Dir(store)); e != nil {
-		return nil, e
-	}
-	m := &Manager{config: c, store: store, runtime: d, Grace: 30 * time.Second, active: map[string]*activeRun{}, closing: make(chan struct{}), launcher: newJobLauncher()}
-	// Reconcile only at startup or a control mutation. A failed reconciliation
-	// retains its intent, so admission reads fail closed without disabling
-	// observation, cancellation or other independent safety controls.
 	_ = m.recoverLaneControls(nil)
 	if _, e := m.Status(); e != nil {
 		return nil, e
 	}
 	m.watcher.Go(func() {
-		// Supervision needs metadata, not dashboard details. Re-parsing ended
-		// event streams four times a second kept idle MCP servers busy.
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		for {
@@ -147,6 +130,47 @@ func NewManager(c Config, store string) (*Manager, error) {
 		}
 	})
 	return m, nil
+}
+
+// newReadManager does not adopt children, repair runs or replay control intent.
+func newReadManager(c Config, store string) (*Manager, error) {
+	d, e := c.Validate()
+	if e != nil {
+		return nil, e
+	}
+	c.Lanes, e = c.expanded()
+	if e != nil {
+		return nil, e
+	}
+	if !filepath.IsAbs(store) {
+		return nil, errors.New("run store must be absolute")
+	}
+	// Preserve the constructor's real/private-directory checks without MkdirAll.
+	for _, p := range []string{store, filepath.Join(store, "runs"), filepath.Join(store, "locks")} {
+		st, err := os.Lstat(p)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil || !st.IsDir() || st.Mode().Perm()&0077 != 0 {
+			return nil, errors.New("run store must be a real private directory (0700)")
+		}
+	}
+	return &Manager{readOnly: true, config: c, store: store, runtime: d, Grace: 30 * time.Second, active: map[string]*activeRun{}, closing: make(chan struct{}), launcher: newJobLauncher()}, nil
+}
+
+func (m *Manager) prepareControlStore() error {
+	for _, p := range []string{m.store, filepath.Join(m.store, "runs"), filepath.Join(m.store, "locks")} {
+		if e := privateDir(p); e != nil {
+			return e
+		}
+	}
+	if e := syncDir(m.store); e != nil {
+		return e
+	}
+	if e := syncDir(filepath.Dir(m.store)); e != nil {
+		return e
+	}
+	return nil
 }
 func (m *Manager) lane(name string) (Lane, error) {
 	for _, l := range m.config.Lanes {
@@ -574,14 +598,25 @@ func (m *Manager) Status() ([]Status, error) {
 	return m.status(true)
 }
 
-func (m *Manager) status(details bool) ([]Status, error) {
+func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]Status, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	guard, e := m.controlLock()
-	if e != nil {
-		return nil, e
+	var guard *os.File
+	var e error
+	if m.readOnly {
+		if root, err := openLaneControlRoot(m.store); err == nil {
+			guard, _ = laneControlReadLock(root)
+			root.Close()
+		}
+	} else {
+		guard, e = m.controlLock()
+		if e != nil {
+			return nil, e
+		}
 	}
-	defer guard.Close()
+	if guard != nil {
+		defer guard.Close()
+	}
 	if e = m.reload(); e != nil {
 		return nil, e
 	}
@@ -590,11 +625,17 @@ func (m *Manager) status(details bool) ([]Status, error) {
 		return nil, e
 	}
 	runs, e := m.history()
+	if m.readOnly && os.IsNotExist(e) {
+		runs, e = []Run{}, nil
+	}
 	if e != nil {
 		return nil, e
 	}
 	for i := range runs {
 		r := &runs[i]
+		if m.readOnly {
+			continue
+		}
 		if r.State != "running" && r.LaunchdLabel != "" && !r.LaunchdCleaned {
 			if err := m.cleanupJob(r); err != nil {
 				_ = m.audit("launchd_cleanup", r.Lane, r.GoalID, r.SHA256, "failed")
@@ -623,10 +664,23 @@ func (m *Manager) status(details bool) ([]Status, error) {
 			return nil, err
 		}
 	}
+	var controls laneControlSnapshot
+	if details {
+		controls = m.laneControlSnapshotLocked(runs, guard != nil)
+	}
+	if len(controlsOut) > 0 {
+		*controlsOut[0] = controls
+	}
 	out := make([]Status, 0, len(m.config.Lanes))
 	for _, l := range m.config.Lanes {
 		model, effort := effectiveIdentity(l)
-		s := Status{Lane: l.Name, Kind: l.Kind, Model: model, Effort: effort, State: "idle", Freeze: frozen}
+		s := Status{Lane: l.Name, Kind: l.Kind, Model: model, Effort: effort, State: "idle", Freeze: frozen, LaneControlVersion: 1}
+		for _, control := range controls.Lanes {
+			if control.Name == l.Name {
+				s.LaneControl = control
+				break
+			}
+		}
 		// history is already newest first; use this snapshot instead of
 		// re-reading and decoding the whole store once per lane.
 		var r *Run
@@ -637,7 +691,7 @@ func (m *Manager) status(details bool) ([]Status, error) {
 			}
 		}
 		if r != nil {
-			if details && m.captureEffort(r) {
+			if details && m.captureEffort(r) && !m.readOnly {
 				if err := m.save(r); err != nil {
 					return nil, err
 				}
@@ -646,7 +700,7 @@ func (m *Manager) status(details bool) ([]Status, error) {
 			if r.Model == "" && r.Effort == "" {
 				s.Model, s.Effort = model+" (configured)", effort+" (configured)"
 			}
-			if r.State == "running" && m.active[l.Name] == nil {
+			if !m.readOnly && r.State == "running" && m.active[l.Name] == nil {
 				lock, e := m.lock("supervisor-" + r.ID)
 				if e == nil {
 					if sameProcess(*r) {
@@ -669,7 +723,7 @@ func (m *Manager) status(details bool) ([]Status, error) {
 					return nil, e
 				}
 			}
-			if r.State == "running" && r.SessionID == "" {
+			if !m.readOnly && r.State == "running" && r.SessionID == "" {
 				if session := m.session(r.ID); session != "" {
 					r.SessionID = session
 					if err := m.save(r); err != nil {
@@ -711,7 +765,12 @@ func (m *Manager) status(details bool) ([]Status, error) {
 			}
 			s.DisplayState = terminalDisplay(*r, s.State)
 			s.Badge = badgeTone(*r, s.State)
-			if stuck, err := m.checkStuck(r, time.Now()); err != nil {
+			stuck := m.runStuck(*r, time.Now())
+			var err error
+			if !m.readOnly {
+				stuck, err = m.checkStuck(r, time.Now())
+			}
+			if err != nil {
 				return nil, err
 			} else if stuck {
 				s.DisplayState, s.Badge = "stuck?", "amber"

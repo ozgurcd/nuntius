@@ -153,6 +153,19 @@ The dashboard Settings page uses the same Manager policy and private writer as
 these CLI setters. It can change existing pool sizes and this boolean only.
 Templates, recipients, paths and execution options remain local-only.
 
+Lane holds are operational controls, not configuration settings. `lane pause`,
+`lane resume`, `lane list` and held-message commands leave the selected lane
+configuration byte for byte unchanged. Their private state belongs to the
+selected data directory in `lane-control.json`, with a separate durable intent
+for a save in progress. Do not edit these records by hand.
+Shrinking or disabling a pool does not erase a saved name or hold. Re-adding
+that exact name, including with a different agent kind, retains the hold.
+`lane list` shows removed names as unconfigured and unavailable for dispatch.
+You can resume their retained hold without growing the pool or recreating a
+template. Resume starts no work and leaves a global freeze intact.
+Read-only CLI list/status/agents never create the data directory or reconcile
+a save in progress; they report unreadable controls as unavailable.
+
 `queue_file` (since v0.3.3) is local-only: omit it for `queue.json` under the
 resolved data directory, use an empty string to disable Queue, or supply a
 clean absolute regular-file path without symbolic links. An absent explicit
