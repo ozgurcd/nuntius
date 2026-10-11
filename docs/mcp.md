@@ -19,7 +19,9 @@ set `NUNTIUS_DATA_DIR` in your shell, set the same variable in the app's
 Set `NUNTIUS_CONFIG` there too if you override the config file in your shell.
 Use `nuntius paths` locally to check the selected paths.
 
-Restart Desktop after saving. Set dispatch, reply, cancel, unfreeze and web ensure to ask each time.
+Restart Desktop after saving. Set dispatch, reply, cancel, unfreeze, web ensure,
+lane pause and lane resume to Ask each time. Both lane controls need deliberate
+owner approval for every invocation, including repeated requests.
 Ask the judge for status first, then approve one small read-only pilot goal.
 Check the first session ID, resume behavior, report and audit locally without
 copying raw agent logs into chat.
@@ -29,11 +31,64 @@ copying raw agent logs into chat.
 The tools are `nuntius_status`, `nuntius_history`, `nuntius_dispatch`, `nuntius_reply`,
 `nuntius_tail`, `nuntius_report`, `nuntius_cancel`, `nuntius_freeze`,
 `nuntius_unfreeze`, `nuntius_owner_notes`, `nuntius_owner_notes_ack`,
-`nuntius_signals`, `nuntius_signals_ack` and `nuntius_web_ensure`. See [PROJECT_SPEC.md](../PROJECT_SPEC.md) for
+`nuntius_signals`, `nuntius_signals_ack`, `nuntius_web_ensure`,
+`nuntius_lane_pause` and `nuntius_lane_resume`. See [PROJECT_SPEC.md](../PROJECT_SPEC.md) for
 arguments, limits and failure behavior. The transport uses newline-delimited
 JSON-RPC over stdio and MCP 2025-11-25. Stdout carries protocol messages only.
 References: [stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 and [MCP tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
+
+### Lane pause and resume
+
+Read `nuntius_status({})` first. Its versioned `lane_control` snapshot lists
+configured lanes and retained names, sorted by name, with the current store
+revision, holds and reasons that prevent dispatch. Run state, failure, report
+presence and attention badges remain separate. There is no extra list tool.
+
+`nuntius_lane_pause({"lane":"codex","expected_revision":0})` saves a hold.
+Use the actual revision from status. New starts stop immediately; the current
+run may finish with its normal timeout and supervision. Optional
+`"after_current":true` has the same immediate admission boundary. Pause does
+not cancel, signal or extend the current run.
+
+`nuntius_lane_resume({"lane":"codex","expected_revision":1})` clears only
+the hold. This operation starts no work and does not replay held messages.
+Normal recovery or a later approved dispatch can act separately; other
+freeze, recovery and message-review blockers still apply. A retained removed
+name can be resumed without recreating its configuration.
+
+Arguments are closed objects of at most 4 KiB. Lane names use the existing
+name grammar. `expected_revision` is required, from 0 through 9007199254740991,
+and must use integer JSON syntax. Nulls, duplicates, strings in place of numbers
+or booleans, fractions and unknown fields are refused. Only pause accepts
+`after_current`, a strict boolean with default false. Caller roles, sources,
+paths and host settings are not accepted.
+
+New controls return `structuredContent` plus one text entry containing the
+identical JSON. The object has `operation`, `lane`, `code`, `changed`,
+`revision`, `lane_control` and a plain `explanation`. A successful save returns
+`committed`; a fresh same-state request returns `unchanged` without advancing
+the revision. A stale request returns `revision_conflict`, even if its desired
+state matches. A successful snapshot is captured under the mutation's control
+lock. A refusal can include a later safe observation. Unknown revisions
+and unreadable snapshots are null, never guessed. Read status before an approved
+retry; never blindly repeat an uncertain save or audit result.
+
+Paused dispatch/reply refusals also use structured content and identical text
+JSON: `code:"lane_paused"`, the lane, `paused:true`, `retryable:false`, safe
+`blockers` (including `frozen` when applicable) and a plain explanation.
+Application failures set `isError:true` in the tool result. They are not numeric
+JSON-RPC protocol errors. Other tools retain their existing result shapes.
+The manager owns control intent/outcome audit; the transport adds no duplicate
+generic outcome for manager-audited mutations. Audit delivery after repair may
+repeat a correlated outcome; exactly-once delivery is not claimed.
+
+Both tools declare readOnlyHint=false, idempotentHint=true, openWorldHint=false
+and conservative destructiveHint=true. These describe effects, not identity or
+approval enforcement. Ask is the host policy. A separate same-user stdio client
+with store access can invoke them. Register only in the owner's judge host;
+do not register coding agents or change their permissions, sandboxes or hooks.
+This server never writes MCP host settings. See [security notes](security.md).
 
 `nuntius_web_ensure({})` is judge-only. It accepts only an empty
 object (at most 4096 bytes), with no caller-selected path, host, port, recipient,
@@ -94,3 +149,7 @@ Malformed configuration or an unavailable store leaves MCP in a non-serving
 state: initialize/list still work; tool calls report the fault. Run `config
 check`, correct the owner configuration, then restart the server. No agent
 settings editor, public listener, automatic deletion or LLM is included.
+An isolated lane-control fault instead blocks new starts and marks controls
+unavailable. Status diagnostics, tails, reports, notes and independent safety
+tools remain usable when their own state is healthy. This exception does not
+bypass configuration, run-store or other startup faults.

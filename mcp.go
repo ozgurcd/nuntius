@@ -26,6 +26,19 @@ func tools() []tool {
 	}
 	ensure := makeTool("nuntius_web_ensure", "Ensure the owner's tailnet dashboard. Judge only; ask the owner each time. Returns state words only; never a sign-in link.", map[string]any{}, []string{}, false)
 	ensure.Annotations["idempotentHint"] = true
+	laneTool := func(name, description string, pause bool) tool {
+		props := map[string]any{
+			"lane":              map[string]any{"type": "string", "pattern": namePattern.String()},
+			"expected_revision": map[string]any{"type": "integer", "minimum": 0, "maximum": laneControlMaxRevision},
+		}
+		if pause {
+			props["after_current"] = map[string]any{"type": "boolean", "default": false}
+		}
+		v := makeTool(name, description+" Ask the owner for every invocation in the MCP host.", props, []string{"lane", "expected_revision"}, false)
+		v.Annotations["idempotentHint"] = true
+		v.Annotations["openWorldHint"] = false
+		return v
+	}
 	return []tool{
 		ensure,
 		makeTool("nuntius_status", "Read lane states, short run IDs and current action summaries with ages.", map[string]any{}, []string{}, true),
@@ -41,6 +54,8 @@ func tools() []tool {
 		makeTool("nuntius_unfreeze", "Unfreeze agents. Configure this tool to ask for owner approval.", map[string]any{}, []string{}, false),
 		makeTool("nuntius_owner_notes", "Read up to 50 redacted owner notes after an RFC3339 timestamp.", map[string]any{"since": stringProp()}, []string{}, true),
 		makeTool("nuntius_owner_notes_ack", "Mark the specified owner notes read.", map[string]any{"ids": map[string]any{"type": "array", "items": stringProp(), "minItems": 1, "maxItems": 50}}, []string{"ids"}, false),
+		laneTool("nuntius_lane_pause", "Save a lane hold immediately; its current run may finish. after_current also blocks new starts immediately.", true),
+		laneTool("nuntius_lane_resume", "Clear only the saved lane hold. This operation starts no work; other blockers and held messages remain.", false),
 	}
 }
 func call(m *Manager, name string, args json.RawMessage) (any, error) {
@@ -48,6 +63,9 @@ func call(m *Manager, name string, args json.RawMessage) (any, error) {
 }
 
 func callContext(ctx context.Context, m *Manager, name string, args json.RawMessage) (any, error) {
+	if laneControlTool(name) {
+		return callLaneControl(m, name, args)
+	}
 	if m == nil && name != "nuntius_web_ensure" {
 		return nil, errors.New("not serving: configuration or run store unavailable; run config check and restart")
 	}
@@ -322,7 +340,7 @@ func Serve(ctx context.Context, m *Manager, in io.Reader, out io.Writer) error {
 				Arguments json.RawMessage `json:"arguments"`
 			}
 			e := strictJSON(req.Params, &p)
-			if e == nil && startupErr != nil && p.Name != "nuntius_web_ensure" {
+			if e == nil && !mcpStartupAllows(startupErr, p.Name) {
 				e = startupErr
 			}
 			var value any
@@ -337,7 +355,7 @@ func Serve(ctx context.Context, m *Manager, in io.Reader, out io.Writer) error {
 			if e != nil {
 				status = "refused"
 			}
-			if m != nil && knownTool(p.Name) && p.Name != "nuntius_dispatch" && p.Name != "nuntius_reply" && p.Name != "nuntius_cancel" {
+			if m != nil && knownTool(p.Name) && !managerAuditsMCPTool(p.Name) {
 				var args struct {
 					Lane string `json:"lane"`
 					Goal string `json:"goal_id"`
@@ -362,13 +380,7 @@ func Serve(ctx context.Context, m *Manager, in io.Reader, out io.Writer) error {
 					e = a
 				}
 			}
-			text := ""
-			if e != nil {
-				text = bounded(e.Error(), 1024)
-			} else {
-				text = string(safeJSON(value))
-			}
-			result = map[string]any{"content": []any{map[string]string{"type": "text", "text": text}}, "isError": e != nil}
+			result = mcpToolResult(p.Name, value, e)
 		default:
 			code = -32601
 			message = "method not found"
@@ -382,6 +394,220 @@ func Serve(ctx context.Context, m *Manager, in io.Reader, out io.Writer) error {
 	}
 	return nil
 }
+func laneControlTool(name string) bool {
+	return name == "nuntius_lane_pause" || name == "nuntius_lane_resume"
+}
+
+func managerAuditsMCPTool(name string) bool {
+	switch name {
+	case "nuntius_dispatch", "nuntius_reply", "nuntius_cancel", "nuntius_freeze", "nuntius_unfreeze":
+		return true
+	}
+	return laneControlTool(name)
+}
+
+// Only a lane-control admission fault leaves independent observation and safety
+// tools available. Configuration, run-store and other startup faults still fail
+// closed. No caller identity or host approval is inferred here.
+func mcpStartupAllows(err error, name string) bool {
+	if err == nil || name == "nuntius_web_ensure" {
+		return true
+	}
+	if !errors.Is(err, errLaneControlUnavailable) {
+		return false
+	}
+	switch name {
+	case "nuntius_status", "nuntius_history", "nuntius_tail", "nuntius_report",
+		"nuntius_cancel", "nuntius_freeze", "nuntius_unfreeze", "nuntius_owner_notes",
+		"nuntius_owner_notes_ack", "nuntius_signals", "nuntius_signals_ack",
+		"nuntius_lane_pause", "nuntius_lane_resume":
+		return true
+	}
+	return false
+}
+
+type mcpLaneControlResult struct {
+	Operation   string               `json:"operation"`
+	Lane        string               `json:"lane"`
+	Code        string               `json:"code"`
+	Changed     bool                 `json:"changed"`
+	Revision    *uint64              `json:"revision"`
+	Control     *laneControlSnapshot `json:"lane_control"`
+	Explanation string               `json:"explanation"`
+}
+
+func callLaneControl(m *Manager, name string, args json.RawMessage) (any, error) {
+	operation := "resume"
+	if name == "nuntius_lane_pause" {
+		operation = "pause"
+	}
+	v := mcpLaneControlResult{Operation: operation}
+	invalid := &laneControlFault{Code: "invalid_request"}
+	// Token decoding detects duplicate keys; UseNumber prevents float coercion.
+	if len(args) == 0 || len(args) > 4096 {
+		return laneControlResponse(m, v, laneControlResult{}, invalid), invalid
+	}
+	d := json.NewDecoder(strings.NewReader(string(args)))
+	d.UseNumber()
+	raw, err := queueJSON(d, 1)
+	fields, ok := raw.(map[string]any)
+	if err != nil || !ok {
+		return laneControlResponse(m, v, laneControlResult{}, invalid), invalid
+	}
+	if _, err = d.Token(); err != io.EOF {
+		return laneControlResponse(m, v, laneControlResult{}, invalid), invalid
+	}
+	for key := range fields {
+		if key != "lane" && key != "expected_revision" && (key != "after_current" || operation != "pause") {
+			return laneControlResponse(m, v, laneControlResult{}, invalid), invalid
+		}
+	}
+	lane, ok := fields["lane"].(string)
+	revision, valid := laneControlUint(fields["expected_revision"])
+	if !ok || !namePattern.MatchString(lane) || !valid {
+		return laneControlResponse(m, v, laneControlResult{}, invalid), invalid
+	}
+	after := false
+	if flag, exists := fields["after_current"]; exists {
+		after, ok = flag.(bool)
+		if !ok {
+			return laneControlResponse(m, v, laneControlResult{}, invalid), invalid
+		}
+	}
+	v.Lane = lane
+	if m == nil {
+		err = &laneControlFault{Code: "lane_control_unavailable"}
+		return laneControlResponse(m, v, laneControlResult{}, err), err
+	}
+	r, err := m.setLaneControl(laneControlChange{Lane: lane, Paused: operation == "pause", AfterCurrent: after, ExpectedRevision: &revision}, "mcp")
+	if err == nil && r.Snapshot == nil {
+		err = &laneControlFault{Code: "lane_control_unavailable"}
+	}
+	return laneControlResponse(m, v, r, err), err
+}
+
+func laneControlResponse(m *Manager, v mcpLaneControlResult, r laneControlResult, err error) mcpLaneControlResult {
+	v.Code, v.Changed = r.Code, r.Changed
+	if err != nil {
+		v.Code = "lane_control_unavailable"
+		var fault *laneControlFault
+		if errors.As(err, &fault) {
+			v.Code = fault.Code
+		}
+	}
+	if r.Available || r.Origin != "" || v.Code == "revision_conflict" {
+		v.Revision = &r.Revision
+	}
+	if v.Code != "invalid_request" {
+		v.Control = r.Snapshot
+		if v.Control == nil {
+			v.Control = mcpLaneControlSnapshot(m)
+		}
+	}
+	switch v.Code {
+	case "committed", "unchanged":
+		if v.Operation == "pause" {
+			v.Explanation = "The lane hold is saved. New starts are blocked; its current run may finish."
+		} else {
+			v.Explanation = "The lane hold is clear. This operation started no work; freeze, recovery and held-message blockers still apply."
+		}
+	case "invalid_request":
+		v.Explanation = "Use a lane name and the current integer expected_revision from status. Only pause accepts a boolean after_current; no other or duplicate fields are allowed. Arguments must fit in 4 KiB."
+	case "revision_conflict":
+		v.Explanation = "Lane controls changed since your status read. Read the current state and ask for approval before trying again."
+	case "locked":
+		v.Explanation = "Another operation is using lane controls. No change was accepted; read status before trying again."
+	case "lane_not_found", "lane_not_configured":
+		v.Explanation = "This lane is not configured for new work. Only a saved hold on a retained name can be resumed; resume does not recreate a lane."
+	case "lane_control_capacity":
+		v.Explanation = "The saved lane-control store is full. No saved hold was removed and no new hold was accepted."
+	case "audit_unavailable":
+		v.Explanation = "The control audit or its pending repair is unavailable. Success is not confirmed; new starts stay blocked where control state is uncertain. Read status before any retry."
+	case "save_unconfirmed", "committed_audit_failed":
+		v.Explanation = "The save or its audit could not be confirmed completely. The hold may already have changed. Read status and resolve the control fault before any approved retry; do not blindly repeat it."
+	default:
+		v.Explanation = "Lane controls are unavailable. New starts are blocked until the control fault is resolved; status, reports and independent safety tools remain available when their own state is healthy."
+		if r.Available {
+			v.Explanation = "The hold operation completed, but its current snapshot could not be read. Read status before any further control request."
+		}
+	}
+	if v.Control == nil && v.Code != "invalid_request" {
+		v.Explanation += " A current control snapshot could not be read."
+	}
+	return v
+}
+
+// Observation after a mutation must not wait on the lock that just refused it,
+// reconcile intent, recover a run or echo private parser errors.
+func mcpLaneControlSnapshot(m *Manager) *laneControlSnapshot {
+	if m == nil || !m.mu.TryLock() {
+		return nil
+	}
+	defer m.mu.Unlock()
+	root, err := openLaneControlRoot(m.store)
+	if err != nil {
+		return nil
+	}
+	defer root.Close()
+	guard, err := laneControlReadLock(root)
+	if err != nil {
+		return nil
+	}
+	defer guard.Close()
+	if m.reload() != nil {
+		return nil
+	}
+	runs, err := m.history()
+	if err != nil {
+		return nil
+	}
+	v := m.laneControlSnapshotLocked(runs, true)
+	return &v
+}
+
+func mcpToolResult(name string, value any, err error) map[string]any {
+	typed := false
+	if laneControlTool(name) {
+		typed = true
+		if _, ok := value.(mcpLaneControlResult); !ok {
+			operation := "resume"
+			if name == "nuntius_lane_pause" {
+				operation = "pause"
+			}
+			value = laneControlResponse(nil, mcpLaneControlResult{Operation: operation}, laneControlResult{}, err)
+		}
+	} else if name == "nuntius_dispatch" || name == "nuntius_reply" {
+		var fault *laneAdmissionFault
+		if errors.As(err, &fault) && fault.Code == "lane_paused" {
+			typed = true
+			explanation := "This lane is paused, so no work started. Its current run may finish. Resume clears only the lane hold."
+			for _, blocker := range fault.Blockers {
+				switch blocker {
+				case "frozen":
+					explanation += " All lanes are also frozen; unfreeze needs owner approval."
+				case "freeze_unavailable":
+					explanation += " Freeze state cannot be read; new starts stay blocked."
+				}
+			}
+			value = map[string]any{"code": fault.Code, "lane": fault.Lane, "paused": fault.Paused, "retryable": fault.Retryable, "blockers": fault.Blockers,
+				"explanation": explanation}
+		}
+	}
+	text := ""
+	if err != nil && !typed {
+		text = bounded(err.Error(), 1024)
+	} else {
+		text = string(safeJSON(value))
+	}
+	result := map[string]any{"content": []any{map[string]string{"type": "text", "text": text}}, "isError": err != nil}
+	if typed {
+		var structured any
+		_ = json.Unmarshal([]byte(text), &structured)
+		result["structuredContent"] = structured
+	}
+	return result
+}
+
 func knownTool(name string) bool {
 	for _, t := range tools() {
 		if t.Name == name {

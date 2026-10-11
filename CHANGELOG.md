@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add judge MCP lane pause/resume with required revision checks, strict closed
+  arguments and structured JSON plus identical text. Explain paused refusals
+  and preserve independent status/safety tools when lane controls are corrupt.
+  Require host Ask for both controls; avoid duplicate manager mutation audits.
+
 - Add CLI lane pause/resume/list and explicit held-message review/send/discard
   with durable content receipts. Keep read-only CLI status/agents/list free of
   file creation, intent repair and child launch. Expose versioned safe holds

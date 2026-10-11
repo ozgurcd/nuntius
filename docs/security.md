@@ -1,5 +1,34 @@
 # Dashboard security notes
 
+## Lane controls through judge MCP
+
+Pause blocks new starts immediately and lets an existing run finish under its
+normal supervision. Resume clears only that saved hold; it starts no work and
+does not deliver held messages. Status keeps run failures, reports and hold
+reasons visible separately. Corrupt controls block starts while status,
+reports and independent Cancel/Freeze tools remain usable if their own state
+is healthy. Configuration and run-store startup faults still fail closed.
+
+Keep both `nuntius_lane_pause` and `nuntius_lane_resume` set to Ask for every
+invocation in the owner's judge MCP host. Resume can enable future execution;
+pause changes availability. Neither is autonomous judge authority. The server
+has no trustworthy caller identity or approval attestation. It rejects supplied
+roles and sources; the adapter supplies the audit source `mcp`. Annotations are
+descriptive, not authentication. Same-user file modes do not prevent an
+unsandboxed client with store access from launching its own stdio server.
+Do not register coding agents, relax sandbox or hook rules, or write host settings.
+
+Each request requires the current bounded integer `expected_revision`. Stale
+requests fail even when the desired hold already matches; fresh repeats are
+unchanged. Closed, duplicate-free arguments are bounded to 4 KiB, with no nulls
+or number/boolean coercion. Only pause accepts strict boolean `after_current`.
+The cooperating nonblocking locks and manager audit protocol remain shared
+with CLI controls. The transport does not add another generic audit outcome.
+New control results and paused refusals contain safe state plus plain reasons
+as structured JSON and identical text fallback. Unconfirmed saves require a
+new status read and fault resolution, not a blind retry. No raw prompt, session,
+message, path or parser input appears in these results.
+
 ## Dashboard Settings (v0.3.3)
 
 A valid dashboard grant now authorizes persistent pool-size and iMessage-enable

@@ -511,7 +511,7 @@ func TestMCPRoundTrip(t *testing.T) {
 		} `json:"result"`
 	}
 	_ = json.Unmarshal(lines[1], &list)
-	if len(list.Result.Tools) != 14 {
+	if len(list.Result.Tools) != 16 {
 		t.Fatal("tool count")
 	}
 	if !bytes.Contains(lines[4], []byte(`"isError":true`)) || !bytes.Contains(lines[5], []byte(`-32601`)) {

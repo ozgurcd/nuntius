@@ -226,6 +226,14 @@ notification precede tools. The tools are:
   text or process/session identity is returned. Empty results are [].
 - nuntius_dispatch(lane, goal_id, text): start when idle; return run_id.
 - nuntius_reply(lane, text): resume the ended last run when its session ID exists.
+- nuntius_lane_pause(lane, expected_revision, after_current=false): save the
+  lane hold immediately. New starts refuse; the current run may finish with
+  unchanged timeout and supervision. after_current is a strict boolean and
+  also closes admission immediately. Ask the owner for every invocation.
+- nuntius_lane_resume(lane, expected_revision): clear only the saved hold.
+  This operation starts no work, replays no held message and recreates no
+  removed lane. Normal later recovery or approved dispatch remains separate.
+  Freeze and message-review blockers remain. Ask for every invocation.
 - nuntius_tail(lane, lines=50): 1..200 one-line action summaries, each at most
   120 Unicode characters; no tool output/results or edit bodies. The last
   complete-event window is at most 1 MiB.
@@ -252,6 +260,37 @@ Input protocol lines are limited to 128 KiB. Unknown methods receive JSON-RPC
 errors; tool failures use isError. Every tool describes output as untrusted data.
 Initialization advertises session parser and permission limits. Configuration
 or store startup faults leave a non-serving MCP transport, not a runnable lane.
+
+Status also provides `lane_control_version:1` and the safe `lane_control` list
+of configured plus retained names, sorted by name. Holds and availability stay
+separate from run state, outcome, report presence and attention badges. There
+is no separate MCP list tool. Pause/resume require closed objects at most
+4096 bytes, exact existing lane-name grammar, and `expected_revision` in integer
+JSON syntax from 0 through 9007199254740991. Reject duplicates, nulls, unknown
+fields, fractions and coercion. Only pause accepts `after_current`.
+
+Controls return structuredContent and identical text JSON with operation,
+lane, code, changed, revision, lane_control and a plain explanation. Unknown
+revision/snapshot values are null. Durable changed/unchanged success uses
+committed/unchanged; fresh repeats do not increment revision. Stale requests
+use revision_conflict even if the requested state matches, with a fresh safe
+snapshot when readable. Success captures the snapshot under the mutation's
+control lock; a refusal may use a later observation. Unconfirmed saves/audits require observation
+and fault resolution before an approved retry, never a blind repeat.
+Paused dispatch/reply failures use the same structured/text pair, isError=true,
+code=lane_paused, lane, paused=true, retryable=false, safe blockers and a plain
+explanation. A simultaneous freeze remains a blocker. These are application
+errors, not JSON-RPC envelope errors. Unrelated legacy result shapes remain.
+
+Both controls have readOnlyHint=false, idempotentHint=true, openWorldHint=false
+and destructiveHint=true. Host Ask, judge-only registration and OS access are
+the boundary; no supplied caller role proves owner authority. A separate
+same-user stdio client with store access can invoke controls. No host settings,
+lane sandbox, permissions or hooks are changed. Trusted source is mcp; manager
+intent/outcome audit has no duplicate generic transport outcome. Correlated
+audit replay can repeat after repair. Isolated lane-control corruption blocks
+starts but leaves status diagnostics and independent safety/report tools usable
+when their own state is healthy; other startup faults are not bypassed.
 
 Status flags asked_interactively for known AskUserQuestion/request_user_input
 tool attempts in the last 1 MiB of events, including refusals. It does not claim

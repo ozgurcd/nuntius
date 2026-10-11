@@ -7,6 +7,11 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Ask the judge to pause or resume a lane, with your approval on each call.
+  Status shows the saved hold and remaining blockers. Pause lets the current
+  run finish; resume clears only the hold and starts no work. Failures explain
+  what happened and when a fresh status read is needed before trying again.
+
 - Pause a lane from the CLI while its current run finishes. Resume clears only
   that hold and starts no work. List explains saved holds, including removed
   lanes; status keeps failures and reports visible. Held messages stay for your

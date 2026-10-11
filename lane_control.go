@@ -547,6 +547,7 @@ type laneControlResult struct {
 	// False on every error: visible state under an unresolved intent is not
 	// an admission snapshot. Adapters must report unavailable, never enabled.
 	Available bool
+	Snapshot  *laneControlSnapshot
 }
 
 type laneControlFault struct{ Code string }
@@ -581,7 +582,16 @@ func (m *Manager) setLaneControlIO(change laneControlChange, source string, ops 
 		return laneControlResult{}, laneControlError(err)
 	}
 	defer guard.Close()
-	return m.setLaneControlLocked(root, change, source, ops)
+	r, err := m.setLaneControlLocked(root, change, source, ops)
+	if source == "mcp" {
+		// Bind the safe result to the same lock as the mutation. CLI and other
+		// sources retain their existing API behavior and observation policy.
+		if runs, readErr := m.history(); readErr == nil {
+			snapshot := m.laneControlSnapshotLocked(runs, true)
+			r.Snapshot = &snapshot
+		}
+	}
+	return r, err
 }
 
 func (m *Manager) recoverLaneControls(ops *laneControlIO) error {
