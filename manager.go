@@ -43,6 +43,7 @@ type Run struct {
 	InterruptedSignalled bool       `json:"interrupted_signalled,omitempty"`
 	ResumedSignalled     bool       `json:"resumed_signalled,omitempty"`
 	WaitingToResume      bool       `json:"waiting_to_resume,omitempty"`
+	ResumeBlockedReason  string     `json:"resume_blocked_reason,omitempty"`
 	LaunchdLabel         string     `json:"launchd_label,omitempty"`
 	LaunchFallback       bool       `json:"launch_fallback,omitempty"`
 	LaunchdCleaned       bool       `json:"launchd_cleaned,omitempty"`
@@ -469,7 +470,7 @@ func (m *Manager) follow(r Run, lock, supervisor *os.File, a *activeRun, grace t
 		text := ""
 		if queueErr == nil && pending != "" {
 			text = pending
-		} else if lock != nil && !r.Resumed && (r.StopReason == "ended_no_report" || r.StopReason == "completed") && m.noWork(r.ID) && lane.Kind == "claude" && lane.mode() == "goal_then_continue" {
+		} else if queueErr == nil && lock != nil && !r.Resumed && (r.StopReason == "ended_no_report" || r.StopReason == "completed") && m.noWork(r.ID) && lane.Kind == "claude" && lane.mode() == "goal_then_continue" {
 			text = lane.continuation()
 		}
 		if text != "" {

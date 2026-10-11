@@ -380,6 +380,18 @@ func (m *Manager) admitLaneLocked(name string) error {
 		}
 		return &laneAdmissionFault{Code: "lane_paused", Lane: name, Paused: true, Blockers: blockers}
 	}
+	root, err = openLaneControlRoot(m.store)
+	if err != nil {
+		return errLaneControlUnavailable
+	}
+	held, err := laneHasHeldMessage(root, name)
+	root.Close()
+	if err != nil {
+		return errLaneControlUnavailable
+	}
+	if held {
+		return errors.New("pending_message_requires_review")
+	}
 	return nil
 }
 
@@ -744,7 +756,10 @@ func prepareLaneControlHold(root *os.File, intent laneControlIntent, ops *laneCo
 	if err != nil {
 		return err
 	}
-	return replaceLaneControl(root, name, b, ops, "hold")
+	if err = replaceLaneControl(root, name, b, ops, "hold"); err != nil {
+		return err
+	}
+	return latchLaneMessages(root, intent, ops)
 }
 
 func readLaneControlPrivate(root *os.File, name string, limit int64) ([]byte, error) {

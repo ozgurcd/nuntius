@@ -285,6 +285,9 @@ func (m *Manager) history() ([]Run, error) {
 }
 
 func (m *Manager) pendingMessage(id string) (string, error) {
+	if _, err := os.Lstat(filepath.Join(m.store, "runs", id, "message-hold.json")); !os.IsNotExist(err) {
+		return "", errors.New("pending_message_requires_review")
+	}
 	p := filepath.Join(m.store, "runs", id, "message.json")
 	if _, e := os.Lstat(p); os.IsNotExist(e) {
 		return "", nil

@@ -164,6 +164,16 @@ func main() {
 	mode := string(b)
 	if strings.Contains(mode, "ack-goal") {
 		fmt.Println(`{"type":"system","session_id":"fixture-session"}`)
+		if strings.Contains(mode, "ack-barrier") {
+			fmt.Println(`{"type":"assistant","message":{"content":[{"type":"text","text":"ready"}]}}`)
+			cwd, _ := os.Getwd()
+			for {
+				if _, err := os.Stat(filepath.Join(cwd, "admission-release")); err == nil {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
 		fmt.Println(`{"type":"assistant","message":{"content":[{"type":"text","text":"Goal accepted"}]}}`)
 		fmt.Println(`{"type":"result","is_error":false}`)
 		return

@@ -72,7 +72,20 @@ func (m *Manager) Recover() error {
 				return err
 			}
 			// A live legacy PID with no identity is busy, but never signalled.
-			if sameProcess(*r) || (r.ProcessStart == "" && processExists(r.PID)) {
+			if sameProcess(*r) {
+				if m.active[r.Lane] == nil {
+					supervisor, lockErr := m.lock("supervisor-" + r.ID)
+					if lockErr == nil {
+						a := &activeRun{done: make(chan struct{}), stop: make(chan string, 1)}
+						m.active[r.Lane] = a
+						go m.follow(*r, nil, supervisor, a, m.Grace)
+					} else if !errors.Is(lockErr, errBusy) {
+						return lockErr
+					}
+				}
+				continue
+			}
+			if r.ProcessStart == "" && processExists(r.PID) {
 				continue
 			}
 			supervisor, err := m.lock("supervisor-" + r.ID)
@@ -126,6 +139,16 @@ func (m *Manager) Recover() error {
 				r.WaitingToResume = waiting
 				dirty = true
 			}
+			reason := ""
+			if waiting {
+				if admissionErr := m.admitLaneLocked(r.Lane); admissionErr != nil {
+					reason = admissionErr.Error()
+				}
+			}
+			if reason != r.ResumeBlockedReason {
+				r.ResumeBlockedReason = reason
+				dirty = true
+			}
 			if dirty {
 				if err = m.save(r); err != nil {
 					return err
@@ -153,6 +176,9 @@ func (m *Manager) Recover() error {
 		if err != nil {
 			continue
 		} // Removed lane stays visible in history.
+		if m.admitLaneLocked(r.Lane) != nil {
+			continue
+		}
 		busy := false
 		all, err := m.history()
 		if err != nil {
