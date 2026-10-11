@@ -96,7 +96,7 @@ func webLaunchctl(args ...string) ([]byte, error) {
 	return b, nil
 }
 
-func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.Writer) int {
+func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.Writer) (code int) {
 	m.mu.Lock()
 	config := m.config
 	m.mu.Unlock()
@@ -149,6 +149,15 @@ func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.
 	if action != "foreground" && action != "start" && action != "__background" {
 		fmt.Fprintln(errOut, "unknown web command")
 		return 2
+	}
+	if action == "__background" {
+		var diagnostic cappedWebOutput
+		errOut = io.MultiWriter(errOut, &diagnostic)
+		defer func() {
+			if code != 0 {
+				_ = saveWebFile(filepath.Join(m.store, "web-launch", "failure.json"), webStartupFailure{Code: webStartupCode(diagnostic.buffer.String())})
+			}
+		}()
 	}
 	wf := flag.NewFlagSet("web", flag.ContinueOnError)
 	wf.SetOutput(io.Discard)
@@ -306,6 +315,11 @@ func webStatusLine(state *webState) string {
 }
 
 func (m *Manager) startWeb(ctx context.Context, args []string) (result error) {
+	defer func() {
+		if result != nil {
+			result = fmt.Errorf("%w; web.log: %s", result, filepath.Join(m.store, "web.log"))
+		}
+	}()
 	ensuring := false
 	for _, arg := range args {
 		if arg == "--ensure" {
@@ -332,6 +346,9 @@ func (m *Manager) startWeb(ctx context.Context, args []string) (result error) {
 		if start, err := processStart(pending.PID); err == nil && start == pending.ProcessStart {
 			return errors.New("web: dashboard start is already in progress; use web stop first")
 		}
+	}
+	if err := os.Remove(filepath.Join(dir, "failure.json")); err != nil && !os.IsNotExist(err) {
+		return errors.New("cannot clear dashboard startup result")
 	}
 	launched := false
 	defer func() {
@@ -408,6 +425,13 @@ func (m *Manager) startWeb(ctx context.Context, args []string) (result error) {
 	client := &http.Client{Timeout: time.Second, Transport: &http.Transport{Proxy: nil}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
 	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
+		var failure webStartupFailure
+		if readWebFile(filepath.Join(dir, "failure.json"), &failure) == nil {
+			if cause := failure.cause(); cause != "" {
+				return errors.New("dashboard start failed: " + cause)
+			}
+			return errors.New("dashboard start failed")
+		}
 		if state := m.webDashboard(); state != nil {
 			r, err := client.Get("http://" + state.Address + "/")
 			if err == nil {

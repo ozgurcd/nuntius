@@ -420,6 +420,9 @@ func (w *Web) Run(ctx context.Context, out, errOut io.Writer) error {
 	defer guard.Close()
 	listener, e := net.Listen("tcp4", w.address)
 	if e != nil {
+		if errors.Is(e, syscall.EADDRINUSE) {
+			return errors.New("local web port is already in use; choose another --bind port")
+		}
 		return errors.New("cannot listen on local web address")
 	}
 	defer listener.Close()
