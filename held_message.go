@@ -113,6 +113,13 @@ func pendingText(b []byte) (string, error) {
 
 func latchLaneMessages(root *os.File, intent laneControlIntent, ops *laneControlIO) error {
 	return visitLaneMessages(root, intent.Lane, func(dir *os.File, r Run, message []byte) error {
+		receipt, err := readMessageReceipt(dir, r)
+		if err != nil {
+			return err
+		}
+		if receipt != nil && (receipt.State != "reserved" || receipt.Discarded) {
+			return nil
+		}
 		b, err := readLaneControlPrivate(dir, "message-hold.json", 4096)
 		if err == nil {
 			var old heldMessage
@@ -175,16 +182,34 @@ func latchLaneMessages(root *os.File, intent laneControlIntent, ops *laneControl
 }
 
 func laneHasHeldMessage(root *os.File, lane string) (bool, error) {
+	return laneHasHeldMessageExcept(root, lane, "")
+}
+
+func laneHasHeldMessageExcept(root *os.File, lane, reviewedRun string) (bool, error) {
 	held := false
-	err := visitLaneMessages(root, lane, func(dir *os.File, _ Run, _ []byte) error {
-		_, err := readLaneControlPrivate(dir, "message-hold.json", 4096)
+	err := visitLaneMessages(root, lane, func(dir *os.File, r Run, _ []byte) error {
+		receipt, err := readMessageReceipt(dir, r)
+		if err != nil {
+			return err
+		}
+		if receipt != nil {
+			if receipt.State != "reserved" {
+				return nil
+			}
+			if r.ID != reviewedRun {
+				held = true
+			}
+		}
+		_, err = readLaneControlPrivate(dir, "message-hold.json", 4096)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		held = true
+		if r.ID != reviewedRun {
+			held = true
+		}
 		return nil
 	})
 	return held, err

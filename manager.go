@@ -249,8 +249,39 @@ func (m *Manager) start(name, goal, text string, resume bool) (id string, err er
 
 // launch requires the manager mutex and the lane's process-shared lock.
 func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, parent *Run) (string, error) {
+	if err := m.admitLaneLocked(lane.Name); err != nil {
+		return "", err
+	}
+	var message *heldMessage
+	if parent != nil {
+		pending, err := m.pendingMessage(parent.ID)
+		if err == nil && pending != "" && pending == text {
+			message, err = m.bindPendingMessage(*parent, text)
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+	return m.launchMessage(lane, goal, text, session, lock, parent, message, nil, nil)
+}
+
+func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.File, parent *Run, message *heldMessage, ops *laneControlIO, started *bool) (string, error) {
 	name := lane.Name
-	if err := m.admitLaneLocked(name); err != nil {
+	reviewedRun := ""
+	var messageDir *os.File
+	if message != nil {
+		dir, r, original, receipt, err := m.reviewedMessage(*message)
+		if err != nil {
+			return "", err
+		}
+		messageDir = dir
+		defer dir.Close()
+		if parent == nil || parent.ID != r.ID || name != r.Lane || lane.Kind != r.Kind || goal != r.GoalID || text != original || session != message.SessionID || r.SessionID != session || !sessionPattern.MatchString(session) || receipt != nil || r.ContinueRunID != "" {
+			return "", errLaneControlUnavailable
+		}
+		reviewedRun = r.ID
+	}
+	if err := m.admitLaneExceptLocked(name, reviewedRun); err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256([]byte(text))
@@ -267,6 +298,11 @@ func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, p
 		return "", errors.New("cannot allocate run id")
 	}
 	id := hex.EncodeToString(random)
+	if message != nil {
+		if e := writeMessageReceipt(messageDir, messageReceipt{Version: 1, Binding: *message, State: "reserved", ChildID: id}, ops); e != nil {
+			return "", e
+		}
+	}
 	dir := filepath.Join(m.store, "runs", ".pending-"+id)
 	if e := os.Mkdir(dir, 0700); e != nil {
 		return "", errors.New("cannot create run directory")
@@ -321,6 +357,11 @@ func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, p
 	if e = m.audit(tool, name, goal, digest, "accepted"); e != nil {
 		return "", e
 	}
+	if message != nil {
+		if e = laneControlCheckpoint(ops, "review-before-launch"); e != nil {
+			return "", e
+		}
+	}
 	if e = m.startAgent(filepath.Join(m.store, "runs", id), lane, session, input, stdout, stderr, lock); e != nil {
 		return "", e
 	}
@@ -337,6 +378,17 @@ func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, p
 	}
 	m.active[name] = a
 	go m.follow(r, lock, supervisor, a, m.Grace)
+	if started != nil {
+		*started = true
+	}
+	if message != nil {
+		if e = laneControlCheckpoint(ops, "review-after-launch"); e != nil {
+			return id, e
+		}
+		if e = m.consumeReviewedMessage(messageDir, messageReceipt{Version: 1, Binding: *message, State: "reserved", ChildID: id}, ops); e != nil {
+			return id, e
+		}
+	}
 	return id, nil
 }
 func agentArgs(l Lane, session string) []string {
@@ -474,11 +526,10 @@ func (m *Manager) follow(r Run, lock, supervisor *os.File, a *activeRun, grace t
 			text = lane.continuation()
 		}
 		if text != "" {
-			_, e = m.launch(lane, r.GoalID, text, r.SessionID, lock, &r)
-			continued = e == nil
-			if continued && pending != "" {
-				_ = os.Remove(filepath.Join(m.store, "runs", r.ID, "message.json"))
-			}
+			childID, launchErr := m.launch(lane, r.GoalID, text, r.SessionID, lock, &r)
+			// A known child retains supervision even if receipt consumption is
+			// uncertain. Its reservation continues to block another launch.
+			continued = launchErr == nil || childID != ""
 		}
 	}
 	if !continued {

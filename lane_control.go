@@ -350,6 +350,12 @@ func (e *laneAdmissionFault) Error() string { return e.Code }
 // intent reconciliation here. Every launch (including follow/Recover) uses it
 // before allocating an ID, prompt, run directory or child.
 func (m *Manager) admitLaneLocked(name string) error {
+	return m.admitLaneExceptLocked(name, "")
+}
+
+// The sole exemption is an original reservation validated under these same
+// locks by the internal message protocol. Ordinary callers pass no exemption.
+func (m *Manager) admitLaneExceptLocked(name, reviewedRun string) error {
 	if _, err := m.lane(name); err != nil {
 		return err
 	}
@@ -384,7 +390,12 @@ func (m *Manager) admitLaneLocked(name string) error {
 	if err != nil {
 		return errLaneControlUnavailable
 	}
-	held, err := laneHasHeldMessage(root, name)
+	var held bool
+	if reviewedRun == "" {
+		held, err = laneHasHeldMessage(root, name)
+	} else {
+		held, err = laneHasHeldMessageExcept(root, name, reviewedRun)
+	}
 	root.Close()
 	if err != nil {
 		return errLaneControlUnavailable

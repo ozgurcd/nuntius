@@ -285,6 +285,35 @@ func (m *Manager) history() ([]Run, error) {
 }
 
 func (m *Manager) pendingMessage(id string) (string, error) {
+	root, err := openLaneControlRoot(m.store)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	runs, err := heldDirectory(root, "runs")
+	if err != nil {
+		return "", err
+	}
+	defer runs.Close()
+	dir, err := heldDirectory(runs, id)
+	if err != nil {
+		return "", err
+	}
+	defer dir.Close()
+	r, err := loadRun(filepath.Join(m.store, "runs", id), id)
+	if err != nil || r == nil {
+		return "", errLaneControlUnavailable
+	}
+	receipt, err := readMessageReceipt(dir, *r)
+	if err != nil {
+		return "", err
+	}
+	if receipt != nil {
+		if receipt.State == "reserved" {
+			return "", errors.New("pending_message_requires_review")
+		}
+		return "", nil
+	}
 	if _, err := os.Lstat(filepath.Join(m.store, "runs", id, "message-hold.json")); !os.IsNotExist(err) {
 		return "", errors.New("pending_message_requires_review")
 	}
@@ -339,7 +368,10 @@ func (m *Manager) SendMessage(lane, text string, stop bool) error {
 	r, e := m.latest(lane)
 	if e == nil && r != nil && r.State == "running" {
 		pending, err := m.pendingMessage(r.ID)
-		if err != nil || pending != "" {
+		// A reviewed original run cannot accept another message under its
+		// terminal receipt. A later child has its own independent message slot.
+		_, receiptErr := os.Lstat(filepath.Join(m.store, "runs", r.ID, "message-receipt.json"))
+		if err != nil || pending != "" || !os.IsNotExist(receiptErr) {
 			e = errors.New("an owner message is already queued")
 		} else {
 			b, _ := json.Marshal(map[string]string{"text": text})
