@@ -5,7 +5,7 @@
 
 # nuntius
 
-Nuntius v0.3.3 is a small local Go MCP server for a judge using Claude Desktop.
+Nuntius v0.3.4 is a small local Go MCP server for a judge using Claude Desktop.
 It starts and follows configured Claude Code, Codex and OpenCode agent pools on macOS or Linux.
 It contains no LLM and does not call model providers. Dashboard readiness
 uses loopback HTTP; agent programs and optional Tailscale/Messages integrations

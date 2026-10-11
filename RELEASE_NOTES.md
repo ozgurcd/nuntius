@@ -5,10 +5,11 @@ User-facing changes and upgrade actions are listed newest first. See the
 restart an existing server. Choose when to upgrade through the Homebrew tap
 and restart your MCP server or background dashboard to load the new binary.
 
-## Unreleased
+## v0.3.4 — 2026-10-11
 
-- Private event blocks stay hidden even when their markers are incomplete or
-  outside the visible activity window.
+- Recognizable private blocks in agent output stay hidden in activity summaries,
+  dashboard data and terminal fallback, including split or nested markers,
+  incomplete markers at the end of a file and markers outside the visible window.
 - Busy dashboards use much less CPU while refreshing lane activity; cancel
   and freeze still act immediately.
 - Signed-out headers use one neutral badge and clear overview counts and refresh

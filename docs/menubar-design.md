@@ -1,4 +1,4 @@
-# Menu bar helper (v0.3.3)
+# Menu bar helper (v0.3.4)
 
 The main `nuntius` binary remains CGO_ENABLED=0. The separate `menubar/`
 module builds `nuntius-menubar` with fyne.io/systray, maintained by the Fyne

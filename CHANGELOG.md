@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.3.4 — 2026-10-11
 
-- Keep private event bodies out of cached and served activity when markers
-  are displaced, incomplete or uncertain; also guard terminal-message fallback.
+- Keep recognizable private blocks in agent output out of cached and served
+  activity, including split, nested, displaced and incomplete markers at the
+  end of a file. Apply the same protection to terminal-message fallback.
 - Reduce busy dashboard CPU by reusing bounded parsed event windows and avoiding
   repeated redaction scans; cancel and freeze still send stop signals immediately.
 - Reset the signed-out header to a neutral badge with no retained freeze colour,
