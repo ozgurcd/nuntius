@@ -7,6 +7,11 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Reports now put what happened, owner decisions and next steps first.
+  Full redacted reports and goals expand below without a second scroll box.
+  Unclear answers stay marked as unknown; reported commits are not proof of a push.
+- Agent tails keep updating while open. Scroll up to read at your own pace,
+  then jump to the latest lines. Private output stays hidden.
 - Queue counts recover from stalled connections without a reload. Returning
   to the dashboard refreshes it immediately, including browser history restore.
   Failed refreshes keep the last data and show its age; Settings drafts stay intact.

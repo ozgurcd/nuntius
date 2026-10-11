@@ -306,7 +306,7 @@ See the official [Serve command reference](https://tailscale.com/docs/reference/
 The dashboard adapts to laptop and phone-width windows and your system's light
 or dark mode. The sticky top bar shows dispatch/freeze controls, running, idle
 and ended counts, and refresh freshness on every tab. Agents opens by default;
-Messages & notes, Digest, History, Audit and Settings have their own panels. Arrow keys
+Messages & notes, Digest, Reports & runs, Audit and Settings have their own panels. Arrow keys
 and Home/End navigate tabs. The URL hash selects the view on start and reload.
 The phone header uses two lines: brand and freeze controls, then counts and
 update age. Its pill shows `Enabled` / `Frozen` at narrow widths, with full
@@ -321,7 +321,7 @@ Within Agents, choose All or one lane. Lane tabs show the server's badge colour
 and scroll horizontally on a phone. A lane link such as `#agents/codex-2`
 survives reload and back/forward navigation. Pool changes update the tab strip;
 removing the selected lane returns to All. A lane view includes model/effort,
-its live tail newest first (Follow can be paused), its rows from the latest 50
+its live tail with newest output at the bottom (automatic scrolling can be paused), its rows from the latest 50
 dashboard runs with report links, lane-specific owner notes and pending signals.
 Use the note form's For selector to address a lane; shared judge notes stay in
 Messages & notes.
@@ -341,7 +341,13 @@ An empty lane shows **all lanes**; missing goals and brief digests show muted
 only the display: the complete server audit log and its read entries remain
 unchanged. Read classification comes from the existing MCP tool annotations.
 Filter history by goal ID or lane,
-then expand a row for highlighted QUESTIONS/DECISIONS, goal and report.
+then expand a row for the report's exact plain summary, status, owner questions,
+reported commits and next steps. Process outcome stays separate from reported
+completion. Missing, repeated, conflicting, redacted and truncated sections keep
+their uncertainty visible. Full redacted reports and original goals use disclosures
+and page scroll. The list describes only the latest received attempts, up to 50;
+repeated questions in resumed attempts are counted separately. Report association
+uses the existing report timestamp checks, not native attempt metadata.
 Times are relative with absolute dates on hover.
 History rows stack on phones without splitting badge, lane or duration words.
 Badge colours come from the server's `badge` field, never from the label text:
@@ -355,7 +361,11 @@ the report link remains unavailable and the run is not completed or resumed.
 Tab counts show running agents, unread owner notes and runs with open questions.
 
 Polling runs every two seconds; hidden panels update when shown. Stable cards and rows keep focus and expansion;
-reading an open tail, report or audit log pauses its content updates. Sections
+reading an open report or audit log pauses its content updates. Open card and lane
+tails keep receiving bounded redacted lines on that same poll. They append in
+time order, follow the newest line, and pause automatic scrolling when you scroll
+up. The new-line button resumes following. Last-line age names its source as the
+last observed event; it is not independent proof of agent progress. Sections
 pause briefly after interaction and while focused or selected. A visible banner
 reports refresh failures while retaining the last data. All assets are embedded,
 offline; data and actions stay authenticated. CSP permits only same-origin scripts/styles, with no

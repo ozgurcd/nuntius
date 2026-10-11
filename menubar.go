@@ -108,7 +108,7 @@ func (w *Web) menubarHandler() http.Handler {
 				question := s.AskedInteractively
 				if s.ReportExists {
 					if report, err := w.manager.Report(s.GoalID); err == nil {
-						question = question || menubarReportQuestion(report)
+						question = question || menubarQuestionText(strings.Join(w.reports.project(report).Blocks["QUESTIONS"], "\n"))
 					}
 				}
 				rows = append(rows, map[string]any{"lane": cell(s.Lane), "goal_id": cell(s.GoalID), "state": state, "elapsed_seconds": s.ElapsedSeconds, "question": question, "failed": s.Badge == "red" || s.State == "ended_no_report"})
@@ -159,7 +159,11 @@ func (w *Web) menubarHandler() http.Handler {
 }
 
 func menubarReportQuestion(report string) bool {
-	questions := strings.TrimSpace(reportSections(report)["QUESTIONS"])
+	return menubarQuestionText(reportSections(report)["QUESTIONS"])
+}
+
+func menubarQuestionText(questions string) bool {
+	questions = strings.TrimSpace(questions)
 	questions = strings.Trim(questions, "-* .\t\r\n")
 	return questions != "" && !strings.EqualFold(questions, "none")
 }

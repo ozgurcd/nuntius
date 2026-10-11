@@ -61,6 +61,7 @@ const holds = new WeakMap();
 const renderedPanels = new Set();
 const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
 const agentTabs = new Map(), laneRuns = new Map(), audits = new Map();
+let laneTailView;
 let laneSelection = '';
 const settingsKinds = ['claude', 'codex', 'opencode'];
 let settingsCurrent = null, settingsDraft = null, settingsLoading = false, settingsSaving = false;
@@ -262,8 +263,14 @@ function makeCard(s) {
   }
   const activity = node('p', 'activity'), activityText = node('span');
   activity.append(node('span', 'activity-label', 'Current action'), activityText);
-  const tail = node('details'), tailText = node('pre', 'log');
-  tail.append(node('summary', '', 'View tail'), tailText);
+  const tail = node('details'), tailText = node('pre', 'log live-tail');
+  const tailAge = node('p', 'tail-age'), tailNotice = node('p', 'muted');
+  tailText.tabIndex = 0;
+  const {tailState, tailJump} = bindTail(tailText);
+  tail.addEventListener('toggle', () => {
+    if (tail.open && tailState.following) tailText.scrollTop = tailText.scrollHeight;
+  });
+  tail.append(node('summary', '', 'View tail'), tailAge, tailJump, tailNotice, tailText);
   const controls = node('div', 'card-actions'), cancelControls = node('span');
   controls.append(button('Message', '', () => {
     selectTab('messages');
@@ -289,9 +296,67 @@ function makeCard(s) {
   confirm.append(node('p', '', 'Interrupt this run?'), yes, back);
   cancelControls.append(cancel); controls.append(cancelControls);
   root.append(head, goal, stats, activity, tail, controls, confirm);
-  return {root, kind, badge, goal, fields, activityText, tail, tailText, cancelControls, confirm, resetCancel};
+  return {root, kind, badge, goal, fields, activityText, tail, tailText, tailAge, tailJump, tailNotice, tailState, cancelControls, confirm, resetCancel};
+}
+function bindTail(tailText) {
+  const tailState = {lines: [], run: '', following: true, pending: 0};
+  const tailJump = button('Jump to latest', 'tail-jump', () => {
+    tailState.following = true; tailState.pending = 0; tailJump.hidden = true;
+    tailText.scrollTop = tailText.scrollHeight;
+  });
+  tailJump.hidden = true;
+  tailText.addEventListener('scroll', () => {
+    tailState.following = tailText.scrollHeight - tailText.clientHeight - tailText.scrollTop <= 16;
+    if (tailState.following) { tailState.pending = 0; tailJump.hidden = true; }
+  });
+  return {tailState, tailJump};
+}
+// Transport-independent bounded snapshot consumer. B21 can call this on resync.
+// Keep overlapping line nodes so opening/focusing the tail does not freeze it.
+function updateCardTail(v, s, received) {
+  const state = v.tailState;
+  const lines = received.flatMap(line => String(line).split('\n')).slice(-500);
+  const run = (s.lane || '') + ':' + (s.run_id || '');
+  const sameRun = state.run === run;
+  let overlap = 0;
+  if (sameRun) for (let n = Math.min(state.lines.length, lines.length); n > 0; n--) {
+    if (state.lines.slice(-n).every((line, i) => line === lines[i])) { overlap = n; break; }
+  }
+  const added = lines.length - overlap;
+  const oldTop = v.tailText.scrollTop || 0, oldHeight = v.tailText.scrollHeight || 0;
+  if (!sameRun || (state.lines.length && !overlap)) {
+    v.tailText.replaceChildren();
+    state.pending = 0;
+    setText(v.tailNotice, sameRun ? 'Tail window changed; older lines are unavailable here.' : 'Latest bounded output for this attempt.');
+  } else {
+    const removed = state.lines.length - overlap;
+    for (let i = 0; i < removed; i++) v.tailText.firstElementChild?.remove();
+  }
+  if (added || !lines.length) {
+    if (!state.lines.length) v.tailText.replaceChildren();
+    for (let i = overlap; i < lines.length; i++) {
+      if (v.tailText.firstElementChild) v.tailText.children[v.tailText.children.length - 1].textContent += '\n';
+      v.tailText.append(node('span', '', lines[i]));
+    }
+    if (!lines.length) setText(v.tailText, 'No output yet.');
+    if (v.tail.open && state.following) v.tailText.scrollTop = v.tailText.scrollHeight;
+    else if (v.tail.open) {
+      state.pending += added;
+      // Keep the owner's place when the bounded window evicts old lines.
+      v.tailText.scrollTop = Math.max(0, oldTop - Math.max(0, oldHeight - v.tailText.scrollHeight));
+    }
+  }
+  state.run = run; state.lines = lines;
+  v.tailJump.hidden = !state.pending;
+  setText(v.tailJump, state.pending + ' new lines - jump to latest');
+  v.tailObservedAge = s.last_event_age_seconds; v.tailReceived = lastUpdate || Date.now();
+  updateTailAge(v);
+}
+function updateTailAge(v) {
+  setText(v.tailAge, v.tailState.lines.length && v.tailObservedAge != null ? 'last line ' + Math.floor(v.tailObservedAge + Math.max(0, Date.now() - v.tailReceived) / 1000) + 's ago · source: last observed event' : 'Last line age not reported');
 }
 function updateCard(v, s) {
+  updateCardTail(v, s, (lastData.tails || {})[s.lane] || []);
   if (busy(v.root)) return;
   setText(v.kind, (s.kind || 'Agent') + ' · model=' + (s.model || 'default') + ' effort=' + (s.effort || 'default'));
   stateBadge(v.badge, s.display_state || s.state, s.badge);
@@ -314,8 +379,6 @@ function updateCard(v, s) {
     (a.running_seconds == null ? '' : '; running for ' + estimate + a.running_seconds + 's') :
     s.activity === '-' ? 'No recent activity' : s.activity || 'No recent activity');
   v.activityText.title = v.activityText.textContent;
-  // An open tail is a reading surface: resume text updates when it is closed.
-  if (!v.tail.open) setText(v.tailText, [...(lastData.tails[s.lane] || [])].reverse().join('\n') || 'No output yet.');
   v.cancelControls.hidden = s.state !== 'running';
   if (s.state !== 'running') v.resetCancel();
 }
@@ -344,26 +407,52 @@ function makeRun(r) {
   });
   goal.append(toggle, reportLink); state.append(badge); started.append(timestamp);
   row.append(lane, runID, goal, state, started, elapsed, relation, identity);
+  const chain = node('p', 'report-meta'), age = node('p', 'report-meta');
+  const warnings = node('div', 'report-warnings'), ownerNeed = node('p', 'report-attention'), processOutcome = node('p');
+  content.append(chain, age, warnings, ownerNeed, processOutcome);
   const sections = {};
-  for (const name of ['QUESTIONS', 'DECISIONS']) {
-    const box = node('div', name.toLowerCase()), pre = node('pre', 'report-text');
-    box.append(node('h3', '', name.charAt(0) + name.slice(1).toLowerCase()), pre);
-    content.append(box); sections[name] = pre;
+  for (const [name, title] of [['happened','What happened'], ['QUESTIONS','Does it need me?'], ['commits','Commits and pushes'], ['OPEN','What is next']]) {
+    const box = node('section', 'report-block'), pre = node('pre', 'report-text');
+    box.append(node('h3', '', title), pre); content.append(box); sections[name] = pre;
   }
-  const chain = node('p', 'muted'); content.append(chain);
+  const decisions = node('details'), decisionText = node('pre', 'report-text');
+  decisions.append(node('summary', '', 'Reported decisions — supporting context'), decisionText); content.append(decisions);
   const goalText = node('pre', 'report-text'), report = node('pre', 'report-text');
-  for (const [name, pre] of [['Goal', goalText], ['Report', report]]) {
-    const block = node('div', 'report-block'); block.append(node('h3', '', name), pre); content.append(block);
-  }
+  const rawReport = node('details', 'report-block'), rawGoal = node('details', 'report-block');
+  rawReport.append(node('summary', '', 'Read full report (redacted text)'), report);
+  rawGoal.append(node('summary', '', 'Read original goal (redacted text)'), goalText);
+  content.append(rawReport, rawGoal);
   detail.append(content); detail.hidden = true; root.append(row, detail);
-  const view = {root, lane, runID, relation, identity, reportLink, toggle, badge, timestamp, elapsed, detail, sections, chain, goalText, report, data: r};
+  const view = {root, lane, runID, relation, identity, reportLink, toggle, badge, timestamp, elapsed, detail, sections, chain, age, warnings, ownerNeed, processOutcome, decisionText, rawReport, rawGoal, goalText, report, data: r};
   return view;
 }
 function updateRunContent(v, r) {
-  setText(v.chain, [r.relation || 'first run', r.kind, 'model=' + (r.model || 'default') + ' effort=' + (r.effort || 'default')].filter(Boolean).join(' · '));
-  for (const name of ['QUESTIONS', 'DECISIONS']) setText(v.sections[name], r.sections[name] || 'None recorded.');
+  const p = r.overview;
+  const blocks = name => (p?.blocks?.[name] || []).join('\n');
+  setText(v.chain, [r.goal_id, r.lane, 'Attempt ' + r.run_id, r.relation || 'first run', r.report_association || 'Attempt association not reported'].join(' · '));
+  updateRunAge(v, r);
+  const messages = [...(p?.warnings || [])];
+  if (p?.incomplete) messages.unshift('Incomplete interpretation — inspect the available redacted report.');
+  if (p?.status_conflict) messages.unshift('Conflicting report status');
+  if (!p) messages.push('Report overview not available; inspect the full redacted text.');
+  if ((r.goal || '').includes('[truncated]') || (r.goal || '').includes('[REDACTED]')) messages.push('Original goal text is truncated or redacted.');
+  setText(v.warnings, messages.join('\n'));
+  v.warnings.hidden = !messages.length;
+  const owner = p?.owner_need === 'decision' ? 'Needs your decision' : p?.owner_need === 'none' ? 'No owner decision reported' : 'Owner need unknown — inspect available report';
+  setText(v.ownerNeed, owner + (p?.attention && p?.owner_need === 'none' ? ' · Report status or other sections need attention' : ''));
+  const process = r.state === 'running' ? 'Process is running' : r.ended && r.exit === 0 ? 'Process ended normally' : r.ended && r.exit != null ? 'Process ended with exit ' + r.exit : 'Process outcome unknown';
+  setText(v.processOutcome, process + '; ' + (p?.status_conflict ? 'Conflicting report status' : blocks('STATUS') ? 'report says ' + blocks('STATUS').trimEnd() : 'report status not supplied') + '. Process outcome does not establish acceptance or verification.');
+  setText(v.sections.happened, 'Report says\n' + (blocks('PLAIN SUMMARY') || 'No plain summary supplied\n') + '\nSTATUS\n' + (blocks('STATUS') || 'Not reported'));
+  setText(v.sections.QUESTIONS, (blocks('QUESTIONS') || owner) + (p?.owner_need === 'unknown' && blocks('QUESTIONS') ? '\n' + owner : ''));
+  setText(v.sections.commits, 'Reported, not independently checked\nIDS\n' + (blocks('IDS') || 'Not reported\n') + '\nHEADS\n' + (blocks('HEADS') || 'Not reported'));
+  setText(v.sections.OPEN, (blocks('OPEN') || 'No next step reported\n') + (p?.owner_need !== 'none' && blocks('QUESTIONS') ? '\nReported questions remain:\n' + blocks('QUESTIONS') : ''));
+  setText(v.decisionText, blocks('DECISIONS') || 'Not reported');
   setText(v.goalText, r.goal || 'No goal text available.');
   setText(v.report, r.report || 'No report available.');
+}
+function updateRunAge(v, r) {
+  setText(v.age, 'Ended ' + (r.ended ? relative(r.ended) : 'time not reported') + ' · Received ' + (lastUpdate ? Math.floor((Date.now() - lastUpdate) / 1000) + 's ago' : 'this update') + ' · Report text stays as opened while you read.');
+  v.age.title = r.ended ? 'Ended local: ' + new Date(r.ended).toLocaleString() + ' · UTC: ' + new Date(r.ended).toISOString() : '';
 }
 function updateRun(v, r) {
   v.data = r;
@@ -379,6 +468,7 @@ function updateRun(v, r) {
   timeText(v.timestamp, r.started);
   const end = r.ended ? Date.parse(r.ended) : Date.now();
   setText(v.elapsed, duration((end - Date.parse(r.started)) / 1000));
+  if (!v.detail.hidden) updateRunAge(v, r);
   // Expanded reports never get rewritten underneath the reader.
   if (v.detail.hidden && !busy(el('runs'))) updateRunContent(v, r);
 }
@@ -391,6 +481,7 @@ function filterRuns() {
     if (match) visible++;
   }
   el('historyEmpty').hidden = visible !== 0;
+  setText(el('historyBound'), 'Showing ' + visible + ' matching attempts from the latest ' + (lastData?.history.length || 0) + ' received (up to 50); older runs are not in this view. Attention counts received attempts; resumed reports can repeat questions.');
 }
 function makeNote(n) {
   const root = node('article', 'note'), header = node('div', 'note-header');
@@ -452,7 +543,9 @@ function renderAgentTabs(d) {
 function renderLane(d) {
   el('laneDetail').hidden = !laneSelection;
   if (!laneSelection) return;
-  if (el('followTail').checked && !busy(el('laneDetail'))) setText(el('laneTail'), [...(d.tails[laneSelection] || [])].reverse().join('\n') || 'No output yet.');
+  const lane = d.lanes.find(s => s.lane === laneSelection);
+  laneTailView.tailState.following = el('followTail').checked && laneTailView.tailState.following;
+  updateCardTail(laneTailView, lane || {}, (d.tails || {})[laneSelection] || []);
   const laneHistory = d.history.filter(r => r.lane === laneSelection);
   reconcile(el('laneHistory'), laneHistory, laneRuns, makeRun, updateRun, r => r.run_id);
   el('laneHistoryEmpty').hidden = laneHistory.length !== 0;
@@ -511,9 +604,11 @@ function render(d) {
   setText(el('agentsTabCount'), d.lanes.filter(s => s.state === 'running').length);
   setText(el('notesTabCount'), d.notes.filter(n => !n.read).length);
   setText(el('questionsTabCount'), d.history.filter(r => {
-    const questions = (r.sections.QUESTIONS || '').trim();
+    if (r.overview) return r.overview.attention;
+    const questions = (r.sections?.QUESTIONS || '').trim();
     return questions && !/^(?:none|none recorded|no open questions)[.!]?$/i.test(questions);
   }).length);
+  el('questionsTabCount').title = 'Report attention among ' + d.history.length + ' received attempts; repeated resumed questions are counted per attempt. Review state is not independently checked.';
   renderPanels(d);
 }
 function panelReady(id, shown) {
@@ -583,8 +678,8 @@ async function refresh(replace = false) {
     if (!request.current()) return;
     if (response.status === 403) { signOut(); return; }
     if (!response.ok) throw new Error('unavailable');
-    render(d);
     lastUpdate = Date.now();
+    render(d);
     setText(el('lastRefresh'), 'Last refresh ' + new Date(lastUpdate).toLocaleTimeString());
     el('lastRefresh').dateTime = new Date(lastUpdate).toISOString();
     el('lastRefresh').title = new Date(lastUpdate).toLocaleString();
@@ -597,6 +692,22 @@ async function refresh(replace = false) {
   } finally { if (request.finish()) refreshing = false; }
 }
 function signedOutView() {
+  lastData = undefined;
+  for (const cache of [cards, runs, notes, laneRuns, audits, agentTabs]) {
+    for (const v of cache.values()) {
+      v.resetCancel?.(); v.detail?.replaceChildren(); v.tailText?.replaceChildren();
+      if (v.tailState) { v.tailState.lines = []; v.tailState.run = ''; }
+      v.data = undefined; v.root.replaceChildren(); v.root.remove();
+    }
+    cache.clear();
+  }
+  renderedPanels.clear(); laneSelection = '';
+  for (const id of ['message','note','filter']) el(id).value = '';
+  for (const id of ['laneTail','laneNotes','laneSignals','oversight','historyBound']) { el(id).replaceChildren(); delete el(id).dataset.value; }
+  el('laneDetail').hidden = true;
+  Object.assign(laneTailView.tailState, {lines: [], run: '', following: true, pending: 0});
+  laneTailView.tailJump.hidden = true;
+  setText(laneTailView.tailAge, ''); setText(laneTailView.tailNotice, '');
   for (const tab of tabs) el(tab.getAttribute('aria-controls')).hidden = true;
   el('signInPanel').hidden = false;
   setText(el('signInText'), 'Open the link from `nuntius web link` or iMessage to sign in.');
@@ -604,6 +715,7 @@ function signedOutView() {
   el('freeze').title = 'Signed out';
   el('freeze').setAttribute('aria-label', 'Signed out');
   for (const id of ['runningCount','idleCount','endedCount','agentsTabCount','notesTabCount','questionsTabCount','queueTabCount']) setText(el(id), '—');
+  el('questionsTabCount').title = '';
   lastUpdate = 0;
   setText(el('updated'), 'Waiting for first update');
   setText(el('lastRefresh'), 'Last refresh —');
@@ -658,7 +770,6 @@ el('auditReads').addEventListener('change', () => {
   try { localStorage.setItem(auditReadsKey, String(el('auditReads').checked)); } catch {}
   filterAudit();
 });
-el('followTail').addEventListener('change', () => { if (lastData) renderLane(lastData); });
 document.addEventListener('visibilitychange', foregroundRefresh);
 window.addEventListener('focus', foregroundRefresh);
 window.addEventListener('pageshow', foregroundRefresh);
@@ -826,7 +937,28 @@ el('settingsCancel').addEventListener('click', () => { settingsResetDraft(); set
 el('settingsReload').addEventListener('click', () => loadSettings(true));
 setInterval(() => {
   if (lastUpdate) setText(el('updated'), 'Updated ' + Math.floor((Date.now() - lastUpdate) / 1000) + 's ago');
+  if (lastData) {
+    for (const v of cards.values()) updateTailAge(v);
+    updateTailAge(laneTailView);
+    for (const cache of [runs, laneRuns]) for (const v of cache.values()) if (!v.detail.hidden) updateRunAge(v, v.data);
+  }
 }, 1000);
+// The selected-lane surface shares the card consumer and its poll/stream entry.
+{
+  const tailText = el('laneTail'), tailAge = node('p', 'tail-age'), tailNotice = node('p', 'muted');
+  const binding = bindTail(tailText);
+  const tail = {open: true};
+  laneTailView = {tailText, tailAge, tailNotice, tail, ...binding};
+  for (const n of [tailAge, binding.tailJump, tailNotice]) tailText.parentElement.insertBefore(n, tailText);
+  binding.tailJump.addEventListener('click', () => {
+    el('followTail').checked = true; binding.tailState.following = true;
+    binding.tailState.pending = 0; binding.tailJump.hidden = true; tailText.scrollTop = tailText.scrollHeight;
+  });
+  el('followTail').addEventListener('change', () => {
+    binding.tailState.following = el('followTail').checked;
+    if (binding.tailState.following) { binding.tailState.pending = 0; binding.tailJump.hidden = true; tailText.scrollTop = tailText.scrollHeight; }
+  });
+}
 if (!token) clearQueue();
 selectTab(location.hash.slice(1), false, false);
 refresh();

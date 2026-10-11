@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Reports & runs shows the report's summary, status, owner questions, commits
+  and next steps before its full redacted text. Missing or incomplete answers
+  stay visible, and a normal process exit does not prove the work is complete.
+- Open agent tails follow new output. Scrolling up pauses automatic scrolling
+  and shows a button to jump to new lines. The same refresh rate and private
+  output protection apply.
 - Bound dashboard, Queue and Settings GETs to ten seconds through body decoding;
   explicitly settle timeouts, abort obsolete reads and discard superseded replies.
   Refresh immediately on visible/focus/pageshow, preserve Settings drafts and

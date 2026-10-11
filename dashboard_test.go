@@ -561,7 +561,6 @@ function rendered(h, id) {
     const response = new Promise((resolve, fail) => { finish = resolve; reject = fail; });
     const store = new Map();
     const h = start('#runs', store, '?token=fixture-auth', false, clock, 200, null, response); await settle();
-    const before = h.ids.runs.textContent;
     const pendingAction = h.ids.freezeButton.click();
     check(h.calls.length === 2 && h.calls[1].path === '/action' && h.ids.freezeButton.disabled, 'action is pending and locks action controls');
     h.ids.freezeButton.click();
@@ -577,7 +576,7 @@ function rendered(h, id) {
     check(await pendingAction === false, 'late signed-out action never reports success: ' + result);
     await settle();
     check(!store.has('nuntius.web.credential') && !vm.runInContext('authenticated()', h.context) && h.location.reloads === 1, 'late action cannot restore credentials or repeat sign-out: ' + result);
-    check(h.ids.notice.hidden && h.ids.error.hidden && h.ids.runs.textContent === before && h.calls.length === 2, 'late action cannot restore notices, private data or refresh requests: ' + result);
+    check(h.ids.notice.hidden && h.ids.error.hidden && h.ids.runs.querySelectorAll('tbody').length === 0 && h.calls.length === 2, 'late action cannot restore notices, private data or refresh requests: ' + result);
   }
 	const phoneWidth = 390;
 	const phoneRules = [...input.css.matchAll(/@media\s*\(max-width:\s*(\d+)px\)\s*\{([^@]*?)(?=@media|$)/g)].filter(r => phoneWidth <= Number(r[1])).map(r => r[2]).join('\n');
@@ -615,7 +614,7 @@ function rendered(h, id) {
   check(lane.ids.agentTabs.children.length === input.data.lanes.length + 1, 'All and per-lane tabs');
   check(lane.ids.lanes.children.filter(n => !n.hidden).length === 1 && lane.ids.lanes.textContent.includes('codex-2'), 'selected lane card only');
   check(lane.ids.laneHistory.textContent.includes('REVIEW-RELEASE') && !lane.ids.laneHistory.textContent.includes('CHECK-DOCS'), 'lane history isolates runs');
-  check(lane.ids.laneTail.textContent.startsWith('Report saved.'), 'lane tail newest first');
+  check(lane.ids.laneTail.textContent.endsWith('Report saved.'), 'lane tail chronological with latest line at bottom');
   check(lane.ids.laneNotes.textContent.includes('codex-2 note') && !lane.ids.laneNotes.textContent.includes('claude-1 note'), 'lane owner notes isolated');
   check(lane.ids.laneSignals.textContent.includes('codex-2.REVIEW-RELEASE.ended'), 'lane signals visible');
   vm.runInContext("lastData = JSON.parse(JSON.stringify(lastData)); lastData.lanes.push({lane:'codex-3',kind:'codex',model:'runtime',effort:'default',state:'idle',eta:'-',activity:'-'}); render(lastData)",lane.context);
@@ -625,7 +624,7 @@ function rendered(h, id) {
   lane.location.hash = '#agents/codex-2'; lane.win.hashchange();
   check(lane.ids.laneHistory.textContent.includes('REVIEW-RELEASE'), 'back/forward hash routing');
   vm.runInContext("lastData.tails['codex-2'].push('Newest action'); render(lastData)",lane.context);
-  check(lane.ids.laneTail.textContent.startsWith('Newest action'), 'live lane tail follows');
+  check(lane.ids.laneTail.textContent.endsWith('Newest action'), 'live lane tail follows');
   vm.runInContext("lastData.lanes = lastData.lanes.filter(s => s.lane !== 'codex-2'); render(lastData)",lane.context);
   check(lane.location.hash === '#agents' && lane.ids.laneDetail.hidden, 'removed lane falls back to All');
   const audit = start('#auditSection', new Map(), '?token=fixture-auth'); await settle();
@@ -764,27 +763,29 @@ func TestDashboardBadgeTonesInBothThemes(t *testing.T) {
 // the existing history, notes and freeze JSON shape, including optional fields.
 func TestDashboardFixtureMatchesData(t *testing.T) {
 	type historyView struct {
-		Kind          string            `json:"kind"`
-		Model         string            `json:"model"`
-		Effort        string            `json:"effort"`
-		Relation      string            `json:"relation"`
-		ChainID       string            `json:"chain_id"`
-		ChainDepth    int               `json:"chain_depth"`
-		RunID         string            `json:"run_id"`
-		Lane          string            `json:"lane"`
-		GoalID        string            `json:"goal_id"`
-		Started       time.Time         `json:"started"`
-		Ended         *time.Time        `json:"ended"`
-		State         string            `json:"state"`
-		DisplayState  string            `json:"display_state"`
-		Exit          *int              `json:"exit"`
-		Goal          string            `json:"goal"`
-		Report        string            `json:"report"`
-		Sections      map[string]string `json:"sections"`
-		ResumeCount   int               `json:"resume_count"`
-		Badge         string            `json:"badge"`
-		ParentRunID   string            `json:"parent_run_id"`
-		ContinueRunID string            `json:"continue_run_id"`
+		Kind              string            `json:"kind"`
+		Model             string            `json:"model"`
+		Effort            string            `json:"effort"`
+		Relation          string            `json:"relation"`
+		ChainID           string            `json:"chain_id"`
+		ChainDepth        int               `json:"chain_depth"`
+		RunID             string            `json:"run_id"`
+		Lane              string            `json:"lane"`
+		GoalID            string            `json:"goal_id"`
+		Started           time.Time         `json:"started"`
+		Ended             *time.Time        `json:"ended"`
+		State             string            `json:"state"`
+		DisplayState      string            `json:"display_state"`
+		Exit              *int              `json:"exit"`
+		Goal              string            `json:"goal"`
+		Report            string            `json:"report"`
+		Sections          map[string]string `json:"sections"`
+		Overview          reportOverview    `json:"overview"`
+		ReportAssociation string            `json:"report_association"`
+		ResumeCount       int               `json:"resume_count"`
+		Badge             string            `json:"badge"`
+		ParentRunID       string            `json:"parent_run_id"`
+		ContinueRunID     string            `json:"continue_run_id"`
 	}
 	type dashboard struct {
 		Freeze    *FreezeState        `json:"freeze"`

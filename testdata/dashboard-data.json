@@ -113,7 +113,29 @@
       "chain_depth": 0,
       "relation": "first run",
       "badge": "green",
-      "effort": "high"
+      "effort": "high",
+      "overview": {
+        "blocks": {
+          "PLAIN SUMMARY": [
+            "Release metadata is ready.\n"
+          ],
+          "QUESTIONS": [
+            "(a) publish today (recommended)\n(b) hold for review\n"
+          ],
+          "DECISIONS": [
+            "Keep the existing release pipeline.\n"
+          ],
+          "IDS": [
+            "none\n"
+          ]
+        },
+        "owner_need": "decision",
+        "incomplete": false,
+        "status_conflict": false,
+        "attention": true,
+        "warnings": []
+      },
+      "report_association": "Associated by report time with this attempt; native attempt metadata is not available yet."
     },
     {
       "run_id": "sample03",
@@ -135,7 +157,16 @@
       "chain_depth": 0,
       "relation": "first run",
       "badge": "red",
-      "effort": "high"
+      "effort": "high",
+      "overview": {
+        "blocks": {},
+        "owner_need": "unknown",
+        "incomplete": false,
+        "status_conflict": false,
+        "attention": true,
+        "warnings": []
+      },
+      "report_association": "Unavailable for this attempt; goal-level report cannot establish attempt delivery."
     },
     {
       "run_id": "sample04",
@@ -157,7 +188,26 @@
       "chain_depth": 0,
       "relation": "first run",
       "badge": "amber",
-      "effort": "high"
+      "effort": "high",
+      "overview": {
+        "blocks": {
+          "QUESTIONS": [
+            "none\n"
+          ],
+          "DECISIONS": [
+            "Keep assets local.\n"
+          ],
+          "IDS": [
+            "none\n"
+          ]
+        },
+        "owner_need": "none",
+        "incomplete": false,
+        "status_conflict": false,
+        "attention": false,
+        "warnings": []
+      },
+      "report_association": "Associated by report time with this attempt; native attempt metadata is not available yet."
     }
   ],
   "notes": [

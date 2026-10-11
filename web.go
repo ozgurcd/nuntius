@@ -23,6 +23,7 @@ import (
 )
 
 type Web struct {
+	reports        reportProjectionCache
 	settingsState  webSettings
 	manager        *Manager
 	address, token string
@@ -285,27 +286,7 @@ func readDisplay(path string, limit int) string {
 }
 
 func reportSections(report string) map[string]string {
-	sections := map[string]string{"QUESTIONS": "", "DECISIONS": ""}
-	current := ""
-	for _, line := range strings.Split(report, "\n") {
-		head := strings.TrimSpace(strings.TrimLeft(line, "# "))
-		label, inline, colon := strings.Cut(head, ":")
-		label = strings.TrimSpace(label)
-		if label == "QUESTIONS" || label == "DECISIONS" {
-			current = label
-			if colon && strings.TrimSpace(inline) != "" {
-				sections[current] += strings.TrimSpace(inline) + "\n"
-			}
-			continue
-		}
-		if (colon || strings.HasPrefix(strings.TrimSpace(line), "#")) && label == strings.ToUpper(label) {
-			current = ""
-		}
-		if current != "" {
-			sections[current] += line + "\n"
-		}
-	}
-	return sections
+	return projectReport(report).sections()
 }
 
 func (w *Web) data() (any, error) {
@@ -345,10 +326,17 @@ func (w *Web) data() (any, error) {
 		}
 		relation, chain, depth := runRelation(r, index)
 		report := ""
-		if m.reportExists(r) {
+		association := "Unavailable for this attempt; goal-level report cannot establish attempt delivery."
+		if before := m.currentReport(r); before != nil {
 			report, _ = m.Report(r.GoalID)
+			if after := m.currentReport(r); after == nil || !os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) || before.Size() != after.Size() {
+				report = ""
+			} else if report != "" {
+				association = "Associated by report time with this attempt; native attempt metadata is not available yet."
+			}
 		}
-		views = append(views, map[string]any{"kind": r.Kind, "model": identityValue(r.Model), "effort": identityValue(r.Effort), "run_id": shortRunID(r.ID), "chain_id": shortRunID(chain), "chain_depth": depth, "relation": relation, "lane": r.Lane, "goal_id": r.GoalID, "started": r.Started, "ended": r.Ended, "state": r.State, "display_state": terminalDisplay(r, r.State), "badge": badgeTone(r, r.State), "resume_count": r.ResumeCount, "exit": r.Exit, "goal": readDisplay(filepath.Join(m.store, "runs", r.ID, "goal.txt"), 12000), "report": report, "sections": reportSections(report)})
+		projection := w.reports.project(report)
+		views = append(views, map[string]any{"kind": r.Kind, "model": identityValue(r.Model), "effort": identityValue(r.Effort), "run_id": shortRunID(r.ID), "chain_id": shortRunID(chain), "chain_depth": depth, "relation": relation, "lane": r.Lane, "goal_id": r.GoalID, "started": r.Started, "ended": r.Ended, "state": r.State, "display_state": terminalDisplay(r, r.State), "badge": badgeTone(r, r.State), "resume_count": r.ResumeCount, "exit": r.Exit, "goal": readDisplay(filepath.Join(m.store, "runs", r.ID, "goal.txt"), 12000), "report": report, "sections": projection.sections(), "overview": projection, "report_association": association})
 	}
 	tails := map[string][]string{}
 	lanes := []webLane{}
