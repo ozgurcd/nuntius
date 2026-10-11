@@ -259,6 +259,11 @@ func (m *Manager) laneControls() (laneControlSnapshot, error) {
 	if err != nil {
 		return laneControlSnapshot{}, err
 	}
+	if m.readOnly {
+		for i := range runs {
+			m.observeEndedRun(&runs[i])
+		}
+	}
 	return m.projectLaneControls(s, root, runs, true), nil
 }
 
@@ -346,7 +351,7 @@ func laneControlExplanation(v laneControlView) string {
 	if v.Paused {
 		when := "an unknown time"
 		if t, err := time.Parse(time.RFC3339Nano, v.Since); err == nil {
-			when = t.Local().Format("15:04")
+			when = t.Local().Format("2006-01-02 15:04 MST")
 		}
 		source := map[string]string{"cli": "CLI", "web": "dashboard", "mcp": "judge MCP"}[v.Source]
 		parts = append(parts, "Paused by you at "+when+" via "+source)

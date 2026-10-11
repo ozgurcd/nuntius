@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Observe ended processes in CLI status, agents and lane lists without changing
+  stored data or starting recovery. Restore missing-report attention and show
+  the local date and time zone for lane holds.
+
 - Add judge MCP lane pause/resume with required revision checks, strict closed
   arguments and structured JSON plus identical text. Explain paused refusals
   and preserve independent status/safety tools when lane controls are corrupt.

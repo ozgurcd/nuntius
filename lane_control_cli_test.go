@@ -155,6 +155,134 @@ func TestLaneCLIReadNoCreateOrReconcile(t *testing.T) {
 	}
 }
 
+// X3 exposed stale running metadata; the same cases passed on the pre-A06
+// parent (X4). Observation must retain those facts without the parent's writes.
+func TestLaneCLIDeadProcessProjection(t *testing.T) {
+	for _, report := range []bool{false, true} {
+		t.Run(map[bool]string{false: "missing_report", true: "current_report"}[report], func(t *testing.T) {
+			m, store := laneControlCommitFixture(t)
+			_ = m.Close()
+			config := laneCLIConfig(t, m.config)
+			r := seedCrashRun(t, m, strings.Repeat("f", 32), "DEAD-PROJECTION", "")
+			if processExists(r.PID) {
+				t.Fatal("fixture PID must be absent")
+			}
+			if report {
+				if err := os.WriteFile(filepath.Join(m.config.ReportsDir, r.GoalID+".txt"), []byte("complete fixture report"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := m.setLaneControl(laneControlChange{Lane: "codex", Paused: true}, "cli"); err != nil {
+				t.Fatal(err)
+			}
+			before := laneCLITree(t, store)
+			for _, args := range [][]string{{"status", "--json"}, {"agents", "--json"}} {
+				code, out, _ := laneCLI(t, config, store, args...)
+				if code != 0 {
+					t.Fatal("read failed")
+				}
+				var rows []map[string]any
+				if args[0] == "agents" {
+					if err := json.Unmarshal([]byte(out), &rows); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					var view struct {
+						Lanes []map[string]any `json:"lanes"`
+					}
+					if err := json.Unmarshal([]byte(out), &view); err != nil {
+						t.Fatal(err)
+					}
+					rows = view.Lanes
+				}
+				found := false
+				for _, row := range rows {
+					if row["lane"] != "codex" && row["name"] != "codex" {
+						continue
+					}
+					found = true
+					state, outcome, badge := "ended_no_report", "ended_no_report", "amber"
+					if report {
+						state, outcome, badge = "ended", "completed", "green"
+					}
+					if row["state"] != state || row["outcome"] != outcome || row["badge"] != badge || row["report_exists"] != report || row["exit"] != nil {
+						t.Errorf("%s lost ended state, unknown exit or report attention", args[0])
+					}
+					control := row["lane_control"].(map[string]any)
+					if control["paused"] != true || control["phase"] == "draining" || strings.Contains(control["explanation"].(string), "current run may finish") {
+						t.Error("dead process is still a draining hold")
+					}
+				}
+				if !found {
+					t.Fatal("configured lane missing")
+				}
+				if !reflect.DeepEqual(before, laneCLITree(t, store)) {
+					t.Fatal("observation changed store")
+				}
+			}
+			code, out, _ := laneCLI(t, config, store, "lane", "list", "--json")
+			if code != 0 || strings.Contains(out, `"phase":"draining"`) || strings.Contains(out, `"running"`) {
+				t.Error("list retains dead-process blocker")
+			}
+			if !reflect.DeepEqual(before, laneCLITree(t, store)) {
+				t.Fatal("list changed store")
+			}
+		})
+	}
+}
+
+func TestLaneCLIHoldDate(t *testing.T) {
+	since := time.Date(2025, 3, 4, 15, 6, 0, 0, time.UTC)
+	v := laneControlView{Paused: true, Since: since.Format(time.RFC3339Nano), Source: "cli"}
+	if !strings.Contains(laneControlExplanation(v), since.Local().Format("2006-01-02 15:04 MST")) {
+		t.Fatal("human hold provenance must include an unambiguous local date")
+	}
+}
+
+func TestLaneCLIProcessObservationUncertainty(t *testing.T) {
+	start, err := processStart(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, identity, want string
+		pid                  int
+	}{
+		{"unverified_survivor", "", "running", os.Getpid()},
+		{"verified_survivor", start, "running", os.Getpid()},
+		{"reused_pid", start + "-different", "ended_no_report", os.Getpid()},
+		{"pending_pid", "", "running", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, store := laneControlCommitFixture(t)
+			_ = m.Close()
+			r := seedCrashRun(t, m, strings.Repeat("e", 32), "OBSERVATION", "failed")
+			r.PID, r.ProcessStart = tc.pid, tc.identity
+			if err := m.save(&r); err != nil {
+				t.Fatal(err)
+			}
+			before := laneCLITree(t, store)
+			reader, err := newReadManager(m.config, store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			rows, err := reader.Status()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, row := range rows {
+				if row.Lane == "codex" && (row.State != tc.want || row.Outcome != "failed") {
+					t.Error("process uncertainty or known outcome lost")
+				}
+			}
+			if !reflect.DeepEqual(before, laneCLITree(t, store)) {
+				t.Fatal("observation wrote state")
+			}
+		})
+	}
+}
+
 func TestLaneCLISelectorsAndManagerJSON(t *testing.T) {
 	m, store := laneControlCommitFixture(t)
 	config := laneCLIConfig(t, m.config)

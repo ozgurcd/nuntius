@@ -634,6 +634,7 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 	for i := range runs {
 		r := &runs[i]
 		if m.readOnly {
+			m.observeEndedRun(r)
 			continue
 		}
 		if r.State != "running" && r.LaunchdLabel != "" && !r.LaunchdCleaned {
@@ -788,6 +789,31 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// observeEndedRun changes only the local snapshot. It never recovers, saves,
+// signals or supervises. A missing identity cannot prove a survivor ended.
+func (m *Manager) observeEndedRun(r *Run) {
+	if r.State != "running" || r.PID <= 1 {
+		return
+	}
+	ended := errors.Is(syscall.Kill(r.PID, 0), syscall.ESRCH)
+	if !ended && r.ProcessStart != "" {
+		start, err := processStart(r.PID)
+		ended = err == nil && start != r.ProcessStart
+	}
+	if !ended {
+		return
+	}
+	r.State, r.Exit = "ended", nil
+	now := time.Now().UTC()
+	r.Ended = &now
+	if r.StopReason == "" {
+		r.StopReason = "ended_no_report"
+		if m.reportExists(*r) {
+			r.StopReason = "completed"
+		}
+	}
 }
 func (m *Manager) Close() error {
 	m.mu.Lock()
