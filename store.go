@@ -258,6 +258,16 @@ func readWindow(p string, tail bool) ([]byte, error) {
 			return nil, nil
 		}
 	}
+	// An unterminated event still carries privacy evidence. Classify it with
+	// the complete events before dropping it from the parsing window: an
+	// orphan END or fragment can make earlier, otherwise public bodies private.
+	// An open block also stays private when its last body event has no newline.
+	if len(b) > 0 && b[len(b)-1] != '\n' {
+		lines := bytes.Split(b, []byte("\n"))
+		if private := privateEventLines(b, lines); private != nil && private[len(private)-1] {
+			return []byte("[REDACTED]\n"), nil
+		}
+	}
 	if i := bytes.LastIndexByte(b, '\n'); i >= 0 {
 		b = b[:i+1]
 	} else {

@@ -160,6 +160,14 @@ func assertMixedPrivateStream(t *testing.T, texts []string, body string, orphan 
 		}
 		if !orphan || i == len(texts)-1 {
 			assertPrivateOutputs(t, m, path, body)
+			// EOF may follow complete JSON without a newline, or interrupt
+			// the current JSON event itself. Neither drops privacy context.
+			for _, cut := range []int{1, 2} {
+				if os.WriteFile(path, data[:len(data)-cut], 0600) != nil {
+					t.Fatal("unterminated event fixture failed")
+				}
+				assertPrivateOutputs(t, m, path, body)
+			}
 		}
 	}
 	if strings.Contains(Redact(strings.Join(texts, "")), body) {
@@ -258,7 +266,7 @@ func TestPrivateStreamRandom(t *testing.T) {
 }
 
 func FuzzPrivateStream(f *testing.F) {
-	for _, seed := range [][]byte{{}, {0}, {1, 2, 3}, {4, 5, 6}, {255, 128, 42}, []byte("fragmented-markers")} {
+	for _, seed := range [][]byte{{}, {0}, {1}, {2}, {1, 2, 3}, {4, 5, 6}, {255, 128, 42}, []byte("fragmented-markers")} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, seed []byte) {
@@ -298,6 +306,12 @@ func mixedPrivateStream(seed []byte) ([]string, string) {
 	if choice(4)%2 == 0 {
 		texts = append(texts, "-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----")
 	}
-	texts = append(texts, body, "-----END "+label+"PRIVATE KEY-----", "Public suffix\n<!-- ordinary comment -->")
+	texts = append(texts, body)
+	switch choice(5) % 3 {
+	case 1:
+		texts = append(texts, "-----END "+label+"PRIVATE KEY-----", "Public suffix\n<!-- ordinary comment -->")
+	case 2:
+		texts = append(texts, "-----END "+label+"PRI")
+	}
 	return texts, body
 }
