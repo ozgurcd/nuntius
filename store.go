@@ -243,7 +243,10 @@ func readWindow(p string, tail bool) ([]byte, error) {
 			if _, e = f.Seek(0, io.SeekStart); e != nil {
 				return nil, errors.New("cannot seek events")
 			}
-			if !publicEventPrefix(f, offset+int64(i)+1) {
+			// Scan through the retained suffix too: a dash-only fragment at the
+			// cutoff is public unless later text supplies private marker intent.
+			// A marker anywhere still makes this displaced window fail closed.
+			if !publicEventPrefix(f, st.Size()) {
 				return []byte("[REDACTED]\n"), nil
 			}
 			after, err := f.Stat()

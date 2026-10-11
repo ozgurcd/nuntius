@@ -47,6 +47,7 @@ func (m *Manager) terminalTurn(r Run) (bool, string) {
 	active, stopped := false, false
 	final, session := "", ""
 	private := false
+	var privacy privateEventScanner
 	for {
 		line, err := reader.ReadSlice('\n')
 		if err == io.EOF && len(line) == 0 {
@@ -56,7 +57,7 @@ func (m *Manager) terminalTurn(r Run) (bool, string) {
 			return false, ""
 		}
 		read += int64(len(line))
-		begin, end, uncertain := privateEventMarkers(line)
+		begin, end, uncertain := privacy.markers(line)
 		private = private || begin || end || uncertain
 		if read > maxStream {
 			return false, ""
