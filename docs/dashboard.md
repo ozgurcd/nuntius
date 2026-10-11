@@ -28,7 +28,43 @@ retry later after a fresh read. An uncertain result may already have changed
 state and must never be retried automatically. All dashboard writes share one
 ten-per-minute allowance with a burst of three. New control requests accept
 JSON only, no query, at most 4 KiB, a five-second body read deadline, and a
-32 KiB response ceiling. These APIs add no dashboard buttons yet.
+32 KiB response ceiling.
+
+Agents cards offer **Pause lane**, **Pause after current** and **Resume lane**.
+Both pause actions block new starts immediately and let the current run finish.
+The neutral hold badge stays separate from the process outcome. Pause never
+turns a failed or missing-report attempt into a success. Cancel and the live tail
+keep their existing behavior. Resume clears only the lane hold, starts no work,
+and names remaining freeze, recovery or held-message blockers. A previously
+approved automatic batch may start work later; held messages still need review.
+
+A pending save disables that lane's hold controls. Other lanes, reading, notes
+and Sign out remain usable. Focus and button nodes survive polling. Success
+appears only after a valid saved-state response. Conflicts, unreadable responses,
+network failures and the ten-second request/body deadline trigger a current
+state read, never an automatic mutation retry. Review the reread before choosing
+another action. Invalid or unknown control data blocks task messages and hold
+actions. A paused lane keeps message drafts and notes usable, but Send / queue
+and Stop and send are disabled. Sign-out, expiry and cross-tab sign-out clear
+the cards immediately; late save replies cannot bring them back. Holds and UI
+action state add no browser storage.
+
+Cards lead with lane and goal, a health explanation, current action, elapsed
+versus usual duration, observation and receipt ages, report links and controls.
+Usual duration names its median, earlier-run population, engine and size when
+provided; otherwise it says unavailable. Silence past fifteen minutes is a
+possible stall, which may be a long command, never confirmed stuck. Idle without
+an authoritative reason says that the reason is unavailable and suggests Queue.
+Ended cards say Run duration; a normal exit does not establish acceptance.
+
+Attention first puts failed/missing-report attempts and report decisions before
+quiet or unavailable lanes, other ended attempts, working lanes and idle lanes.
+Lane names break ties. Card order is selectable. Focused, selected or expanded
+cards and pending saves keep their place; a notice explains a deferred order.
+Long names, reasons and buttons wrap at phone widths. Report links open the exact
+received attempt with a timestamp association. Current and previous-goal reports
+have separate labels. If that association is unavailable or outside received
+history, the card says so; a goal-level report never certifies a newer attempt.
 
 ### Queue (since v0.3.3)
 
@@ -342,10 +378,10 @@ The phone header uses two lines: brand and freeze controls, then counts and
 update age. Its pill shows `Enabled` / `Frozen` at narrow widths, with full
 dispatch/freeze text in its title and accessible label. The tab bar scrolls
 within phone-width windows.
-Compact agent cards show kind, state, short run ID, goal, elapsed time, ETA, event age, current action and
-report presence. Open a card's tail to read its bounded output. Cancel uses
+Agent cards show explained activity and holds, with run IDs, ETA and exact times
+under Evidence. Open a card's tail to read its bounded output. Cancel uses
 an in-page confirmation before interrupting a running agent; Keep running or
-the timeout restores the initial button. Message opens that agent's composer.
+the timeout restores the initial button. Messages & notes opens that agent's composer.
 
 Within Agents, choose All or one lane. Lane tabs show the server's badge colour
 and scroll horizontally on a phone. A lane link such as `#agents/codex-2`
@@ -413,5 +449,6 @@ Cancel, Freeze, Unfreeze and owner-note entry are local owner actions.
 At widths of 480px or less, per-agent history scrolls horizontally with
 unsplit cells. Other wide tables scroll within their panel; the main History
 view retains its stacked rows. Long paths in live tails wrap. ETA keeps its
-short text, with provenance in its title and on tap. Tests use the offline
-DOM and stylesheet with a 390px predicate; visual review belongs to the owner.
+short text under Evidence, with duration provenance visible on the card.
+Tests use the shipped script with an offline DOM; browser geometry and actual
+owner phone behavior are separate evidence.

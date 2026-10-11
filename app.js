@@ -30,6 +30,7 @@ function signOut(removeStored = true) {
   if (!token) return;
   token = ''; expiresAt = 0; authEpoch++;
   cancelDashboardReads();
+  clearLaneControls();
   clearSettings();
   clearQueue();
   signedOutView();
@@ -72,6 +73,112 @@ let settingsErrors = {};
 let settingsReadonlyID = 0;
 let queueData = null, queueFetched = 0, queueLoading = false, queueFailure = '';
 const queueRows = new Map();
+let laneControls = null;
+const laneSaves = new Map();
+// One control client for Agents and future native Queue consumers. No storage.
+function validLaneControls(c) {
+  return c?.lane_control_version === 1 && Number.isSafeInteger(c.revision) && c.revision >= 0 &&
+    Array.isArray(c.lanes) && c.lanes.length <= 64 && new Set(c.lanes.map(l => l?.name)).size === c.lanes.length &&
+    c.lanes.every(l => l && typeof l.name === 'string' && /^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$/.test(l.name) &&
+      typeof l.paused === 'boolean' && typeof l.configured === 'boolean' && typeof l.dispatch_eligible === 'boolean' &&
+      typeof l.requested_after_current === 'boolean' && Number.isSafeInteger(l.revision) && l.revision >= 0 && l.revision <= c.revision &&
+      typeof l.since === 'string' && typeof l.source === 'string' && typeof l.explanation === 'string' &&
+      ['enabled','paused','draining','unavailable'].includes(l.phase) &&
+      (l.phase === 'unavailable' || (l.paused ? ['paused','draining'].includes(l.phase) : l.phase === 'enabled')) &&
+      Array.isArray(l.blockers) && l.blockers.every(b => typeof b === 'string'));
+}
+function acceptLaneControls(c, version) {
+  if (version !== 1 || !validLaneControls(c)) { laneControls = null; return; }
+  if (!laneControls || c.revision >= laneControls.revision) laneControls = c;
+}
+function controlFor(lane) { return laneControls?.lanes.find(l => l.name === lane); }
+function blockerWords(blockers) {
+  const words = {lane_paused:'Lane is paused',running:'Current work is running',frozen:'Dispatch is frozen',held_message:'A held message still needs review',waiting_to_resume:'Interrupted work is waiting for a separate recovery check',not_configured:'Lane is no longer configured',freeze_unavailable:'Freeze state cannot be read; new work is blocked',held_message_unavailable:'Message reservations cannot be read; new work is blocked',lane_control_unavailable:'Lane controls are unavailable'};
+  return blockers.map(b => words[b] || 'An additional hold has no explanation here').join('; ');
+}
+function messageGuard(lane) {
+  const c = controlFor(lane);
+  return !c || c.phase === 'unavailable' ? 'Lane controls are unavailable. Read current state before sending work.' :
+    c.paused ? 'Lane is paused. New task messages cannot be sent; drafts, notes and reading stay available.' :
+    lastData?.freeze ? 'Dispatch is frozen. New task messages cannot be sent.' : !c.configured ? 'Lane is no longer configured for new work.' : '';
+}
+function updateMessageControls() {
+  const reason = messageGuard(el('lane').value);
+  el('send').disabled = el('stopSend').disabled = !token || acting || !!reason;
+  setText(el('messageHold'), reason);
+}
+function updateLaneControls(v, lane) {
+  const c = controlFor(lane), saving = laneSaves.has(lane);
+  setText(v.holdBadge, !c || c.phase === 'unavailable' ? 'Controls unavailable' : c.phase === 'draining' ? 'Paused · current run finishing' : c.paused ? 'Paused' : 'Lane enabled');
+  setText(v.holdReason, !c ? 'Could not read lane holds. New starts are blocked until current state can be read.' :
+    (c.paused ? 'Pause blocks new work and lets the current run finish. ' : '') + c.explanation +
+    (c.since ? ' Hold saved ' + relative(c.since) + ' (' + c.since + ').' : '') +
+    (c.blockers.length ? ' Holds: ' + blockerWords(c.blockers) + '.' : ''));
+  // Do not hide the button that owns keyboard focus when its set completes.
+  v.pause.hidden = !!c?.paused && document.activeElement !== v.pause;
+  v.pauseAfter.hidden = !!c?.paused && document.activeElement !== v.pauseAfter;
+  v.resume.hidden = !!c && !c.paused && document.activeElement !== v.resume;
+  for (const b of [v.pause,v.pauseAfter,v.resume]) b.disabled = !token || saving || !c || c.phase === 'unavailable';
+  v.pause.disabled ||= !c?.configured;
+  v.pauseAfter.disabled ||= !c?.configured;
+}
+function clearLaneControls() {
+  for (const request of laneSaves.values()) request.cancel();
+  laneSaves.clear(); laneControls = null;
+}
+async function setLaneControl(lane, operation, afterCurrent = false) {
+  if (!authenticated() || laneSaves.has(lane)) return;
+  const c = controlFor(lane), v = cards.get(lane);
+  if (!v || !c || c.phase === 'unavailable' || (operation === 'pause' && !c.configured)) return;
+  const epoch = authEpoch, controller = new AbortController();
+  let rejectSave;
+  const cancelled = new Promise((_, reject) => { rejectSave = reject; });
+  const request = {cancel: () => { controller.abort(); rejectSave(new Error('save unconfirmed')); }};
+  const current = () => laneSaves.get(lane) === request && epoch === authEpoch && authenticated();
+  laneSaves.set(lane, request);
+  setText(v.controlStatus, 'Save pending · current hold is not yet confirmed. Sign out stays available.');
+  updateLaneControls(v, lane);
+  const payload = {schema_version:1,lane,operation,expected_revision:laneControls.revision};
+  if (operation === 'pause') payload.after_current = afterCurrent;
+  const timer = setTimeout(request.cancel, 10000);
+  let reread = false;
+  try {
+    const {response, data} = await Promise.race([cancelled, (async () => {
+      const response = await fetch('/lane-control', {method:'POST',headers:{'X-Nuntius-Token':token,'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal});
+      if (!current()) return {};
+      if (response.status === 403) return {response};
+      return {response, data:await response.json()};
+    })()]);
+    if (!current()) return;
+    if (response.status === 403) { signOut(); return; }
+    if (!response.ok || data?.schema_version !== 1 || typeof data.paused !== 'boolean' || data.paused !== (operation === 'pause') || typeof data.changed !== 'boolean' ||
+        !validLaneControls(data.lane_control) || data.revision !== data.lane_control.revision || data.revision < payload.expected_revision ||
+        data.lane_control.lanes.find(l => l.name === lane)?.paused !== data.paused) {
+      const messages = {revision_conflict:'Lane controls changed elsewhere. Current state is being read; review it before another action.',locked:'Lane controls are busy. No change was accepted. Read current state before another action.',rate_limited:'Too many control requests. Read current state before another action.',invalid_request:'This control request was refused. Read current state and check local configuration.'};
+      setText(v.controlStatus, messages[data?.code] || 'Save not confirmed. The hold may have changed. Reading current state; review it before another action.');
+      laneControls = null; reread = true;
+    } else {
+      acceptLaneControls(data.lane_control, 1);
+      const saved = controlFor(lane);
+      setText(v.controlStatus, operation === 'pause' ? 'Lane hold saved. New starts are blocked; current work can finish.' :
+        'Lane hold cleared; this action started no work. Other holds: ' + (saved.blockers.length ? blockerWords(saved.blockers) : 'none in this snapshot') + '. A previously approved automatic batch may start work later. Held messages still need explicit review.');
+    }
+  } catch {
+    if (!current()) return;
+    laneControls = null; reread = true;
+    setText(v.controlStatus, 'Save not confirmed. The hold may have changed. Reading current state; review it before another action.');
+  } finally {
+    clearTimeout(timer);
+    if (laneSaves.get(lane) === request) {
+      laneSaves.delete(lane);
+      if (epoch === authEpoch && authenticated()) {
+        for (const [name,view] of cards) updateLaneControls(view, name);
+        updateMessageControls();
+      }
+    }
+  }
+  if (reread && epoch === authEpoch && authenticated()) await refresh(true);
+}
 // Snapshot GETs only. Event streams and mutation POSTs have separate lifetimes.
 // Explicit settlement also handles a transport that fails to honor abort.
 const dashboardReadDeadline = 10000;
@@ -263,6 +370,20 @@ function makeCard(s) {
   }
   const activity = node('p', 'activity'), activityText = node('span');
   activity.append(node('span', 'activity-label', 'Current action'), activityText);
+  const health = node('h4', 'lane-health'), reason = node('p', 'lane-reason'), rankReason = node('p', 'hint');
+  const holdBadge = node('span', 'badge lane-hold'), holdReason = node('p', 'hint');
+  const durationBasis = node('p', 'duration-basis'), received = node('p', 'hint');
+  const reportStatus = node('p', 'hint'), reportLink = node('a', 'lane-report');
+  reportLink.href = '#runs';
+  reportLink.addEventListener('click', event => {
+    event.preventDefault();
+    const r = view.reportRun;
+    if (!r) return;
+    selectTab('runs');
+    el('filter').value = ''; filterRuns();
+    const target = runs.get(r.run_id);
+    if (target) { target.detail.hidden = false; target.toggle.setAttribute('aria-expanded','true'); updateRunContent(target,target.data); target.toggle.focus(); }
+  });
   const tail = node('details'), tailText = node('pre', 'log live-tail');
   const tailAge = node('p', 'tail-age'), tailNotice = node('p', 'muted');
   tailText.tabIndex = 0;
@@ -272,11 +393,17 @@ function makeCard(s) {
   });
   tail.append(node('summary', '', 'View tail'), tailAge, tailJump, tailNotice, tailText);
   const controls = node('div', 'card-actions'), cancelControls = node('span');
-  controls.append(button('Message', '', () => {
+  const message = button('Messages & notes', '', () => {
     selectTab('messages');
     el('lane').value = s.lane;
+    updateMessageControls();
     el('message').focus();
-  }));
+  });
+  const pause = button('Pause lane', '', () => setLaneControl(s.lane, 'pause', false));
+  const pauseAfter = button('Pause after current', '', () => setLaneControl(s.lane, 'pause', true));
+  const resume = button('Resume lane', '', () => setLaneControl(s.lane, 'resume'));
+  const controlStatus = node('p','control-status'); controlStatus.setAttribute('role','status');
+  controls.append(pause, pauseAfter, resume, message);
   const confirm = node('div', 'confirm'); confirm.hidden = true;
   let confirmTimer;
   function resetCancel() {
@@ -295,8 +422,11 @@ function makeCard(s) {
   const back = button('Keep running', '', resetCancel);
   confirm.append(node('p', '', 'Interrupt this run?'), yes, back);
   cancelControls.append(cancel); controls.append(cancelControls);
-  root.append(head, goal, stats, activity, tail, controls, confirm);
-  return {root, kind, badge, goal, fields, activityText, tail, tailText, tailAge, tailJump, tailNotice, tailState, cancelControls, confirm, resetCancel};
+  const evidence = node('details', 'lane-evidence');
+  evidence.append(node('summary','','Evidence and exact times'), stats);
+  root.append(head, goal, health, reason, rankReason, activity, durationBasis, received, reportStatus, reportLink, holdBadge, holdReason, controls, controlStatus, tail, confirm, evidence);
+  const view = {root, kind, badge, goal, fields, health, reason, rankReason, holdBadge, holdReason, durationBasis, received, reportStatus, reportLink, evidence, pause, pauseAfter, resume, message, controlStatus, activityText, tail, tailText, tailAge, tailJump, tailNotice, tailState, cancelControls, confirm, resetCancel};
+  return view;
 }
 function bindTail(tailText) {
   const tailState = {lines: [], run: '', following: true, pending: 0};
@@ -357,30 +487,55 @@ function updateTailAge(v) {
 }
 function updateCard(v, s) {
   updateCardTail(v, s, (lastData.tails || {})[s.lane] || []);
+  updateLaneControls(v, s.lane);
   if (busy(v.root)) return;
   setText(v.kind, (s.kind || 'Agent') + ' · model=' + (s.model || 'default') + ' effort=' + (s.effort || 'default'));
   stateBadge(v.badge, s.display_state || s.state, s.badge);
   v.goal.className = s.goal_id ? 'goal' : 'goal goal-placeholder';
-  setText(v.goal, s.goal_id || 'Ready for the next goal');
+  setText(v.goal, s.goal_id || 'No current goal');
+  const explanation = laneExplanation(s);
+  setText(v.health, explanation.label); setText(v.reason, explanation.reason);
+  setText(v.rankReason, 'Order reason: ' + explanation.rankReason);
   setText(v.fields.Elapsed, s.goal_id ? duration(s.elapsed_seconds) : '—');
   setText(v.fields.Run, s.run_id || '—');
   v.fields.Elapsed.title = s.started ? 'Started ' + new Date(s.started).toLocaleString() : '';
   setText(v.fields.ETA, s.eta === '-' ? 'Not enough history' : s.eta || '—');
-	const explanation = s.eta_details ? s.eta_details.explanation : '';
-	v.fields.ETA.title = explanation;
-	v.fields.ETA.tabIndex = explanation ? 0 : -1;
-	v.fields.ETA.onclick = () => { if (explanation) alert(explanation); };
+  const etaExplanation = s.eta_details?.explanation || '';
+  v.fields.ETA.title = etaExplanation;
+  v.fields.ETA.tabIndex = etaExplanation ? 0 : -1;
+  v.fields.ETA.onclick = () => { if (etaExplanation) alert(etaExplanation); };
+  const e = s.eta_details;
+  setText(v.durationBasis, (s.state === 'running' ? 'Elapsed: ' : 'Run duration: ') + (s.goal_id ? duration(s.elapsed_seconds) : 'No run') +
+    (e && Number.isFinite(e.median_seconds) && Number.isSafeInteger(e.samples) && e.samples > 0 && e.kind && e.size ?
+      ' / usual ' + duration(e.median_seconds) + '. Usual is the median of ' + e.samples + ' earlier ' + e.kind + ', size ' + e.size + ' runs; this estimate does not promise completion. ' + etaExplanation : ' · usual duration unavailable. ' + etaExplanation));
+  v.cardReceived = lastUpdate || Date.now(); v.eventAge = s.last_event_age_seconds;
+  updateCardAge(v);
   setText(v.fields['Last event'], s.last_event_age_seconds == null ? '—' : duration(s.last_event_age_seconds) + ' ago');
   v.fields['Last event'].title = s.last_event ? new Date(s.last_event).toLocaleString() : '';
-  setText(v.fields.Report, s.report_exists ? 'Yes' : 'No');
+  setText(v.fields.Report, s.state === 'idle' ? 'No current attempt.' : s.report_exists ? 'Goal-level report exists; see attempt association above.' : 'No report available for the current attempt.');
+  const history = lastData.history || [];
+  const current = history.find(r => r.lane === s.lane && r.run_id === s.run_id && r.report && r.report_association?.startsWith('Associated by report time'));
+  const previous = history.find(r => r.lane === s.lane && r.run_id !== s.run_id && r.report && r.report_association?.startsWith('Associated by report time'));
+  v.reportRun = current || previous;
+  v.reportLink.hidden = !v.reportRun;
+  setText(v.reportLink, v.reportRun ? (current ? 'Current attempt report: Read ' : 'Previous goal report: Read ') + v.reportRun.goal_id + ' report — ended ' + relative(v.reportRun.ended) : '');
+  setText(v.reportStatus, current ? 'Report exists for this received attempt; acceptance is not confirmed.' : s.state === 'running' ? 'Current attempt has no report yet.' : s.report_exists ? 'A goal-level report exists, but its association with this attempt is unavailable in the received history.' :
+    s.state === 'idle' ? 'No current attempt. Earlier reports outside the latest received history are not known here.' : 'Current attempt has no report. Inspect the retained tail.');
   const a = s.current_action;
   const estimate = a && a.age_source !== 'event' ? '~' : '';
   setText(v.activityText, a ? a.summary + ' (' + estimate + a.age_seconds + 's ago)' +
-    (a.running_seconds == null ? '' : '; running for ' + estimate + a.running_seconds + 's') :
+    (a.running_seconds == null ? '' : '; running for ' + estimate + a.running_seconds + 's') +
+    (a.age_source === 'event' ? ' · age from event timestamps' : ' · age estimated from observation') :
     s.activity === '-' ? 'No recent activity' : s.activity || 'No recent activity');
   v.activityText.title = v.activityText.textContent;
   v.cancelControls.hidden = s.state !== 'running';
   if (s.state !== 'running') v.resetCancel();
+}
+function updateCardAge(v) {
+  if (!v.cardReceived) return;
+  const age = Math.max(0,Date.now()-v.cardReceived)/1000;
+  setText(v.received, 'Last activity: ' + (v.eventAge == null ? 'age not reported' : duration(v.eventAge+age) + ' ago') +
+    ' · operational data received ' + Math.floor(age) + 's ago. Receipt is not proof of progress.');
 }
 function makeRun(r) {
   // Each tbody is a keyed group of its compact row and expanded detail row.
@@ -502,10 +657,31 @@ function laneIndicator(s) {
   const state = (s.display_state || s.state || 'idle').toLowerCase();
   if (s.state !== 'running' && s.outcome === 'report_delivery_failed') return {kind:'attention', label:'Finished with attention: report missing'};
   if (s.exit > 0 || s.badge === 'red' || s.state === 'ended_no_report' || /^(failed|interrupted|cancelled|timed_out|timed out|ended_no_report)/.test(state)) return {kind:'failed', label:'Failed, interrupted or missing report'};
-  if (state === 'stuck?' || (s.state === 'running' && (s.last_event_age_seconds > 900 || (!s.last_event && s.elapsed_seconds > 900)))) return {kind:'stuck', label:'Stuck: no recent progress'};
+  if (state === 'stuck?' || (s.state === 'running' && (s.last_event_age_seconds > 900 || (!s.last_event && s.elapsed_seconds > 900)))) return {kind:'stuck', label:'Possible stall — silence may be a long command'};
   if (/^(ended|completed)/.test(state)) return {kind:'finished', label:'Finished'};
   if (/^running/.test(state)) return {kind:'running', label:'Running'};
   return {kind:'idle', label:'Idle'};
+}
+function laneExplanation(s) {
+  const c = controlFor(s.lane), mark = laneIndicator(s);
+  const r = (lastData.history || []).find(r => r.lane === s.lane && r.run_id === s.run_id);
+  if (mark.kind === 'failed' || mark.kind === 'attention') return {rank:0,rankReason:'Failed or missing-report attempt needs review',label:'Ended — needs review',reason:(s.exit != null ? 'Process exit ' + s.exit + '. ' : 'Process outcome needs inspection. ') + (s.report_exists ? 'Read the report; acceptance is not confirmed.' : 'Report is missing. Inspect the retained tail to find what happened.')};
+  if (s.state !== 'running' && r?.overview?.attention) return {rank:0,rankReason:'Report needs attention',label:'Ended — needs review',reason:r.overview.owner_need === 'decision' ? 'The report includes an owner decision. Read its options and recommendation.' : 'The report status or missing interpretation needs review.'};
+  if (mark.kind === 'stuck') return {rank:1,rankReason:'No action observed past the 15-minute silence threshold',label:'Possible stall',reason:'No newer action observed for ' + duration(s.last_event_age_seconds ?? s.elapsed_seconds) + '. This may be a long command. Inspect the tail before deciding; silence does not confirm a stuck process.'};
+  if (!c || c.phase === 'unavailable') return {rank:1,rankReason:'Current lane controls are unavailable',label:s.state === 'running'?'Working — controls unavailable':'Lane controls unavailable',reason:'New-start permission is unknown and blocked. Tail, reports, notes and independent safety controls remain usable.'};
+  if (s.state !== 'running' && s.state !== 'idle') return {rank:2,rankReason:'Ended attempt awaits review',label:'Ended — awaiting review',reason:'Process ended' + (s.exit === 0 ? ' normally' : s.exit == null ? ' with unknown exit' : ' with exit ' + s.exit) + '. A saved report does not establish acceptance or verification.'};
+  if (s.state === 'running') return {rank:3,rankReason:'Current work is running',label:s.current_action?.running_seconds != null?'Waiting on its own work':'Working',reason:s.current_action?.running_seconds != null ? 'Waiting for its command to finish; running for ' + duration(s.current_action.running_seconds) + '. This is observed activity, not a successful result.' : 'Working — no newer action observed. Inspect the safe action summary and tail.'};
+  return {rank:4,rankReason:c.paused?'Intentional lane hold':'Idle lane',label:c.paused?'Idle on purpose':'Idle — reason unavailable',reason:c.paused ? 'Paused by the lane control; no new work will start until it is resumed. Notes and reading remain usable.' : 'Idle — reason not available yet. Idle alone does not establish why work has not started. Review Queue if you expected work.'};
+}
+function agentOrder(d) {
+  const byName = (a,b) => a.lane < b.lane ? -1 : a.lane > b.lane ? 1 : 0;
+  const wanted = [...d.lanes].sort((a,b) => (el('agentOrder').value === 'lane' ? 0 : laneExplanation(a).rank-laneExplanation(b).rank) || byName(a,b));
+  const existing = Array.from(el('lanes').children).map(n => d.lanes.find(s => cards.get(s.lane)?.root === n)).filter(Boolean);
+  const moved = existing.some((s,i) => s.lane !== wanted[i]?.lane);
+  const pinned = laneSelection || Array.from(cards.values()).some(v => busy(v.root) || v.tail.open || v.evidence.open) || laneSaves.size;
+  el('agentOrderNotice').hidden = !moved || !pinned;
+  el('applyAgentOrder').disabled = !!pinned;
+  return moved && pinned ? [...existing,...wanted.filter(s => !existing.includes(s))] : wanted;
 }
 function renderAgentTabs(d) {
   if (laneSelection && !d.lanes.some(s => s.lane === laneSelection)) {
@@ -526,15 +702,16 @@ function renderAgentTabs(d) {
       event.preventDefault(); selectTab('agents' + (names[next] ? '/' + names[next] : ''));
       agentTabs.get(names[next]).root.focus();
     });
-    const indicator = node('span', 'lane-indicator');
+    const indicator = node('span', 'lane-indicator'), label = node('span','lane-tab-reason');
     indicator.setAttribute('aria-hidden', 'true');
-    if (s.lane) root.append(indicator);
-    return {root, indicator};
+    if (s.lane) root.append(indicator,label);
+    return {root, indicator, label};
   }, (v,s) => {
     const selected = s.lane === laneSelection;
     v.root.setAttribute('aria-selected', String(selected)); v.root.tabIndex = selected ? 0 : -1;
     v.root.className = 'agent-tab';
     const mark = laneIndicator(s);
+    setText(v.label, controlFor(s.lane)?.paused ? ' · Paused' : ' · ' + (mark.kind === 'stuck' ? 'Quiet' : ['attention','failed'].includes(mark.kind) ? 'Review' : mark.label));
     v.indicator.className = 'lane-indicator indicator-' + mark.kind;
     v.root.title = s.lane ? mark.label + ' · ' + (s.display_state || s.state) : 'All agents';
     v.root.setAttribute('aria-label', s.lane ? s.lane + ': ' + mark.label : 'All agents');
@@ -584,6 +761,7 @@ function filterAudit() {
 }
 function render(d) {
   lastData = d;
+  acceptLaneControls(d.lane_control, d.lane_control_version);
   const frozen = !!d.freeze;
   stateBadge(el('freeze'), frozen ? 'frozen' : 'enabled', frozen ? 'red' : 'green');
   if (frozen) {
@@ -610,6 +788,7 @@ function render(d) {
   }).length);
   el('questionsTabCount').title = 'Report attention among ' + d.history.length + ' received attempts; repeated resumed questions are counted per attempt. Review state is not independently checked.';
   renderPanels(d);
+  updateMessageControls();
 }
 function panelReady(id, shown) {
   const panel = el(id);
@@ -618,7 +797,7 @@ function panelReady(id, shown) {
 function renderPanels(d, shown = '') {
   if (!el('agents').hidden) {
     renderAgentTabs(d);
-    reconcile(el('lanes'), d.lanes, cards, makeCard, updateCard, s => s.lane);
+    reconcile(el('lanes'), agentOrder(d), cards, makeCard, updateCard, s => s.lane);
     for (const [lane,v] of cards) v.root.hidden = !d.lanes.some(s => s.lane === lane) || (!!laneSelection && lane !== laneSelection);
     renderLane(d);
     el('agentsEmpty').hidden = d.lanes.length !== 0;
@@ -631,6 +810,7 @@ function renderPanels(d, shown = '') {
       const option = node('option', '', s.lane); option.value = s.lane; select.append(option);
     }
     if (d.lanes.some(s => s.lane === chosen)) select.value = chosen;
+    updateMessageControls();
     reconcile(el('notes'), d.notes, notes, makeNote, (v, n) => {
       timeText(v.timestamp, n.time); setText(v.read, n.read ? 'Read' : 'Unread'); setText(v.text, n.text);
     }, n => n.id);
@@ -692,6 +872,7 @@ async function refresh(replace = false) {
   } finally { if (request.finish()) refreshing = false; }
 }
 function signedOutView() {
+  clearLaneControls();
   lastData = undefined;
   for (const cache of [cards, runs, notes, laneRuns, audits, agentTabs]) {
     for (const v of cache.values()) {
@@ -702,6 +883,8 @@ function signedOutView() {
     cache.clear();
   }
   renderedPanels.clear(); laneSelection = '';
+  el('agentOrderNotice').hidden = true;
+  setText(el('messageHold'),'');
   for (const id of ['message','note','filter']) el(id).value = '';
   for (const id of ['laneTail','laneNotes','laneSignals','oversight','historyBound']) { el(id).replaceChildren(); delete el(id).dataset.value; }
   el('laneDetail').hidden = true;
@@ -725,6 +908,7 @@ function signedOutView() {
 }
 async function action(name, lane = '', text = '', stop = false) {
   if (!authenticated()) { await refresh(); return false; }
+  if (name === 'message' && messageGuard(lane)) { updateMessageControls(); return false; }
   if (acting) return false;
   acting = true;
   // Local sign-out must remain available even if an action never settles.
@@ -745,6 +929,8 @@ async function action(name, lane = '', text = '', stop = false) {
     el('error').hidden = false;
   } finally {
     acting = false; buttons.forEach(b => { b.disabled = false; }); settingsUpdate();
+    for (const [name,view] of cards) updateLaneControls(view,name);
+    updateMessageControls();
   }
   if (ok) await refresh();
   return ok;
@@ -763,6 +949,9 @@ el('noteForm').addEventListener('submit', async event => {
   if (await action('note', el('noteLane').value, el('note').value)) el('note').value = '';
 });
 el('filter').addEventListener('input', filterRuns);
+el('agentOrder').addEventListener('change', () => { if (lastData) renderPanels(lastData); });
+el('applyAgentOrder').addEventListener('click', () => { if (lastData) renderPanels(lastData); });
+el('lane').addEventListener('change',updateMessageControls);
 el('auditFilter').addEventListener('input', filterAudit);
 el('auditLane').addEventListener('change', filterAudit);
 el('auditAction').addEventListener('change', filterAudit);
@@ -938,7 +1127,7 @@ el('settingsReload').addEventListener('click', () => loadSettings(true));
 setInterval(() => {
   if (lastUpdate) setText(el('updated'), 'Updated ' + Math.floor((Date.now() - lastUpdate) / 1000) + 's ago');
   if (lastData) {
-    for (const v of cards.values()) updateTailAge(v);
+    for (const v of cards.values()) { updateTailAge(v); updateCardAge(v); }
     updateTailAge(laneTailView);
     for (const cache of [runs, laneRuns]) for (const v of cache.values()) if (!v.detail.hidden) updateRunAge(v, v.data);
   }

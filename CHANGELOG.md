@@ -2,10 +2,18 @@
 
 ## Unreleased
 
+- Add one guarded dashboard lane-control client with Pause lane, Pause after
+  current and Resume lane, revision checks, whole-save deadlines, uncertainty
+  rereads and sign-out ownership. Keep hold badges separate from run outcomes,
+  block new task messages on paused lanes, and preserve focus, tail and Cancel.
+- Explain Agents activity, ages, duration provenance and current/previous report
+  association. Sort attention before working lanes while keeping readers in
+  place, with selectable lane order and wrapping phone labels.
+
 - Add guarded revision-checked HTTP lane pause/resume and identity-bound held
   send/discard, fixed plain errors, bounded requests and one shared dashboard
   mutation limit. Make operational GETs observe controls and ended runs without
-  creating files, repairing intent or starting work. No new UI buttons yet.
+  creating files, repairing intent or starting work.
 
 - Use safe process observation in every lane-control snapshot, including MCP
   pause/resume results and refusal fallbacks. Ended runs no longer appear to be

@@ -254,6 +254,140 @@ const make = async (tab='queue') => {const clock={now:Date.parse(queueExample.up
 })().catch(()=>{process.stderr.write(predicate);process.exitCode=1;});
 `
 
+// Lane controls share the shipped script and offline DOM; no real HTTP or agents.
+func TestDashboardLaneControls(t *testing.T) {
+	for _, name := range []string{"presentation", "schema", "save", "conflict", "uncertainty", "revocation", "deadline", "order_focus"} {
+		t.Run(name, func(t *testing.T) {
+			assets := map[string]any{"test": name}
+			for key, path := range map[string]string{"script": "app.js", "page": "index.html", "css": "app.css"} {
+				data, err := dashboardAssets.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assets[key] = string(data)
+			}
+			data, err := os.ReadFile("testdata/dashboard-data.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			assets["data"] = json.RawMessage(data)
+			input, err := json.Marshal(assets)
+			if err != nil {
+				t.Fatal("cannot encode lane fixture")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			prefix := dashboardRuntimeTest[:strings.Index(dashboardRuntimeTest, "(async () => {")]
+			cmd := exec.CommandContext(ctx, "node", "-e", prefix+dashboardLaneControlTest)
+			cmd.Stdin = bytes.NewReader(input)
+			var diagnostic bytes.Buffer
+			cmd.Stderr = &diagnostic
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("offline lane predicate failed: %v (%s)", err, diagnostic.String())
+			}
+		})
+	}
+}
+
+const dashboardLaneControlTest = `
+const deferred = () => { let resolve,reject; const promise=new Promise((a,b)=>{resolve=a;reject=b;}); return {promise,resolve,reject}; };
+const reply = (data,status=200) => ({ok:status===200,status,json:async()=>data});
+const card = (h,lane) => vm.runInContext('cards.get('+JSON.stringify(lane)+')',h.context);
+const make = async () => {const clock={now:1791658800000}, store=new Map(), h=start('#agents',store,'?token=fixture-auth',false,clock);await settle();return {h,clock,store};};
+const snapshot = (paused=false,phase=paused?'paused':'enabled',revision=7) => ({lane_control_version:1,revision,lanes:input.data.lane_control.lanes.map(l=>({...l,paused:l.name==='codex-1'?paused:l.paused,phase:l.name==='codex-1'?phase:l.phase,revision:l.name==='codex-1'?revision:l.revision,blockers:l.name==='codex-1'?(paused?['lane_paused']:[]):l.blockers}))});
+const inject = (h,value) => {h.context.fixtureControl=value;vm.runInContext('lastData = JSON.parse(JSON.stringify(lastData));lastData.lane_control=fixtureControl;render(lastData)',h.context);};
+(async()=>{
+  predicate='A09/U02 '+input.test+' on shipped assets';
+  if(input.test==='presentation'){
+    const {h}=await make(), working=card(h,'claude-1'),idle=card(h,'codex-1'),failed=card(h,'claude-2'),ended=card(h,'codex-2');
+    check(h.ids.lanes.children[0]===failed.root,'L01 missing report ranks ahead of working');
+    check(working.health.textContent==='Waiting on its own work' && working.reason.textContent.includes('command'),'L02 open action explains waiting');
+    check(idle.reason.textContent.includes('Idle — reason not available') && idle.root.textContent.includes('Review Queue'),'L03 unknown idle is explicit');
+    check(working.durationBasis.textContent.includes('median of 5 earlier') && working.durationBasis.textContent.includes('size M'),'L04 inline duration provenance');
+    check(ended.reportLink.tagName==='A' && ended.reportLink.textContent.includes('REVIEW-RELEASE') && ended.reportLink.textContent.includes('Current'),'L05 correctly bound current report link');
+    ended.reportLink.listeners.click({preventDefault(){}});await settle();
+    check(vm.runInContext("runs.get('sample02').detail.hidden",h.context)===false,'L06 report opens exact attempt');
+    vm.runInContext("selectTab('agents');lastData.lanes[0].last_event_age_seconds=1800;lastData.lanes[0].current_action.running_seconds=1800;render(lastData)",h.context);
+    check(working.reason.textContent.includes('long command') && !working.health.textContent.includes('Stuck'),'L07 quiet command is possible stall only');
+    check(working.reportLink.textContent.includes('Previous goal report') && working.reportStatus.textContent.includes('Current attempt has no report'),'L08 previous report is separate');
+    inject(h,snapshot(true));check(idle.holdBadge.textContent==='Paused' && idle.resume.hidden===false && !idle.pause.hidden===false,'L09 idle paused label and resume');
+    const draining=snapshot();draining.lanes[0]={...draining.lanes[0],paused:true,phase:'draining',since:'2026-10-11T21:00:00Z',blockers:['lane_paused','running']};inject(h,draining);
+    check(working.holdBadge.textContent==='Paused · current run finishing' && working.cancelControls.hidden===false,'L10 draining keeps cancel');
+    draining.lanes[3]={...draining.lanes[3],paused:true,phase:'paused',blockers:['lane_paused']};inject(h,draining);
+    check(failed.badge.className==='badge red' && failed.holdBadge.className==='badge lane-hold','L11 outcome colour independent of hold');
+    check(input.css.includes('.agent-card .badge') && input.css.includes('overflow-wrap:anywhere') && input.css.includes('min-height:44px'),'L12 long-label phone wrapping rules');
+  }
+  if(input.test==='schema'){
+    const {h}=await make();
+    check(!!card(h,'codex-1').pause,'L13 lane control exists before strict snapshot tests');
+    for(const invalid of [{...snapshot(),lanes:[null]}, {...snapshot(),lanes:[{}]}, {...snapshot(),lane_control_version:2},{...snapshot(),revision:'7'},{...snapshot(),revision:-1},{...snapshot(),lanes:snapshot().lanes.map(l=>({...l,paused:'false'}))},{...snapshot(),lanes:snapshot().lanes.map(l=>({...l,configured:1}))},{...snapshot(),lanes:snapshot().lanes.map(l=>({...l,requested_after_current:'true'}))},{...snapshot(),lanes:snapshot().lanes.map(l=>({...l,dispatch_eligible:'true'}))}]){
+      predicate='L13 malformed snapshot must disable controls without throwing';inject(h,invalid);check(card(h,'codex-1').pause.disabled && card(h,'codex-1').resume.disabled,'L13 invalid snapshot fails closed');
+    }
+    inject(h,snapshot());vm.runInContext('lastData.lane_control_version=2;render(lastData)',h.context);check(card(h,'codex-1').pause.disabled,'L14 top-level version mismatch fails closed');
+    vm.runInContext('delete lastData.lane_control_version;render(lastData)',h.context);check(card(h,'codex-1').pause.disabled,'L14 missing top-level version fails closed');
+    vm.runInContext('lastData.lane_control_version=1;render(lastData)',h.context);check(!card(h,'codex-1').pause.disabled,'L15 valid control restores explicit action');
+  }
+  if(input.test==='save'){
+    for(const [operation,after,lane] of [['pause',false,'codex-1'],['pause',true,'claude-1'],['resume',undefined,'codex-1']]){
+      const {h}=await make();inject(h,snapshot(operation==='resume'));const v=card(h,lane),b=operation==='resume'?v.resume:after?v.pauseAfter:v.pause,p=deferred();let posts=0;
+      check(!!b,'L16 labelled set control exists');
+      h.context.fetch=async(path,options)=>{h.calls.push({path,options});if(options.method==='POST'){posts++;return p.promise;}return reply(input.data);};
+      b.focus();const save=b.click();await settle();
+      const call=h.calls.find(c=>c.path==='/lane-control'),body=JSON.parse(call.options.body),expected={schema_version:1,lane,operation,expected_revision:7,...(operation==='pause'?{after_current:after}:{})};
+      check(JSON.stringify(body)===JSON.stringify(expected) && call.options.method==='POST' && call.options.headers['Content-Type']==='application/json','L16 exact control schema and flags');
+      check(b.disabled && !h.ids.signOut.disabled && !card(h,'codex-2').pause.disabled && !v.message.disabled,'L17 only affected lane mutation disabled');
+      await vm.runInContext('refresh()',h.context);check(h.doc.activeElement===b && card(h,lane)===v && v.controlStatus.textContent.includes('pending'),'L18 polling preserves pending node focus');
+      const done=snapshot(operation==='pause',operation==='pause'?'paused':'enabled',8);done.lanes.find(l=>l.name===lane).paused=operation==='pause';done.lanes.find(l=>l.name===lane).phase=operation==='pause'?'paused':'enabled';done.lanes.find(l=>l.name===lane).blockers=operation==='resume'?['frozen','held_message','waiting_to_resume','freeze_unavailable','held_message_unavailable','not_configured']:['lane_paused'];
+      p.resolve(reply({schema_version:1,revision:8,paused:operation==='pause',changed:true,lane_control:done}));await save;await settle();
+      check(posts===1 && !b.disabled && h.doc.activeElement===b,'L19 one explicit set with stable focus');
+      if(operation==='resume')check(v.controlStatus.textContent.includes('started no work') && v.controlStatus.textContent.includes('frozen') && v.controlStatus.textContent.includes('message') && v.controlStatus.textContent.includes('recovery') && v.controlStatus.textContent.includes('Freeze state cannot be read') && v.controlStatus.textContent.includes('Message reservations cannot be read') && v.controlStatus.textContent.includes('no longer configured'),'L20 resume explains all server blocker names');
+    }
+  }
+  if(input.test==='conflict'||input.test==='uncertainty'){
+    for(const ending of input.test==='conflict'?['conflict']:['network','uncertain','malformed']){
+      const {h}=await make(),current=snapshot(true,'paused',9);let posts=0,gets=0;
+      h.context.fetch=async(path,options)=>{if(options.method==='POST'){posts++;if(ending==='network')throw new Error();return reply(ending==='conflict'?{code:'revision_conflict'}:ending==='malformed'?{}:{code:'uncertain'},ending==='conflict'?409:ending==='malformed'?200:503);}if(path==='/data'){gets++;return reply({...input.data,lane_control:current});}return reply({});};
+      check(!!card(h,'codex-1').pause,'L21 control exists for conflict/uncertainty');
+      await card(h,'codex-1').pause.click();await settle();
+      check(posts===1 && gets===1 && card(h,'codex-1').holdBadge.textContent==='Paused','L21 conflict/uncertain rereads current without mutation retry');
+      check(/changed elsewhere|not confirmed/.test(card(h,'codex-1').controlStatus.textContent),'L22 uncertainty not claimed durable success');
+      const v=card(h,'codex-1');v.message.click();await settle();h.ids.lane.value='codex-1';h.ids.lane.listeners.change();
+      check(h.ids.send.disabled && h.ids.stopSend.disabled && !h.ids.saveNote.disabled && !h.ids.message.disabled,'L23 hold blocks task actions while notes/read/draft usable');
+      const count=posts;await vm.runInContext("action('message','codex-1','fixture')",h.context);check(posts===count,'L24 stale form cannot bypass lane hold');
+    }
+  }
+  if(input.test==='revocation'){
+    for(const trigger of ['signout','expiry','cross-tab','403'])for(const stage of ['fetch','body','after-body']){
+      const {h,clock,store}=await make(),p=deferred(),v=card(h,'codex-1');let finishBody;
+      const revoke=()=>{if(trigger==='signout')h.ids.signOut.click();if(trigger==='expiry'){clock.now+=7*24*60*60*1000;vm.runInContext('authenticated()',h.context);}if(trigger==='cross-tab'){store.delete('nuntius.web.credential');h.win.storage({storageArea:vm.runInContext('localStorage',h.context),key:'nuntius.web.credential'});}if(trigger==='403')vm.runInContext('signOut()',h.context);};
+      const body={schema_version:1,revision:8,paused:true,changed:true,lane_control:snapshot(true,'paused',8)};
+      h.context.fetch=async()=>stage==='fetch'?p.promise:{status:200,ok:true,json:()=>stage==='after-body'?(revoke(),Promise.resolve(body)):new Promise(resolve=>{finishBody=resolve;})};
+      check(!!v.pause,'L25 control exists for revocation');
+      const save=v.pause.click();await settle();if(stage!=='after-body')revoke();
+      check(!vm.runInContext('authenticated()',h.context) && h.ids.lanes.children.length===0,'L25 immediate private card clearing '+trigger+' '+stage);
+      if(stage==='fetch')p.resolve(reply(body,trigger==='403'?403:200));if(stage==='body')finishBody(body);await save;await settle();
+      check(h.ids.lanes.children.length===0 && h.ids.notice.hidden && vm.runInContext('laneSaves.size',h.context)===0,'L26 late parsed response discarded '+trigger+' '+stage);
+    }
+    const {h}=await make();h.context.fetch=async()=>({status:403,ok:false});await card(h,'codex-1').pause.click();check(!vm.runInContext('authenticated()',h.context),'L27 direct server revocation');
+  }
+  if(input.test==='deadline')for(const stage of ['fetch','body']){
+    const {h}=await make(),p=deferred();let posts=0,gets=0;h.context.fetch=async(path,options)=>{if(options.method==='POST'){posts++;return stage==='fetch'?p.promise:{status:200,ok:true,json:()=>p.promise};}gets++;return reply(input.data);};
+    check(!!card(h,'codex-1').pause,'L28 control exists for deadline');
+    const save=card(h,'codex-1').pause.click();await settle();for(const [id,t]of [...h.timeouts])if(t.delay===10000){h.timeouts.delete(id);t.fn();}await save;await settle();
+    check(posts===1 && gets===1 && !card(h,'codex-1').pause.disabled && card(h,'codex-1').controlStatus.textContent.includes('not confirmed'),'L28 whole save deadline rereads without retry '+stage);
+    p.resolve(stage==='body'?{schema_version:1,revision:8,paused:true,changed:true,lane_control:snapshot(true)}:reply({schema_version:1,revision:8,paused:true,changed:true,lane_control:snapshot(true)}));await settle();check(card(h,'codex-1').holdBadge.textContent==='Lane enabled','L29 late save cannot install hold');
+  }
+  if(input.test==='order_focus'){
+    const {h}=await make(),v=card(h,'claude-1');check(!!v.pause,'L30 stable control exists');v.pause.focus();const before=[...h.ids.lanes.children];vm.runInContext("lastData.lanes.find(s=>s.lane==='claude-1').badge='red';lastData.lanes.find(s=>s.lane==='claude-1').current_action={summary:'new action',age_seconds:0};render(lastData)",h.context);
+    check(before.every((n,i)=>h.ids.lanes.children[i]===n) && h.doc.activeElement===v.pause && !v.activityText.textContent.includes('new action'),'L30 focused card keeps order/current action');
+    check(!h.ids.agentOrderNotice.hidden,'L31 deferred attention order explained');
+    h.doc.activeElement=h.doc.documentElement;v.tail.open=true;vm.runInContext('render(lastData)',h.context);check(before.every((n,i)=>h.ids.lanes.children[i]===n),'L32 expanded tail pins order');
+    v.tail.open=false;vm.runInContext('render(lastData)',h.context);h.ids.applyAgentOrder.click();check(h.ids.lanes.firstElementChild===v.root,'L33 attention order applies when safe');
+    h.ids.agentOrder.value='lane';h.ids.agentOrder.listeners.change();check(h.ids.lanes.children.map(n=>n.getAttribute('aria-label')).join(',')==='claude-1,claude-2,codex-1,codex-2','L34 selectable lane order');
+  }
+})().catch(()=>{process.stderr.write(predicate);process.exitCode=1;});
+`
+
 const dashboardRuntimeTest = `
 const vm = require('node:vm');
 const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
@@ -680,7 +814,7 @@ function rendered(h, id) {
   const replaced = new Map([['nuntius.web.credential', JSON.stringify({token:'stale-fixture-auth',expiresAt:1791658800000+sevenDays})]]);
   const fresh = start('#runs', replaced, '?token=fixture-auth'); await settle();
 	vm.runInContext("selectTab('agents'); lastData.lanes[0].eta = 'over usual (+7m)'; lastData.lanes[0].eta_details = {explanation:'Usual = 24m: median of 3 earlier codex size-S runs; this run 31m'}; globalThis.alert = text => { globalThis.tappedExplanation = text; }; render(lastData)", fresh.context);
-	const eta = fresh.ids.lanes.children[0].querySelectorAll('dd')[2];
+	const eta = vm.runInContext("cards.get('claude-1').fields.ETA",fresh.context);
 	check(eta.textContent === 'over usual (+7m)' && eta.title.includes('median of 3 earlier codex size-S runs'), 'ETA preserves short label with hover provenance');
 	eta.onclick(); check(vm.runInContext('tappedExplanation',fresh.context) === eta.title, 'phone tap explains ETA');
   vm.runInContext("selectTab('agents'); lastData = JSON.parse(JSON.stringify(lastData)); lastData.lanes[0].display_state = 'timed_out'; lastData.lanes[1].display_state = 'cancelled'; lastData.lanes[2].display_state = 'stuck?'; render(lastData)", fresh.context);
@@ -694,14 +828,14 @@ function rendered(h, id) {
   for (const [label, tone] of tones) {
     const shown = label.charAt(0).toUpperCase() + label.slice(1), className = tone ? 'badge ' + tone : 'badge';
     vm.runInContext("selectTab('agents'); lastData.lanes[1].display_state = " + JSON.stringify(label) + "; lastData.lanes[1].badge = " + JSON.stringify(tone) + "; render(lastData)", fresh.context);
-    const card = fresh.ids.lanes.children[1].querySelector('.badge');
+    const card = vm.runInContext("cards.get('codex-1').badge",fresh.context);
     check(card.textContent === shown && card.className === className, 'card badge tone from server: ' + label);
     vm.runInContext("lastData.history[0].display_state = " + JSON.stringify(label) + "; lastData.history[0].badge = " + JSON.stringify(tone) + "; selectTab('runs'); render(lastData)", fresh.context);
     const row = fresh.ids.runs.querySelector('.badge');
     check(row.textContent === shown && row.className === className, 'history badge tone from server: ' + label);
   }
   vm.runInContext("selectTab('agents'); lastData.lanes[1].display_state = 'Running · resumed 1/2'; delete lastData.lanes[1].badge; render(lastData)", fresh.context);
-  check(fresh.ids.lanes.children[1].querySelector('.badge').className === 'badge', 'label text alone never colours a badge');
+  check(vm.runInContext("cards.get('codex-1').badge.className",fresh.context) === 'badge', 'label text alone never colours a badge');
   vm.runInContext("lastData.history[0].display_state = 'Ended · resumed 1/2'; lastData.history[0].badge = 'green'; lastData.history[0].resume_count = 1; lastData.history[0].relation = 'resumed 1/2 after interruption at 23:31; resumed by the 23:40 run'; lastData.history[0].chain_depth = 1; selectTab('runs'); render(lastData)", fresh.context);
   check(fresh.ids.runs.textContent.includes('Ended · resumed 1/2') && fresh.ids.runs.textContent.includes('resumed 1/2 after interruption at 23:31') && fresh.ids.runs.textContent.includes('resumed by the 23:40 run') && !fresh.ids.runs.textContent.includes('Previous run:'), 'history exposes readable recovery relations');
   check(fresh.ids.runs.querySelector('.chain-child') !== null, 'history indents descendants');

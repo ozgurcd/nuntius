@@ -1,15 +1,65 @@
 {
-	"lane_control_version": 1,
-	"lane_control": {
-		"lane_control_version": 1,
-		"revision": 0,
-		"lanes": [
-			{"name":"claude-1","configured":true,"paused":false,"phase":"enabled","dispatch_eligible":false,"blockers":["running"],"explanation":"Current work is running."},
-			{"name":"claude-2","configured":true,"paused":false,"phase":"enabled","dispatch_eligible":true,"blockers":[],"explanation":"This lane can accept new work."},
-			{"name":"codex-1","configured":true,"paused":false,"phase":"enabled","dispatch_eligible":true,"blockers":[],"explanation":"This lane can accept new work."},
-			{"name":"codex-2","configured":true,"paused":false,"phase":"enabled","dispatch_eligible":true,"blockers":[],"explanation":"This lane can accept new work."}
-		]
-	},
+  "lane_control_version": 1,
+  "lane_control": {
+    "lane_control_version": 1,
+    "revision": 0,
+    "lanes": [
+      {
+        "name": "claude-1",
+        "configured": true,
+        "paused": false,
+        "phase": "enabled",
+        "dispatch_eligible": false,
+        "blockers": [
+          "running"
+        ],
+        "explanation": "Current work is running.",
+        "since": "",
+        "source": "",
+        "requested_after_current": false,
+        "revision": 0
+      },
+      {
+        "name": "claude-2",
+        "configured": true,
+        "paused": false,
+        "phase": "enabled",
+        "dispatch_eligible": true,
+        "blockers": [],
+        "explanation": "This lane can accept new work.",
+        "since": "",
+        "source": "",
+        "requested_after_current": false,
+        "revision": 0
+      },
+      {
+        "name": "codex-1",
+        "configured": true,
+        "paused": false,
+        "phase": "enabled",
+        "dispatch_eligible": true,
+        "blockers": [],
+        "explanation": "This lane can accept new work.",
+        "since": "",
+        "source": "",
+        "requested_after_current": false,
+        "revision": 0
+      },
+      {
+        "name": "codex-2",
+        "configured": true,
+        "paused": false,
+        "phase": "enabled",
+        "dispatch_eligible": true,
+        "blockers": [],
+        "explanation": "This lane can accept new work.",
+        "since": "",
+        "source": "",
+        "requested_after_current": false,
+        "revision": 0
+      }
+    ]
+  },
   "freeze": null,
   "lanes": [
     {
@@ -26,6 +76,13 @@
       "asked_interactively": false,
       "eta": "~12m left (n=5)",
       "activity": "running tests",
+      "eta_details": {
+        "median_seconds": 2160,
+        "samples": 5,
+        "kind": "claude",
+        "size": "M",
+        "explanation": "Median of earlier same-engine, same-size runs; outcomes are not a completion promise."
+      },
       "current_action": {
         "summary": "go test ./...",
         "age_seconds": 8,

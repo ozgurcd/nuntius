@@ -7,10 +7,17 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Pause or resume a lane from its Agents card. Pause blocks new work while
+  the current run finishes. Resume starts no work and explains remaining holds.
+  Unconfirmed saves read current state before you choose another action.
+- Agents now explain activity, silence, idle uncertainty and usual duration.
+  Attention appears first; cards stay in place while you read or use controls.
+  Report links distinguish the current attempt from a previous goal.
+
 - Dashboard reads now show saved lane holds without changing control state or
   starting work. Guarded lane and reviewed-message APIs explain conflicts,
   busy locks and uncertain saves. All dashboard changes share a bounded rate;
-  lane buttons remain for a later update.
+  lane buttons use the same guarded API.
 
 - Ask the judge to pause or resume a lane, with your approval on each call.
   Status shows the saved hold and remaining blockers. Pause lets the current
