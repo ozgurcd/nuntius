@@ -118,6 +118,16 @@ func (m *Manager) heldCLISelection(lane, run string) (heldMessage, string, strin
 		return heldMessage{}, "", "", err
 	}
 	defer guard.Close()
+	return m.heldSelectionLocked(lane, run)
+}
+
+// heldSelectionLocked uses the caller's manager and shared control locks.
+func (m *Manager) heldSelectionLocked(lane, run string) (heldMessage, string, string, error) {
+	root, err := openLaneControlRoot(m.store)
+	if err != nil {
+		return heldMessage{}, "", "", err
+	}
+	defer root.Close()
 	if _, err = readLaneControlsAt(root); err != nil {
 		return heldMessage{}, "", "", err
 	}
@@ -356,6 +366,11 @@ func (m *Manager) sendHeld(h heldMessage, ops *laneControlIO) (string, error) {
 		return "", err
 	}
 	defer guard.Close()
+	return m.sendHeldLocked(h, ops)
+}
+
+// sendHeldLocked preserves A05 admission and receipts under caller-owned locks.
+func (m *Manager) sendHeldLocked(h heldMessage, ops *laneControlIO) (string, error) {
 	dir, r, text, receipt, err := m.reviewedMessage(h)
 	if err != nil {
 		return "", err
@@ -468,6 +483,10 @@ func (m *Manager) discardHeld(h heldMessage, ops *laneControlIO) error {
 		return err
 	}
 	defer guard.Close()
+	return m.discardHeldLocked(h, ops)
+}
+
+func (m *Manager) discardHeldLocked(h heldMessage, ops *laneControlIO) error {
 	dir, _, _, receipt, err := m.reviewedMessage(h)
 	if err != nil {
 		return err

@@ -77,6 +77,11 @@ func (m *Manager) Tail(lane string, lines int) ([]string, error) {
 	if r == nil {
 		return out, nil
 	}
+	if m.readOnly {
+		// Dashboard observation must retain the same ended-run final fallback
+		// without Status saving metadata or starting a supervisor first.
+		m.observeEndedRun(r)
+	}
 	if r.State != "running" && !m.reportExists(*r) {
 		if terminal, final := m.terminalTurn(*r); terminal && final != "" {
 			return []string{final}, nil

@@ -189,3 +189,35 @@ Redaction is not a complete secret detector. Brief links are optional validated
 external HTTPS links, opened only by a user with noreferrer/noopener; the server
 does not fetch them. Queue never approves, dispatches, writes or repairs a file.
 Sign-out and expiry clear private rows and reject late in-flight responses.
+# Dashboard lane controls (Unreleased)
+
+Lane and held-message writes use the existing exact loopback Host and port or
+opted-in tailnet HTTPS Host, current header grant and matching POST Origin.
+These checks run before body parsing. Query arguments do not authenticate or
+select anything. The version 1 JSON schema rejects extra or duplicate keys,
+null, aliases, coerced numbers and non-boolean flags. Lane control uses the
+saved control revision; held review uses full run identity and content revision
+and digest, never caller-selected files, session IDs or replacement text.
+
+Settings, lane controls, held-message changes and existing actions share one
+authenticated mutation allowance of ten per minute, with a burst of three.
+Rejected authentication does not spend it. New control requests have a 4 KiB
+body limit, five-second server read deadline and 32 KiB JSON response limit.
+Mutations use immediate manager TryLock and nonblocking shared control flock,
+the existing Settings write precedent. They do not wait on a background worker
+or acquire locks in reverse order. Settings reads keep their cancellable wait.
+
+Errors contain fixed codes and plain reasons, never raw request data, private
+paths or parser errors. A revision conflict requires a fresh read. A failed
+durability step is uncertain even if the new state is visible; no transport
+retry is safe by default. Pause/resume uses the manager's single durable audit
+protocol with trusted web source. Reviewed-message operations use the existing
+identity-bound durable receipts and final admission guard. Native or portable
+queue availability grants no authority and is not needed for operational reads.
+
+`GET /data` uses read-only observation and does not create files, repair control
+intent, emit audit outcomes, signal, supervise or recover runs. Definitely ended
+processes lose the running/draining projection; uncertain live identities remain
+conservative. Holds and run outcomes remain separate. Dashboard access still
+uses the same owner-selected store and OS authority; this adds no caller role,
+new grant, service, registration or permission bypass.

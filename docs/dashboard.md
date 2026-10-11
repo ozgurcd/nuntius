@@ -1,5 +1,35 @@
 ## Local oversight dashboard
 
+### Lane holds and reviewed messages (Unreleased)
+
+Authenticated `/data` reads show version 1 lane controls and their saved revision.
+Holds are separate from run outcomes, missing reports and attention badges. A run
+known to have ended is not shown as running or draining. Reads observe existing
+files only: they do not repair pending control changes, create signals, recover
+runs or start work. Queue faults do not prevent operational reads.
+
+The guarded `POST /lane-control` accepts `schema_version: 1`, a configured
+`lane`, `operation: "pause"` or `"resume"`, and numeric `expected_revision` from
+the latest control snapshot. Only pause accepts optional boolean `after_current`.
+Pause closes admission immediately and lets current work finish. Resume clears
+only the hold; it starts no work and never sends a held message. A retained hold
+on a removed lane may be resumed without recreating the lane.
+
+`POST /held-message` accepts `schema_version: 1`, `lane`, full `run_id`, numeric
+`content_revision`, `content_sha256` and `operation: "send-held"` or
+`"discard-held"`. Use the exact identity and content reviewed through the existing
+held-message review command. There is no free-text or path override. Sending
+checks pause, freeze, session and admission again. Discard affects only that
+reviewed message. Durable receipts prevent another delivery after a known send;
+uncertain results require reading current state before any further decision.
+
+Errors include a plain reason. A conflict means read again; a busy lock means
+retry later after a fresh read. An uncertain result may already have changed
+state and must never be retried automatically. All dashboard writes share one
+ten-per-minute allowance with a burst of three. New control requests accept
+JSON only, no query, at most 4 KiB, a five-second body read deadline, and a
+32 KiB response ceiling. These APIs add no dashboard buttons yet.
+
 ### Queue (since v0.3.3)
 
 Open **Queue** or bookmark `/#queue` after signing in. It displays planned

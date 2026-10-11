@@ -424,11 +424,7 @@ func (w *Web) settings(out http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.mu.Unlock()
-	bucket, rate, burst := &s.get, 1.0, 10.0
-	if r.Method == "POST" {
-		bucket, rate, burst = &s.post, 1.0/6, 3
-	}
-	if !bucket.allow(time.Now(), rate, burst) {
+	if r.Method == "GET" && !s.get.allow(time.Now(), 1, 10) {
 		out.Header().Set("Retry-After", "6")
 		settingsReply(out, 429, map[string]string{"code": "rate_limited"})
 		return
@@ -526,10 +522,15 @@ func (w *Web) settings(out http.ResponseWriter, r *http.Request) {
 	settingsReply(out, 200, settingsView(c, revision))
 }
 func settingsReply(out http.ResponseWriter, status int, value any) {
+	if status >= 400 {
+		if v, ok := value.(map[string]string); ok {
+			v["reason"] = webControlReason(v["code"])
+		}
+	}
 	b, err := json.Marshal(value)
 	if err != nil || len(b) > 32768 {
 		status = 503
-		b = []byte(`{"code":"settings_response_too_large"}`)
+		b = []byte(`{"code":"settings_response_too_large","reason":"Settings exceed the safe display limit. Check configuration locally."}`)
 	}
 	out.Header().Set("Content-Type", "application/json")
 	out.WriteHeader(status)

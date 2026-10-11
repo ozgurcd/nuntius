@@ -1,4 +1,15 @@
 {
+	"lane_control_version": 1,
+	"lane_control": {
+		"lane_control_version": 1,
+		"revision": 0,
+		"lanes": [
+			{"name":"claude-1","configured":true,"paused":false,"phase":"enabled","dispatch_eligible":false,"blockers":["running"],"explanation":"Current work is running."},
+			{"name":"claude-2","configured":true,"paused":false,"phase":"enabled","dispatch_eligible":true,"blockers":[],"explanation":"This lane can accept new work."},
+			{"name":"codex-1","configured":true,"paused":false,"phase":"enabled","dispatch_eligible":true,"blockers":[],"explanation":"This lane can accept new work."},
+			{"name":"codex-2","configured":true,"paused":false,"phase":"enabled","dispatch_eligible":true,"blockers":[],"explanation":"This lane can accept new work."}
+		]
+	},
   "freeze": null,
   "lanes": [
     {

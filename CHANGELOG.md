@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add guarded revision-checked HTTP lane pause/resume and identity-bound held
+  send/discard, fixed plain errors, bounded requests and one shared dashboard
+  mutation limit. Make operational GETs observe controls and ended runs without
+  creating files, repairing intent or starting work. No new UI buttons yet.
+
 - Use safe process observation in every lane-control snapshot, including MCP
   pause/resume results and refusal fallbacks. Ended runs no longer appear to be
   draining; surviving and unverified processes keep their running blocker.

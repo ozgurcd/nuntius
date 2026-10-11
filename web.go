@@ -17,6 +17,7 @@ import (
 	"rsc.io/qr"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -25,6 +26,10 @@ import (
 type Web struct {
 	reports        reportProjectionCache
 	settingsState  webSettings
+	mutationMu     sync.Mutex
+	dataMu         sync.Mutex
+	observer       *Manager
+	controlIO      *laneControlIO // nil in production; deterministic durability fault proofs.
 	manager        *Manager
 	address, token string
 	allowHost      string
@@ -150,22 +155,48 @@ func (w *Web) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 	local := e == nil && (host == "127.0.0.1" || host == "localhost") && port == wantPort
 	tailnet := w.allowHost != "" && (r.Host == w.allowHost || r.Host == w.allowHost+":443")
 	if !local && !tailnet {
-		http.Error(out, "forbidden", http.StatusForbidden)
+		if w.controlRoute(r.URL.Path) {
+			webControlReply(out, 403, "forbidden", nil)
+			return
+		}
+		http.Error(out, webControlReason("forbidden"), http.StatusForbidden)
 		return
 	}
 	// Only the static, data-free shell is public. Data and actions use headers
 	// exclusively, so a query credential never authenticates an API request.
 	shell := r.URL.Path == "/" || r.URL.Path == "/app.css" || r.URL.Path == "/app.js" || r.URL.Path == "/favicon.svg" || r.URL.Path == "/assets/brand/nuntius-logo.svg" || r.URL.Path == "/assets/brand/nuntius-logo-dark.svg"
-	if !shell && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Nuntius-Token")), []byte(w.token)) != 1 {
-		http.Error(out, "forbidden", http.StatusForbidden)
+	if !shell && (len(r.Header.Values("X-Nuntius-Token")) != 1 || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Nuntius-Token")), []byte(w.token)) != 1) {
+		if w.controlRoute(r.URL.Path) {
+			webControlReply(out, 403, "forbidden", nil)
+			return
+		}
+		http.Error(out, webControlReason("forbidden"), http.StatusForbidden)
 		return
 	}
 	origin := "http://" + r.Host
 	if tailnet {
 		origin = "https://" + w.allowHost
 	}
-	if r.Method == http.MethodPost && r.Header.Get("Origin") != origin {
-		http.Error(out, "forbidden", http.StatusForbidden)
+	if r.Method == http.MethodPost && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
+		if w.controlRoute(r.URL.Path) {
+			webControlReply(out, 403, "forbidden", nil)
+			return
+		}
+		http.Error(out, webControlReason("forbidden"), http.StatusForbidden)
+		return
+	}
+	if r.Method == http.MethodPost && (w.controlRoute(r.URL.Path) || r.URL.Path == "/settings" || r.URL.Path == "/action") {
+		if err := w.allowMutation(); err != nil {
+			var fault *laneControlFault
+			if errors.As(err, &fault) && fault.Code == "rate_limited" {
+				out.Header().Set("Retry-After", "6")
+			}
+			webControlFailure(out, err)
+			return
+		}
+	}
+	if w.controlRoute(r.URL.Path) {
+		w.laneMutation(out, r)
 		return
 	}
 	if r.URL.Path == "/settings" {
@@ -222,7 +253,7 @@ func (w *Web) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 		out.Header().Set("Content-Type", "image/svg+xml")
 		_, _ = out.Write(asset)
 	case "/data":
-		v, e := w.data()
+		v, e := w.dataContext(r.Context())
 		if e != nil {
 			http.Error(out, "dashboard data unavailable", http.StatusInternalServerError)
 			return
@@ -261,7 +292,12 @@ func (w *Web) action(out http.ResponseWriter, r *http.Request) {
 		e = errors.New("unknown action")
 	}
 	if e != nil {
-		http.Error(out, bounded(Redact(e.Error()), 4096), http.StatusBadRequest)
+		var admission *laneAdmissionFault
+		if errors.As(e, &admission) {
+			webControlFailure(out, e)
+			return
+		}
+		http.Error(out, "The action could not be completed. Read current state and check the lane and request locally before retrying.", http.StatusBadRequest)
 		return
 	}
 	out.Header().Set("Content-Type", "application/json")
@@ -290,17 +326,53 @@ func reportSections(report string) map[string]string {
 }
 
 func (w *Web) data() (any, error) {
-	m := w.manager
-	status, e := m.Status()
+	return w.dataContext(context.Background())
+}
+
+func (w *Web) dataContext(parent context.Context) (any, error) {
+	ctx, cancel := context.WithTimeout(parent, time.Second)
+	defer cancel()
+	if err := settingsReadLock(ctx, func() (bool, error) { return w.dataMu.TryLock(), nil }); err != nil {
+		return nil, err
+	}
+	defer w.dataMu.Unlock()
+	// A separate read-only observer uses value copies; never toggle the serving
+	// manager's mode or run recovery/supervision from a dashboard GET.
+	owner := w.manager
+	if err := settingsReadLock(ctx, func() (bool, error) { return owner.mu.TryLock(), nil }); err != nil {
+		return nil, err
+	}
+	if err := owner.reload(); err != nil {
+		owner.mu.Unlock()
+		return nil, err
+	}
+	config, store := owner.config, owner.store
+	owner.mu.Unlock()
+	m := w.observer
+	if m == nil {
+		var e error
+		m, e = newReadManager(config, store)
+		if e != nil {
+			return nil, e
+		}
+		w.observer = m
+	} else {
+		m.config = config
+	}
+	var controls laneControlSnapshot
+	status, e := m.status(true, &controls)
 	if e != nil {
 		return nil, e
 	}
 	m.mu.Lock()
 	runs, e := m.history()
-	config := m.config
+	config = m.config
 	m.mu.Unlock()
 	if e != nil {
 		return nil, e
+	}
+	for i := range runs {
+		m.observeEndedRun(&runs[i])
 	}
 	historyRuns := runs
 	if len(historyRuns) > 50 {
@@ -358,9 +430,12 @@ func (w *Web) data() (any, error) {
 	for _, s := range status {
 		tails[s.Lane], _ = m.Tail(s.Lane, 50)
 	}
-	notes, e := m.OwnerNotes(time.Time{})
+	notes, e := m.readNotes()
 	if e != nil {
 		return nil, e
+	}
+	if len(notes) > 50 {
+		notes = notes[:50]
 	}
 	oversight := config.OversightPath
 	if oversight == "" {
@@ -370,7 +445,7 @@ func (w *Web) data() (any, error) {
 	if e != nil {
 		return nil, e
 	}
-	signals, e := m.Signals()
+	signals, e := webObservedSignals(m.store)
 	if e != nil {
 		return nil, e
 	}
@@ -386,7 +461,7 @@ func (w *Web) data() (any, error) {
 	if e != nil {
 		return nil, e
 	}
-	return map[string]any{"freeze": frozen, "lanes": lanes, "tails": tails, "history": views, "notes": notes, "audit": audit, "signals": laneSignals, "oversight": readDisplay(oversight, 64000)}, nil
+	return map[string]any{"lane_control_version": controls.Version, "lane_control": controls, "freeze": frozen, "lanes": lanes, "tails": tails, "history": views, "notes": notes, "audit": audit, "signals": laneSignals, "oversight": readDisplay(oversight, 64000)}, nil
 }
 
 // webLane adds presentation fields without changing Status JSON for CLI or MCP.

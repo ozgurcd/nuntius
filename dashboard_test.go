@@ -788,14 +788,16 @@ func TestDashboardFixtureMatchesData(t *testing.T) {
 		ContinueRunID     string            `json:"continue_run_id"`
 	}
 	type dashboard struct {
-		Freeze    *FreezeState        `json:"freeze"`
-		Lanes     []webLane           `json:"lanes"`
-		Tails     map[string][]string `json:"tails"`
-		History   []historyView       `json:"history"`
-		Notes     []OwnerNote         `json:"notes"`
-		Audit     []AuditEntry        `json:"audit"`
-		Signals   map[string][]string `json:"signals"`
-		Oversight string              `json:"oversight"`
+		LaneControlVersion int                 `json:"lane_control_version"`
+		LaneControl        laneControlSnapshot `json:"lane_control"`
+		Freeze             *FreezeState        `json:"freeze"`
+		Lanes              []webLane           `json:"lanes"`
+		Tails              map[string][]string `json:"tails"`
+		History            []historyView       `json:"history"`
+		Notes              []OwnerNote         `json:"notes"`
+		Audit              []AuditEntry        `json:"audit"`
+		Signals            map[string][]string `json:"signals"`
+		Oversight          string              `json:"oversight"`
 	}
 	decode := func(b []byte) dashboard {
 		t.Helper()

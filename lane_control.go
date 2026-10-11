@@ -587,9 +587,9 @@ func (m *Manager) setLaneControlIO(change laneControlChange, source string, ops 
 	}
 	defer guard.Close()
 	r, err := m.setLaneControlLocked(root, change, source, ops)
-	if source == "mcp" {
-		// Bind the safe result to the same lock as the mutation. CLI and other
-		// sources retain their existing API behavior and observation policy.
+	if source == "mcp" || source == "web" {
+		// Bind remote results to the same lock as the mutation. CLI retains
+		// its existing API behavior and observation policy.
 		if runs, readErr := m.history(); readErr == nil {
 			snapshot := m.laneControlSnapshotLocked(runs, true)
 			r.Snapshot = &snapshot

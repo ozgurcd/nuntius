@@ -7,6 +7,11 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Dashboard reads now show saved lane holds without changing control state or
+  starting work. Guarded lane and reviewed-message APIs explain conflicts,
+  busy locks and uncertain saves. All dashboard changes share a bounded rate;
+  lane buttons remain for a later update.
+
 - Ask the judge to pause or resume a lane, with your approval on each call.
   Status shows the saved hold and remaining blockers. Pause lets the current
   run finish; resume clears only the hold and starts no work. Failures explain
