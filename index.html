@@ -13,8 +13,8 @@
   <a class="skip-link" href="#agents">Skip to dashboard</a>
   <header class="topbar">
     <div class="brand"><picture class="brand-mark"><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/nuntius-logo-dark.svg"><img src="/assets/brand/nuntius-logo.svg" alt="" width="40" height="40"></picture><div><h1>Nuntius</h1><p>Local operations</p></div></div>
-    <div class="dispatch"><span id="freeze" class="badge">Connecting</span><button id="freezeButton">Freeze</button><button id="unfreezeButton" hidden>Unfreeze</button><button id="signOut" hidden>Sign out</button></div>
-    <div class="overview" aria-label="Overview">
+    <div class="dispatch"><span id="freeze" class="badge">Signed out</span><button id="freezeButton" hidden>Freeze</button><button id="unfreezeButton" hidden>Unfreeze</button><button id="signOut" hidden>Sign out</button></div>
+    <div id="overview" class="overview" aria-label="Overview" hidden>
       <div class="metric"><strong id="runningCount">—</strong><span>Running</span></div>
       <div class="metric"><strong id="idleCount">—</strong><span>Idle</span></div>
       <div class="metric"><strong id="endedCount">—</strong><span>Ended</span></div>
@@ -33,7 +33,11 @@
     </nav>
     <div id="error" class="error" role="alert" hidden></div>
     <div id="notice" class="notice" role="status" hidden></div>
-    <section id="agents" role="tabpanel" aria-labelledby="tab-agents" tabindex="0"><div class="section-heading"><h2>Agents</h2><span class="muted">Live · every 2 seconds</span></div><nav id="agentTabs" class="agent-tabs" role="tablist" aria-label="Agent views"></nav><div id="lanes" class="agent-grid"></div><div id="laneDetail" class="panel lane-detail" hidden><h3>Live tail</h3><label class="follow"><input id="followTail" type="checkbox" checked> Follow newest output</label><pre id="laneTail" class="log live-tail" tabindex="0"></pre><h3>This agent’s history</h3><div class="table-scroll"><table id="laneHistory"><thead><tr><th>Lane</th><th>Run</th><th>Goal / report</th><th>State</th><th>Started</th><th>Duration</th><th>Relation</th><th>Model / effort</th></tr></thead><tbody id="laneHistoryPlaceholder"></tbody></table></div><p id="laneHistoryEmpty" class="empty" hidden>No runs for this agent.</p><h3>Owner notes</h3><pre id="laneNotes" class="report-text"></pre><h3>Pending signals</h3><pre id="laneSignals" class="report-text"></pre></div><p id="agentsEmpty" class="empty" hidden>No agents configured.</p></section>
+    <section id="signInPanel" class="panel" aria-labelledby="signInHeading">
+      <h2 id="signInHeading">Sign in to Nuntius</h2>
+      <p id="signInText">Open the link from <code>nuntius web link</code> or iMessage to sign in.</p>
+    </section>
+    <section id="agents" role="tabpanel" hidden aria-labelledby="tab-agents" tabindex="0"><div class="section-heading"><h2>Agents</h2><span class="muted">Live · every 2 seconds</span></div><nav id="agentTabs" class="agent-tabs" role="tablist" aria-label="Agent views"></nav><div id="lanes" class="agent-grid"></div><div id="laneDetail" class="panel lane-detail" hidden><h3>Live tail</h3><label class="follow"><input id="followTail" type="checkbox" checked> Follow newest output</label><pre id="laneTail" class="log live-tail" tabindex="0"></pre><h3>This agent’s history</h3><div class="table-scroll"><table id="laneHistory"><thead><tr><th>Lane</th><th>Run</th><th>Goal / report</th><th>State</th><th>Started</th><th>Duration</th><th>Relation</th><th>Model / effort</th></tr></thead><tbody id="laneHistoryPlaceholder"></tbody></table></div><p id="laneHistoryEmpty" class="empty" hidden>No runs for this agent.</p><h3>Owner notes</h3><pre id="laneNotes" class="report-text"></pre><h3>Pending signals</h3><pre id="laneSignals" class="report-text"></pre></div><p id="agentsEmpty" class="empty" hidden>No agents configured.</p></section>
     <section class="panel" id="messages" role="tabpanel" hidden aria-labelledby="tab-messages" tabindex="0"><div class="section-heading"><h2>Messages and notes</h2><span class="muted">Local owner actions</span></div>
       <div class="compose-grid">
         <form id="messageForm"><h3>Message an agent</h3><label for="lane">Agent</label><select id="lane"></select><label for="message">Message</label><textarea id="message" maxlength="12000" placeholder="Send a reply or queue it after the current run"></textarea><div class="actions"><button id="send" class="primary" type="submit">Send / queue</button><button id="stopSend" type="button">Stop and send</button></div><p class="hint">One queued message per running agent. Freeze pauses delivery.</p></form>

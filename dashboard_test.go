@@ -68,8 +68,8 @@ func TestDashboardAssetsBootstrap(t *testing.T) {
 			t.Fatal("tab and panel association missing")
 		}
 	}
-	if !strings.Contains(html, `id="tab-agents" role="tab" aria-selected="true" tabindex="0"`) || strings.Count(html, `role="tabpanel" hidden`) != len(panels)-1 {
-		t.Fatal("Agents must be the only initially visible panel")
+	if !strings.Contains(html, `id="tab-agents" role="tab" aria-selected="true" tabindex="0"`) || strings.Count(html, `role="tabpanel" hidden`) != len(panels) || !strings.Contains(html, `id="signInPanel"`) {
+		t.Fatal("public bootstrap must show sign-in and hide every private panel")
 	}
 	script, err := dashboardAssets.ReadFile("app.js")
 	if err != nil {
@@ -183,6 +183,14 @@ function rendered(h, id) {
   return h.ids.auditRows.children.length === input.data.audit.length;
 }
 (async () => {
+  const tabIDs=['agents','queue','messages','digest','runs','auditSection','settings'];
+  for(const first of tabIDs) {
+    const h=start('#'+first);await settle();
+    check(h.ids.signInPanel && !h.ids.signInPanel.hidden && tabIDs.every(id=>h.ids[id].hidden), 'one sign-in panel replaces all signed-out content: '+first);
+    check(h.ids.signInText.textContent.includes('nuntius web link') && h.ids.signInText.textContent.includes('iMessage') && h.ids.freeze.textContent==='Signed out' && h.ids.error.hidden,'clear sign-in instructions without Connecting: '+first);
+    for(const next of tabIDs){h.ids['tab-'+next].click();await settle();check(!h.ids.signInPanel.hidden && tabIDs.every(id=>h.ids[id].hidden),'signed-out tab navigation retains only sign-in panel: '+next);}
+    check(h.calls.length===0,'signed-out navigation makes no API requests');
+  }
   check(input.page.includes('aria-controls="queue"') && input.page.includes('id="queueRows"'), 'approved Queue tab exists');
   const qc={status:200,current:queueExample},qclock={now:Date.parse('2026-10-10T22:33:00Z')};
   const q=start('#queue',new Map(),'?token=fixture-auth',false,qclock,200,null,null,undefined,qc);await settle();
@@ -315,7 +323,7 @@ function rendered(h, id) {
   phoneCheck(device.get('nuntius.web.credential') === (saved && JSON.stringify(saved)), 'bookmark does not renew grant lifetime');
   clock.now += sevenDays;
   const expired = start('#agents', device, '', false, clock); await settle();
-  phoneCheck(expired.calls.length === 0 && !device.has('nuntius.web.credential') && !expired.ids.error.hidden, 'exact expiry clears stored grant and requests sign-in');
+  phoneCheck(expired.calls.length === 0 && !device.has('nuntius.web.credential') && !expired.ids.signInPanel.hidden && tabIDs.every(id=>expired.ids[id].hidden), 'exact expiry clears stored grant and requests sign-in');
   const invalidRecords = ['broken', '{}', 'null', JSON.stringify({token:'fixture-auth',expiresAt:clock.now + sevenDays + 1}), JSON.stringify({token:'fixture-auth',expiresAt:'later'})];
   for (const record of invalidRecords) {
     const store = new Map([['nuntius.web.credential',record]]);
@@ -364,6 +372,7 @@ function rendered(h, id) {
     check(h.calls.length === 2, 'disabled-aware click suppresses a locked action');
     check(!h.ids.signOut.disabled, 'Sign out stays enabled during a pending action');
     h.ids.signOut.click();
+    check(!h.ids.signInPanel.hidden && tabIDs.every(id=>h.ids[id].hidden), 'sign-out immediately hides private panels during pending action');
     check(!store.has('nuntius.web.credential') && h.location.reloads === 1 && !vm.runInContext('authenticated()', h.context), 'pending-action Sign out clears stored and in-memory credentials immediately and reloads the shell');
     const shell = start('#runs', store, '', false, clock); await settle();
     check(shell.calls.length === 0 && !rendered(shell, 'runs') && shell.ids.signOut.hidden, 'signed-out shell has no private data or authenticated requests');
@@ -466,13 +475,13 @@ function rendered(h, id) {
   vm.runInContext("lastData.audit = []; render(lastData)", hiddenAgain.context);
   check(visibleAudit(hiddenAgain).length === 0 && !hiddenAgain.ids.auditEmpty.hidden && hiddenAgain.ids.auditCount.textContent === '0 of 0 entries', 'empty audit has a correct count and message');
   const unsigned = start('#runs'); await settle();
-  check(unsigned.calls.length === 0 && !unsigned.ids.error.hidden && unsigned.ids.error.textContent === 'Open the link printed by \x60nuntius web\x60 to sign in.', 'empty tab storage shows sign-in instructions without data requests');
+  check(unsigned.calls.length === 0 && !unsigned.ids.signInPanel.hidden && unsigned.ids.error.hidden, 'empty tab storage shows sign-in panel without data requests');
   await vm.runInContext("action('unfreeze')", unsigned.context);
   check(unsigned.calls.length === 0, 'unsigned action does not send API requests');
   const blocked = start('#runs', new Map(), '?token=fixture-auth', true); await settle();
   check(rendered(blocked, 'runs') && !blocked.location.search, 'storage failure permits current sign-in and clears URL');
   const noStorage = start('#runs', new Map(), '', true); await settle();
-  check(noStorage.calls.length === 0 && !noStorage.ids.error.hidden, 'storage failure without bootstrap remains signed out');
+  check(noStorage.calls.length === 0 && !noStorage.ids.signInPanel.hidden, 'storage failure without bootstrap remains signed out');
   const replaced = new Map([['nuntius.web.credential', JSON.stringify({token:'stale-fixture-auth',expiresAt:1791658800000+sevenDays})]]);
   const fresh = start('#runs', replaced, '?token=fixture-auth'); await settle();
 	vm.runInContext("selectTab('agents'); lastData.lanes[0].eta = 'over usual (+7m)'; lastData.lanes[0].eta_details = {explanation:'Usual = 24m: median of 3 earlier codex size-S runs; this run 31m'}; globalThis.alert = text => { globalThis.tappedExplanation = text; }; render(lastData)", fresh.context);

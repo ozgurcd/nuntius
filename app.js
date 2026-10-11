@@ -31,6 +31,7 @@ function signOut(removeStored = true) {
   token = ''; expiresAt = 0; authEpoch++;
   clearSettings();
   clearQueue();
+  signedOutView();
   if (removeStored) {
     try { localStorage.removeItem(credentialKey); } catch {}
   }
@@ -74,6 +75,7 @@ try {
 } catch { /* Filtering still works when browser storage is disabled. */ }
 
 function selectTab(id, focus = false, push = true) {
+  const signedIn = authenticated();
   const parts = id.split('/');
   laneSelection = parts[0] === 'agents' ? parts[1] || '' : laneSelection;
   id = parts[0];
@@ -84,12 +86,15 @@ function selectTab(id, focus = false, push = true) {
     if (selected && panel.hidden) shown = panel.id;
     tab.setAttribute('aria-selected', String(selected));
     tab.tabIndex = selected ? 0 : -1;
-    panel.hidden = !selected;
+    panel.hidden = !selected || !signedIn;
   }
   const panelID = active.getAttribute('aria-controls');
   const hash = '#' + panelID + (panelID === 'agents' && laneSelection ? '/' + laneSelection : '');
   if (location.hash !== hash) history[push ? 'pushState' : 'replaceState'](null, '', '/' + hash);
   if (focus) active.focus();
+  el('signInPanel').hidden = signedIn;
+  el('overview').hidden = !signedIn;
+  if (!signedIn) signedOutView();
   if (lastData) renderPanels(lastData, shown);
   if (panelID === 'settings') {
     active.scrollIntoView?.({block:'nearest', inline:'nearest'});
@@ -510,8 +515,7 @@ el('history').remove();
 el('laneHistoryPlaceholder').remove();
 async function refresh() {
   if (!authenticated()) {
-    setText(el('error'), 'Open the link printed by `nuntius web` to sign in.');
-    el('error').hidden = false;
+    signedOutView();
     return;
   }
   if (refreshing || acting || document.hidden) return;
@@ -536,6 +540,13 @@ async function refresh() {
     setText(el('error'), 'Unable to refresh dashboard. Showing the last received data. Retrying every 2 seconds.');
     el('error').hidden = false;
   } finally { refreshing = false; }
+}
+function signedOutView() {
+  for (const tab of tabs) el(tab.getAttribute('aria-controls')).hidden = true;
+  el('signInPanel').hidden = false;
+  setText(el('signInText'), 'Open the link from `nuntius web link` or iMessage to sign in.');
+  setText(el('freeze'), 'Signed out');
+  for (const id of ['freezeButton','unfreezeButton','signOut','overview','error','notice']) el(id).hidden = true;
 }
 async function action(name, lane = '', text = '', stop = false) {
   if (!authenticated()) { await refresh(); return false; }
