@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func settingsFixture(t *testing.T) (*Manager, *Web, string) {
@@ -106,6 +107,11 @@ func TestSettingsStrictFraming(t *testing.T) {
 
 func TestSettingsConflictLocksAndParity(t *testing.T) {
 	m, w, p := settingsFixture(t)
+	// These assertions control lock ownership explicitly. Stop the unused
+	// periodic Status workers so they cannot independently produce a valid 503.
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
 	revision := settingsRevision(t, w)
 	c, err := LoadConfig(p)
 	if err != nil {
@@ -116,11 +122,14 @@ func TestSettingsConflictLocksAndParity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer other.Close()
+	if err := other.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if other.SetPool(p, "claude", 3, false) != nil {
 		t.Fatal("CLI writer failed")
 	}
-	if settingsHTTP(t, w, "POST", settingsBody(revision, `{"pools":{"codex":1}}`)).Code != 409 {
-		t.Fatal("stale revision overwrote CLI")
+	if out := settingsHTTP(t, w, "POST", settingsBody(revision, `{"pools":{"codex":1}}`)); out.Code != 409 {
+		t.Fatalf("stale revision overwrote CLI: HTTP %d", out.Code)
 	}
 	revision = settingsRevision(t, w)
 	lock, err := m.controlLock()
@@ -187,6 +196,91 @@ func TestSettingsConflictLocksAndParity(t *testing.T) {
 	}
 	if other.reload() != nil || other.config.Pools["claude"].Size != 4 {
 		t.Fatal("sibling did not reload")
+	}
+}
+
+func TestSettingsRevisionIgnoresFileMetadata(t *testing.T) {
+	m, w, p := settingsFixture(t)
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Unix(1700000000, 0)
+	if err := os.Chtimes(p, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	beforeInfo, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := settingsRevision(t, w)
+	changed := bytes.Replace(before, []byte(`"size":1`), []byte(`"size":3`), 1)
+	if len(before) != len(changed) || bytes.Equal(before, changed) {
+		t.Fatal("fixture needs different contents with the same size")
+	}
+	if err := os.WriteFile(p, changed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(p, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	afterInfo, err := os.Stat(p)
+	if err != nil || beforeInfo.Size() != afterInfo.Size() || !beforeInfo.ModTime().Equal(afterInfo.ModTime()) {
+		t.Fatal("fixture metadata changed")
+	}
+	current := settingsRevision(t, w)
+	if current == revision {
+		t.Fatal("changed contents kept the old revision")
+	}
+	if err := os.Chtimes(p, stamp.Add(time.Hour), stamp.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if settingsRevision(t, w) != current {
+		t.Fatal("metadata alone changed the revision")
+	}
+	if out := settingsHTTP(t, w, "POST", settingsBody(revision, `{"pools":{"codex":1}}`)); out.Code != 409 {
+		t.Fatalf("stale revision with identical metadata: HTTP %d", out.Code)
+	}
+	after, err := os.ReadFile(p)
+	if err != nil || !bytes.Equal(changed, after) {
+		t.Fatal("stale request changed persisted settings")
+	}
+}
+
+func TestSettingsStaleRevisionWhileLocked(t *testing.T) {
+	m, w, p := settingsFixture(t)
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	revision := settingsRevision(t, w)
+	if err := m.SetPool(p, "claude", 3, false); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Status holds this mutex before it reads the config and the run store.
+	m.mu.Lock()
+	out := settingsHTTP(t, w, "POST", settingsBody(revision, `{"pools":{"codex":1}}`))
+	m.mu.Unlock()
+	var failure struct{ Code string }
+	if out.Code != 503 || json.Unmarshal(out.Body.Bytes(), &failure) != nil || failure.Code != "locked" {
+		t.Fatalf("locked stale request: HTTP %d", out.Code)
+	}
+	after, err := os.ReadFile(p)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("lock refusal changed persisted settings")
+	}
+	if out := settingsHTTP(t, w, "POST", settingsBody(revision, `{"pools":{"codex":1}}`)); out.Code != 409 {
+		t.Fatalf("unlocked stale request: HTTP %d", out.Code)
+	}
+	after, err = os.ReadFile(p)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("revision conflict changed persisted settings")
 	}
 }
 
