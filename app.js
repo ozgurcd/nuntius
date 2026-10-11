@@ -63,6 +63,7 @@ let laneSelection = '';
 const settingsKinds = ['claude', 'codex', 'opencode'];
 let settingsCurrent = null, settingsDraft = null, settingsLoading = false, settingsSaving = false;
 let settingsReadAt = 0, settingsConfirmed = false;
+let settingsRetry = null;
 let settingsErrors = {};
 let settingsReadonlyID = 0;
 let queueData = null, queueFetched = 0, queueLoading = false, queueFailure = '';
@@ -665,17 +666,32 @@ function settingsReadOnlyView(c) {
   const options = node('details'); options.append(node('summary','','Startup & connection options · local only'),node('p','','Config/store locations, loopback port, allowed host, tailnet options and notification overrides are chosen locally at startup. This page cannot change or restart services.'));
   machine.append(options,node('p','hint','Queue file · '+(c.queue_file_mode||'default')+' · local only'),node('p','hint',c.local_only_reason));
 }
-async function loadSettings(force = false) {
+function settingsFailure(code) {
+  return {locked:'Settings busy, retrying. Your draft is kept.',configuration_unavailable:'Settings configuration source is unavailable. Run nuntius config check locally, then reload current values. Your draft is kept.',invalid_configuration:'Settings configuration is invalid or unreadable. Run nuntius config check locally, then reload current values. Your draft is kept.',rate_limited:'Too many settings requests. Wait briefly, then reload current values. Your draft is kept.'}[code] || 'Settings unavailable. Your draft is kept. Reload current values before saving.';
+}
+async function loadSettings(force = false, retry = 0) {
   if (!authenticated() || settingsLoading || settingsSaving || (!force && settingsReadAt && Date.now() - settingsReadAt < 10000)) return;
+  clearTimeout(settingsRetry); settingsRetry = null;
   settingsLoading = true; settingsReadAt = Date.now(); const epoch = authEpoch;
   settingsUpdate();
   try {
     const response = await fetch('/settings',{headers:{'X-Nuntius-Token':token},cache:'no-store'});
     if (epoch !== authEpoch || !authenticated()) return;
     if (response.status === 403) { signOut(); return; }
-    if (!response.ok) throw new Error();
     const c = await response.json();
     if (epoch !== authEpoch || !authenticated()) return;
+    if (!response.ok) {
+      settingsConfirmed = false;
+      const again = c.code === 'locked' && retry < 3;
+      settingsBanner(c.code === 'locked' && !again ? 'Settings busy. Reload current values to retry. Your draft is kept.' : settingsFailure(c.code), true);
+      if (again) settingsRetry = setTimeout(() => {
+        if (epoch !== authEpoch || !authenticated()) return;
+        settingsRetry = null;
+        if (el('settings').hidden || document.hidden) { settingsReadAt = 0; return; }
+        loadSettings(true, retry + 1);
+      }, 1000);
+      return;
+    }
     const dirty = settingsDiff().length > 0;
     settingsCurrent = c; settingsConfirmed = true; settingsReadOnlyView(c);
     if (!dirty) settingsResetDraft();
@@ -683,7 +699,7 @@ async function loadSettings(force = false) {
   } catch {
     if (epoch !== authEpoch || !authenticated()) return;
     settingsConfirmed = false;
-    settingsBanner('Settings unavailable. Your draft is kept. Reload current values before saving; check nuntius config check locally if needed.',true);
+    settingsBanner(settingsFailure('settings_unavailable'),true);
   } finally { if (epoch === authEpoch) { settingsLoading=false; settingsUpdate(); } }
 }
 async function saveSettings(event) {
@@ -701,7 +717,7 @@ async function saveSettings(event) {
     const c = await response.json(); if (epoch !== authEpoch || !authenticated()) return;
     if (!response.ok) {
       if (response.status===409 || response.status>=500) settingsConfirmed=false;
-      const messages = {busy_agent:'Nothing saved. A busy agent cannot be removed. Keep the pool large enough for running agents.',revision_conflict:'Nothing saved. Settings changed elsewhere. Reload current values and review your draft.',recipient_not_configured:'Configure an iMessage recipient locally before enabling notifications.',rate_limited:'Too many settings requests. Wait briefly, then reload current values.',committed_audit_failed:'Settings were committed, but audit completion failed. Check current values before trying again.'};
+      const messages = {locked:'Nothing saved. Settings are busy. Reload current values and retry your draft.',configuration_unavailable:settingsFailure('configuration_unavailable'),invalid_configuration:settingsFailure('invalid_configuration'),busy_agent:'Nothing saved. A busy agent cannot be removed. Keep the pool large enough for running agents.',revision_conflict:'Nothing saved. Settings changed elsewhere. Reload current values and review your draft.',recipient_not_configured:'Configure an iMessage recipient locally before enabling notifications.',rate_limited:'Too many settings requests. Wait briefly, then reload current values.',committed_audit_failed:'Settings were committed, but audit completion failed. Check current values before trying again.'};
       const text = (messages[c.code] || (response.status>=500?'Could not confirm save. Check current values before trying again.':'Nothing saved. Check the highlighted fields and current configuration.')) + (c.code==='busy_agent' && /^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$/.test(c.lane || '') ? ' Busy agent: ' + c.lane + '.' : '');
       settingsBanner(text,true);
       const field = c.field?.startsWith('pools.') ? c.field.slice(6) : c.field==='notify_imessage_enabled'?'notify':'';
@@ -715,6 +731,7 @@ async function saveSettings(event) {
   } finally { if (epoch === authEpoch) { settingsSaving=false; settingsUpdate(); } }
 }
 function clearSettings() {
+  clearTimeout(settingsRetry); settingsRetry = null;
   settingsCurrent=null; settingsDraft=null; settingsConfirmed=false; settingsLoading=false; settingsSaving=false; settingsReadAt=0;
   settingsErrors={};
   for (const k of settingsKinds) { el('setting-'+k).value=''; settingsFieldError(k,''); }
@@ -727,7 +744,7 @@ for (const k of settingsKinds) el('setting-' + k).addEventListener('input', () =
 el('setting-notify').addEventListener('change', () => { if (!settingsDraft || settingsSaving) return; settingsDraft.notify=el('setting-notify').checked; delete settingsErrors.notify; settingsBanner(''); settingsUpdate(); });
 el('settingsForm').addEventListener('submit',saveSettings);
 el('settingsCancel').addEventListener('click', () => { settingsResetDraft(); settingsBanner(''); });
-el('settingsReload').addEventListener('click', () => loadSettings());
+el('settingsReload').addEventListener('click', () => loadSettings(true));
 setInterval(() => {
   if (lastUpdate) setText(el('updated'), 'Updated ' + Math.floor((Date.now() - lastUpdate) / 1000) + 's ago');
 }, 1000);

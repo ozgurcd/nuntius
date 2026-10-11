@@ -2,6 +2,7 @@ package nuntius
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -367,15 +368,59 @@ func settingsJSON(b []byte, v any) error {
 	}
 	return strictJSON(b, v)
 }
+
+// Read requests share one deadline across all locks. Retry without spawning a
+// goroutine that could acquire a mutex after the request has already returned.
+func settingsReadLock(ctx context.Context, try func() (bool, error)) error {
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if ctx.Err() != nil {
+			return settingsError("locked", "", 503)
+		}
+		locked, err := try()
+		if err != nil || locked {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return settingsError("locked", "", 503)
+		case <-tick.C:
+		}
+	}
+}
+
 func (w *Web) settings(out http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" && r.Method != "POST" {
 		out.Header().Set("Allow", "GET, POST")
 		out.WriteHeader(405)
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+	defer cancel()
+	acquire := func(try func() (bool, error)) error {
+		if r.Method == "GET" {
+			return settingsReadLock(ctx, try)
+		}
+		locked, err := try()
+		if err == nil && !locked {
+			return settingsError("locked", "", 503)
+		}
+		return err
+	}
+	fail := func(err error) {
+		var f *settingsFault
+		if !errors.As(err, &f) {
+			f = &settingsFault{Code: "settings_unavailable", Status: 503}
+		}
+		if f.Code == "locked" {
+			out.Header().Set("Retry-After", "1")
+		}
+		settingsReply(out, f.Status, map[string]string{"code": f.Code, "field": f.Field, "lane": f.Lane})
+	}
 	s := &w.settingsState
-	if !s.mu.TryLock() {
-		settingsReply(out, 503, map[string]string{"code": "locked"})
+	if err := acquire(func() (bool, error) { return s.mu.TryLock(), nil }); err != nil {
+		fail(err)
 		return
 	}
 	defer s.mu.Unlock()
@@ -387,13 +432,6 @@ func (w *Web) settings(out http.ResponseWriter, r *http.Request) {
 		out.Header().Set("Retry-After", "6")
 		settingsReply(out, 429, map[string]string{"code": "rate_limited"})
 		return
-	}
-	fail := func(err error) {
-		var f *settingsFault
-		if !errors.As(err, &f) {
-			f = &settingsFault{Code: "settings_unavailable", Status: 503}
-		}
-		settingsReply(out, f.Status, map[string]string{"code": f.Code, "field": f.Field, "lane": f.Lane})
 	}
 	var request settingsRequest
 	if r.Method == "POST" {
@@ -411,8 +449,8 @@ func (w *Web) settings(out http.ResponseWriter, r *http.Request) {
 		}
 	}
 	m := w.manager
-	if !m.mu.TryLock() {
-		fail(settingsError("locked", "", 503))
+	if err := acquire(func() (bool, error) { return m.mu.TryLock(), nil }); err != nil {
+		fail(err)
 		return
 	}
 	defer m.mu.Unlock()
@@ -422,8 +460,14 @@ func (w *Web) settings(out http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer guard.Close()
-	if syscall.Flock(int(guard.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
-		fail(settingsError("locked", "", 503))
+	if err := acquire(func() (bool, error) {
+		err := syscall.Flock(int(guard.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EINTR) {
+			return false, nil
+		}
+		return err == nil, err
+	}); err != nil {
+		fail(err)
 		return
 	}
 	path := m.config.SourcePath

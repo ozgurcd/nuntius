@@ -174,6 +174,21 @@ func TestBackgroundWebLifecycle(t *testing.T) {
 			if err != nil || json.Unmarshal(b, &access) != nil || access.Token == "" {
 				t.Fatal("owner access file missing")
 			}
+			// The environment-resolved config must survive start -> wrapper ->
+			// __background even when the owner supplied no explicit --config.
+			req, err := http.NewRequest("GET", "http://"+state.Address+"/settings", nil)
+			if err != nil {
+				t.Fatal("settings request")
+			}
+			req.Header.Set("X-Nuntius-Token", access.Token)
+			resp, err = (&http.Client{Timeout: 3 * time.Second}).Do(req)
+			if err != nil {
+				t.Fatal("background Settings unavailable")
+			}
+			resp.Body.Close()
+			if resp.StatusCode != 200 {
+				t.Fatalf("background Settings HTTP %d", resp.StatusCode)
+			}
 			fi, _ := os.Stat(p)
 			if fi.Mode().Perm() != 0600 {
 				t.Fatal("access file not private")

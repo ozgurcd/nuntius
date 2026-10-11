@@ -169,8 +169,11 @@ function start(hash, store = new Map(), query = '', blocked = false, clock = {no
   const session = new Map();
   class ClockDate extends Date { static now() { return clock.now; } }
   const context = vm.createContext({Date: ClockDate, document: doc, window: win, location, URL, history: {pushState: (_, __, path) => { location.hash = path.slice(path.indexOf('#')); }, replaceState: (_, __, path) => { location.href = 'http://localhost:8123' + path; location.hash = path.includes('#') ? path.slice(path.indexOf('#')) : ''; location.search = ''; }}, localStorage: storage, sessionStorage: {getItem: k => session.get(k) || null, setItem: (k,v) => session.set(k,v), removeItem: k => session.delete(k)}, fetch: async (path, options) => { calls.push({path, options}); if(path==='/queue'){if(queueControl.pending)return await queueControl.pending;if(queueControl.reject)throw new Error();return {ok:queueControl.status===200,status:queueControl.status,json:async()=>JSON.parse(JSON.stringify(queueControl.current))};} if(path==='/settings'){if(options.method==='POST' && settingsControl.post)return await settingsControl.post; if(settingsControl.reject)throw new Error(); return {ok:settingsControl.status===200,status:settingsControl.status,json:async()=>JSON.parse(JSON.stringify(settingsControl.current))};} if (path === '/action' && pendingAction) return await pendingAction; if (pending) await pending; return {ok: status === 200, status, json: async () => input.data}; }, setInterval: fn => { timers.push(fn); }, setTimeout: () => 1, clearTimeout: () => {}});
+  const timeouts = new Map(); let timeoutID = 0;
+  context.setTimeout = (fn, delay) => { const id = ++timeoutID; timeouts.set(id,{fn,delay}); return id; };
+  context.clearTimeout = id => timeouts.delete(id);
   vm.runInContext(input.script, context);
-  return {context, ids, calls, timers, doc, win, location, settingsControl,queueControl};
+  return {context, ids, calls, timers, timeouts, doc, win, location, settingsControl,queueControl};
 }
 async function settle() { for (let i = 0; i < 16; i++) await Promise.resolve(); }
 function rendered(h, id) {
@@ -229,6 +232,28 @@ function rendered(h, id) {
   check(/queue-mobile-label/.test(input.css) && /max-width:760px/.test(input.css) && input.css.includes('min-height:44px'),'mobile labels and touch targets');
 	check(input.page.includes('aria-controls="settings"') && input.page.includes('id="settingsForm"'), 'approved Settings tab and form exist');
   const settingsClock={now:1791658800000}, settingsStore=new Map();
+  for(const code of ['locked','configuration_unavailable','invalid_configuration']) {
+    const control={status:503,current:{code}},h=start('#settings',new Map(),'?token=fixture-auth',false,undefined,200,null,null,control);await settle();
+    check(h.ids.settingsBanner.textContent.includes(code==='locked'?'busy, retrying':'nuntius config check') && (code==='locked' || h.ids.settingsBanner.textContent.includes(code==='configuration_unavailable'?'source':'invalid')), 'specific Settings read reason '+code);
+    check(h.ids.settingsSave.disabled,'failed read cannot save '+code);
+  }
+  const retryControl={status:503,current:{code:'locked'}},retry=start('#settings',new Map(),'?token=fixture-auth',false,undefined,200,null,null,retryControl);await settle();
+  const fireRetry=async h=>{const id=vm.runInContext('settingsRetry',h.context), timer=h.timeouts.get(id);check(timer?.delay===1000,'busy read schedules yielding retry');h.timeouts.delete(id);timer.fn();await settle();};
+  for(let i=0;i<3;i++)await fireRetry(retry);
+  check(retry.calls.filter(c=>c.path==='/settings').length===4 && vm.runInContext('settingsRetry',retry.context)===null && retry.ids.settingsBanner.textContent.includes('Reload current values to retry'), 'busy retry limit');
+  retryControl.status=200;retryControl.current=exampleSettings;await retry.ids.settingsReload.click();await settle();
+  check(retry.ids['setting-codex'].value==='2' && retry.ids.settingsBanner.hidden,'manual reload bypasses entry throttle after busy');
+  retry.ids['setting-codex'].value='4';retry.ids['setting-codex'].listeners.input();retryControl.status=503;retryControl.current={code:'locked'};await vm.runInContext('loadSettings(true)',retry.context);
+  retryControl.status=200;retryControl.current=exampleSettings;await fireRetry(retry);
+  check(retry.ids['setting-codex'].value==='4' && !retry.ids.settingsSave.disabled,'busy retry keeps draft and restores confirmed baseline');
+  for(const ending of ['signout','hidden','expiry']) {
+    const clock={now:1791658800000},control={status:503,current:{code:'locked'}},h=start('#settings',new Map(),'?token=fixture-auth',false,clock,200,null,null,control);await settle();
+    const timer=h.timeouts.get(vm.runInContext('settingsRetry',h.context)),count=h.calls.length;
+    if(ending==='signout')h.ids.signOut.click();
+    if(ending==='hidden')vm.runInContext("selectTab('agents')",h.context);
+    if(ending==='expiry')clock.now+=7*24*60*60*1000;
+    timer.fn();await settle();check(h.calls.length===count,'scheduled retry respects '+ending);
+  }
   const settings=start('#settings',settingsStore,'?token=fixture-auth',false,settingsClock); await settle();
   check(!settings.ids.settings.hidden && settings.calls.filter(c=>c.path==='/settings').length===1 && settings.ids['setting-codex'].value==='2','settings hash loads authenticated current values once');
   check(settings.ids['setting-opencode'].disabled && !settings.ids['setting-codex'].disabled && settings.ids.settingsSave.disabled,'unconfigured pool disabled and unchanged save disabled');

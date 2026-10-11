@@ -24,8 +24,9 @@ refused. Configuration stays at most 64 KiB; the explicit response is capped
 at 32 KiB (oversize means unavailable, not a truncated complete snapshot).
 Authenticated server-wide token buckets allow GET 60/minute, burst 10 and
 POST 10/minute, burst 3, with Retry-After. There is no forwarded-IP limiter map.
-Body reads have a five-second deadline. Settings, manager, control and audit
-lock acquisition is nonblocking; normal private-filesystem operations still
+Body reads have a five-second deadline. Settings GET shares a cancellable
+one-second wait across its settings, manager and control locks. POST and audit
+lock acquisition remain nonblocking; normal private-filesystem operations still
 depend on the OS completing I/O.
 
 Save uses CLI policy, cooperating control locks and one atomic mode-0600 write.

@@ -120,14 +120,16 @@ func NewManager(c Config, store string) (*Manager, error) {
 		return nil, e
 	}
 	m.watcher.Go(func() {
-		tick := time.NewTicker(250 * time.Millisecond)
+		// Supervision needs metadata, not dashboard details. Re-parsing ended
+		// event streams four times a second kept idle MCP servers busy.
+		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		for {
 			select {
 			case <-m.closing:
 				return
 			case <-tick.C:
-				_, _ = m.Status()
+				_, _ = m.status(false)
 				m.mu.Lock()
 				recovery := m.recovery
 				m.mu.Unlock()
@@ -500,6 +502,10 @@ func (m *Manager) Cancel(name string) (err error) {
 	return m.audit("nuntius_cancel", name, r.GoalID, "", "accepted")
 }
 func (m *Manager) Status() ([]Status, error) {
+	return m.status(true)
+}
+
+func (m *Manager) status(details bool) ([]Status, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	guard, e := m.controlLock()
@@ -518,20 +524,21 @@ func (m *Manager) Status() ([]Status, error) {
 	if e != nil {
 		return nil, e
 	}
-	for _, r := range runs {
+	for i := range runs {
+		r := &runs[i]
 		if r.State != "running" && r.LaunchdLabel != "" && !r.LaunchdCleaned {
-			if err := m.cleanupJob(&r); err != nil {
+			if err := m.cleanupJob(r); err != nil {
 				_ = m.audit("launchd_cleanup", r.Lane, r.GoalID, r.SHA256, "failed")
-			} else if err := m.save(&r); err != nil {
+			} else if err := m.save(r); err != nil {
 				return nil, err
 			}
 		}
 		if r.State == "running" {
-			if err := m.pendingJob(&r); err != nil {
+			if err := m.pendingJob(r); err != nil {
 				return nil, err
 			}
 		}
-		if r.State != "running" || sameProcess(r) || (r.ProcessStart == "" && processExists(r.PID)) {
+		if r.State != "running" || sameProcess(*r) || (r.ProcessStart == "" && processExists(r.PID)) {
 			continue
 		}
 		lock, err := m.lock("supervisor-" + r.ID)
@@ -541,7 +548,7 @@ func (m *Manager) Status() ([]Status, error) {
 		if err != nil {
 			return nil, err
 		}
-		err = m.recoverEnded(&r)
+		err = m.recoverEnded(r)
 		_ = lock.Close()
 		if err != nil {
 			return nil, err
@@ -551,12 +558,17 @@ func (m *Manager) Status() ([]Status, error) {
 	for _, l := range m.config.Lanes {
 		model, effort := effectiveIdentity(l)
 		s := Status{Lane: l.Name, Kind: l.Kind, Model: model, Effort: effort, State: "idle", Freeze: frozen}
-		r, e := m.latest(l.Name)
-		if e != nil {
-			return nil, e
+		// history is already newest first; use this snapshot instead of
+		// re-reading and decoding the whole store once per lane.
+		var r *Run
+		for i := range runs {
+			if runs[i].Lane == l.Name {
+				r = &runs[i]
+				break
+			}
 		}
 		if r != nil {
-			if m.captureEffort(r) {
+			if details && m.captureEffort(r) {
 				if err := m.save(r); err != nil {
 					return nil, err
 				}
@@ -595,6 +607,9 @@ func (m *Manager) Status() ([]Status, error) {
 						return nil, err
 					}
 				}
+			}
+			if !details {
+				continue
 			}
 			s.State = r.State
 			if r.State == "timed_out" {

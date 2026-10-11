@@ -63,6 +63,12 @@ Sign out stays usable during Save, clears private settings/drafts immediately,
 and ignores late responses. Expiry and cross-tab sign-out do the same.
 Failures preserve drafts. An unconfirmed save or committed-audit failure asks
 you to reload current values before retrying; never assume a rollback.
+Reads wait briefly for busy locks. A busy response shows "Settings busy,
+retrying" and retries up to three times while the tab remains visible and
+signed in. Reload current values permits a manual retry immediately. Missing
+or invalid configuration gives a specific reason and asks you to run
+`nuntius config check` locally. Saves refuse busy locks without writing or
+automatic retries.
 See [the persistent-write threat model and audit limits](security.md#dashboard-settings-v033).
 
 ### Judge-only dashboard recovery
