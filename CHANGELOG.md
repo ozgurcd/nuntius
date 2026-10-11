@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep optional Queue file failures out of configuration reloads, so operational
+  dashboard data, dispatch and reply continue while Queue reports unavailable.
+
 - Add a read-only Queue tab for coordinator-published portable v1 snapshots,
   ordered goals, independent owner/prerequisite holds, AND filters and mobile cards.
 - Add guarded GET /queue, a local-only queue_file override/disable, bounded

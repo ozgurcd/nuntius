@@ -7,6 +7,9 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+An unreadable or replaced Queue file now leaves the operational dashboard,
+dispatch and reply available. Queue continues to report its own read failure.
+
 **Queue** displays your coordinator's planned goals in priority order, with
 Waiting on, Needs owner, search and lane/state filters. Phone rows show the
 full waiting details. Queue is read-only: starting work stays with your

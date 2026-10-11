@@ -340,8 +340,8 @@ func TestQueueConfigPath(t *testing.T) {
 	linked := filepath.Join(filepath.Dir(path), "link")
 	_ = os.Symlink(path, linked)
 	c.QueueFile = &linked
-	if _, e := c.Validate(); e == nil {
-		t.Fatal("linked config refused")
+	if _, e := c.Validate(); e != nil {
+		t.Fatal("queue I/O belongs to reader, not config validation")
 	}
 	empty := ""
 	c.QueueFile = &empty
