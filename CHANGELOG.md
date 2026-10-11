@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Use safe process observation in every lane-control snapshot, including MCP
+  pause/resume results and refusal fallbacks. Ended runs no longer appear to be
+  draining; surviving and unverified processes keep their running blocker.
+
 - Observe ended processes in CLI status, agents and lane lists without changing
   stored data or starting recovery. Restore missing-report attention and show
   the local date and time zone for lane holds.

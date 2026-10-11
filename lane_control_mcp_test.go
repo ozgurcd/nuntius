@@ -485,6 +485,168 @@ func TestLaneControlMCPStartupFaultScope(t *testing.T) {
 	}
 }
 
+// X1: initialize before seeding unsupervised history, so startup recovery cannot
+// hide a stale control projection. These fixtures launch no child processes.
+func TestLaneControlMCPProcessObservation(t *testing.T) {
+	start, err := processStart(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, process := range []string{"ended", "live", "unverified", "reused", "pending"} {
+		for _, report := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/report=%t", process, report), func(t *testing.T) {
+				m, store := laneControlCommitFixture(t)
+				// The live identity belongs to this test process, not to a child.
+				// Remove it before the common fixture's owned-child cleanup.
+				t.Cleanup(func() {
+					runs, err := m.history()
+					if err != nil {
+						t.Error("fixture cleanup history unavailable")
+						return
+					}
+					for _, r := range runs {
+						if r.PID == os.Getpid() {
+							r.PID, r.ProcessStart = 0, ""
+							if err := m.save(&r); err != nil {
+								t.Error("borrowed test-process identity cleanup failed")
+							}
+						}
+					}
+				})
+				in, writer := io.Pipe()
+				reader, out := io.Pipe()
+				done := make(chan error, 1)
+				go func() { done <- Serve(context.Background(), m, in, out) }()
+				t.Cleanup(func() {
+					writer.Close()
+					reader.Close()
+					in.Close()
+					out.Close()
+					select {
+					case <-done:
+					case <-time.After(3 * time.Second):
+						t.Error("stdio teardown timed out")
+					}
+				})
+				decoder := json.NewDecoder(reader)
+				exchange := func(request string) map[string]any {
+					t.Helper()
+					if _, err := io.WriteString(writer, request+"\n"); err != nil {
+						t.Fatal("stdio write failed")
+					}
+					var response map[string]any
+					if decoder.Decode(&response) != nil {
+						t.Fatal("stdio read failed")
+					}
+					return response
+				}
+				exchange(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+				if _, err := io.WriteString(writer, `{"jsonrpc":"2.0","method":"notifications/initialized"}`+"\n"); err != nil {
+					t.Fatal("initialized notification failed")
+				}
+				m.mu.Lock()
+				r := seedCrashRun(t, m, strings.Repeat("c", 32), "MCP-PROCESS-OBSERVATION", "failed")
+				switch process {
+				case "ended":
+					if processExists(r.PID) {
+						t.Fatal("dead PID fixture is not absent")
+					}
+				case "live":
+					r.PID, r.ProcessStart = os.Getpid(), start
+				case "unverified":
+					r.PID = os.Getpid()
+				case "reused":
+					r.PID, r.ProcessStart = os.Getpid(), start+"-different"
+				case "pending":
+					r.PID = 0
+				}
+				if err := m.save(&r); err != nil {
+					t.Fatal(err)
+				}
+				if report {
+					if err := os.WriteFile(filepath.Join(m.config.ReportsDir, r.GoalID+".txt"), []byte("complete fixture report"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				m.mu.Unlock()
+				running := process != "ended" && process != "reused"
+				check := func(snapshot map[string]any, paused bool, revision float64) {
+					t.Helper()
+					if snapshot["revision"] != revision {
+						t.Error("snapshot revision is not bound to the control result")
+					}
+					for _, raw := range snapshot["lanes"].([]any) {
+						row := raw.(map[string]any)
+						if row["name"] != "codex" {
+							continue
+						}
+						phase := "enabled"
+						if paused {
+							phase = "paused"
+							if running {
+								phase = "draining"
+							}
+						}
+						if row["phase"] != phase || strings.Contains(fmt.Sprint(row["blockers"]), "running") != running {
+							t.Errorf("process=%s phase=%v blockers=%v", process, row["phase"], row["blockers"])
+						}
+						return
+					}
+					t.Fatal("configured lane missing")
+				}
+				for _, request := range []struct {
+					tool, arguments string
+					paused          bool
+					revision        float64
+				}{
+					{"nuntius_lane_pause", `{"lane":"codex","expected_revision":0}`, true, 1},
+					{"nuntius_lane_pause", `{"lane":"codex","expected_revision":1}`, true, 1},
+					{"nuntius_lane_resume", `{"lane":"codex","expected_revision":1}`, false, 2},
+				} {
+					v := laneMCPStructured(t, exchange(laneMCPRequest(request.tool, request.arguments)), false)
+					if v["revision"] != request.revision {
+						t.Error("mutation revision lost")
+					}
+					check(v["lane_control"].(map[string]any), request.paused, request.revision)
+				}
+				// Exercise the no-bound-snapshot refusal branch independently of
+				// contention, which may legitimately prevent any fallback snapshot.
+				laneControlSet(t, m, true, 2)
+				before := laneCLITree(t, store)
+				fault := &laneControlFault{Code: "locked"}
+				value := laneControlResponse(m, mcpLaneControlResult{Operation: "pause", Lane: "codex"}, laneControlResult{}, fault)
+				b, _ := json.Marshal(map[string]any{"id": 2, "result": mcpToolResult("nuntius_lane_pause", value, fault)})
+				var wire map[string]any
+				if json.Unmarshal(b, &wire) != nil {
+					t.Fatal("fallback wire encoding failed")
+				}
+				v := laneMCPStructured(t, wire, true)
+				check(v["lane_control"].(map[string]any), true, 3)
+				// Shared projection observes a value copy, including unavailable
+				// controls; it must not alter the caller's history or the store.
+				input := []Run{r}
+				m.mu.Lock()
+				projection := m.projectLaneControls(laneControlStore{Version: 1}, nil, input, false)
+				m.mu.Unlock()
+				if !reflect.DeepEqual(input, []Run{r}) {
+					t.Fatal("control projection changed caller history")
+				}
+				for _, row := range projection.Lanes {
+					if row.Name == "codex" && (row.Phase != "unavailable" || strings.Contains(fmt.Sprint(row.Blockers), "running") != running) {
+						t.Error("unavailable projection lost process truth")
+					}
+				}
+				if !reflect.DeepEqual(before, laneCLITree(t, store)) {
+					t.Fatal("observation changed persisted history or control state")
+				}
+				if runs, err := m.history(); err != nil || len(runs) != 1 || !reflect.DeepEqual(runs[0], r) || len(m.active) != 0 {
+					t.Fatal("control observation recovered, supervised or scheduled work")
+				}
+			})
+		}
+	}
+}
+
 func TestLaneControlMCPBoundSnapshotAndUncertainty(t *testing.T) {
 	m, _ := laneControlCommitFixture(t)
 	first, err := m.setLaneControl(laneControlChange{Lane: "codex", Paused: true, ExpectedRevision: laneControlRevision(0)}, "mcp")

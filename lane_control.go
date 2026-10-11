@@ -259,11 +259,6 @@ func (m *Manager) laneControls() (laneControlSnapshot, error) {
 	if err != nil {
 		return laneControlSnapshot{}, err
 	}
-	if m.readOnly {
-		for i := range runs {
-			m.observeEndedRun(&runs[i])
-		}
-	}
 	return m.projectLaneControls(s, root, runs, true), nil
 }
 
@@ -319,6 +314,10 @@ func (m *Manager) projectLaneControls(s laneControlStore, root *os.File, runs []
 			if run.Lane != r.Name {
 				continue
 			}
+			// Observe the value copy for every control projection, including
+			// mutation results and refusal fallbacks. Never recover, supervise
+			// or persist history while constructing a control snapshot.
+			m.observeEndedRun(&run)
 			if run.State == "running" {
 				r.Blockers = append(r.Blockers, "running")
 				if r.Paused && available && r.Configured {
