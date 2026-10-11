@@ -545,10 +545,15 @@ function signedOutView() {
   for (const tab of tabs) el(tab.getAttribute('aria-controls')).hidden = true;
   el('signInPanel').hidden = false;
   setText(el('signInText'), 'Open the link from `nuntius web link` or iMessage to sign in.');
-  setText(el('freeze'), 'Signed out');
+  stateBadge(el('freeze'), 'Signed out');
   el('freeze').title = 'Signed out';
   el('freeze').setAttribute('aria-label', 'Signed out');
-  for (const id of ['agentsTabCount','notesTabCount','questionsTabCount','queueTabCount']) setText(el(id), '—');
+  for (const id of ['runningCount','idleCount','endedCount','agentsTabCount','notesTabCount','questionsTabCount','queueTabCount']) setText(el(id), '—');
+  lastUpdate = 0;
+  setText(el('updated'), 'Waiting for first update');
+  setText(el('lastRefresh'), 'Last refresh —');
+  el('updated').title = ''; el('lastRefresh').title = '';
+  el('lastRefresh').removeAttribute('datetime');
   for (const id of ['freezeButton','unfreezeButton','signOut','overview','error','notice']) el(id).hidden = true;
 }
 async function action(name, lane = '', text = '', stop = false) {

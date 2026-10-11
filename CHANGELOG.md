@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reset the signed-out header to a neutral badge with no retained freeze colour,
+  overview counts or refresh timestamps, including while reload or replies wait.
 - Clear the freeze badge tooltip/accessibility label and navigation counts
   synchronously on sign-out, expiry, cross-tab sign-out and server rejection,
   including before reload completes and during pending actions.

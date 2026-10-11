@@ -7,6 +7,8 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Signed-out headers use one neutral badge and clear overview counts and refresh
+  timestamps, so the previous dispatch state stays private before reload finishes.
 - Sign-out, expiry, sign-out in another tab and server rejection immediately
   clear the private freeze tooltip and screen-reader name and navigation counts,
   even while a dashboard action or page reload is pending.

@@ -132,6 +132,7 @@ class Element {
   get classList() { return {add: c => { this.className += ' ' + c; }, remove: c => { this.className = this.className.split(' ').filter(x => x !== c).join(' '); }, contains: c => this.className.split(' ').includes(c)}; }
   setAttribute(key, value) { this.attrs[key] = String(value); if (key === 'id') this.id = value; if (key === 'class') this.className = value; if (key === 'hidden') this.hidden = true; if (key === 'checked') this.checked = true; }
   getAttribute(key) { return this.attrs[key]; }
+  removeAttribute(key) { delete this.attrs[key]; if (key === 'datetime') delete this.dateTime; }
   contains(n) { return n === this || this.children.some(child => child.contains(n)); }
   matches(s) { return s.startsWith('.') ? this.classList.contains(s.slice(1)) : s === '[role="tab"]' ? this.attrs.role === 'tab' : this.tagName === s.toUpperCase(); }
   closest(s) { return s.split(', ').some(x => this.matches(x)) ? this : this.parentElement?.closest(s); }
@@ -158,7 +159,7 @@ function start(hash, store = new Map(), query = '', blocked = false, clock = {no
     for (const a of match[2].matchAll(/([\w-]+)(?:="([^"]*)")?/g)) n.setAttribute(a[1], a[2] || '');
     if (n.id) ids[n.id] = n;
     stack.at(-1).append(n);
-    if (!['meta', 'link', 'input'].includes(match[1])) stack.push(n);
+    if (!['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr'].includes(match[1].toLowerCase())) stack.push(n);
   }
   const doc = {hidden: false, documentElement: root, activeElement: ids[hash.slice(1)] || root, currentScript: {src: 'http://localhost:8123/app.js' + query}, getElementById: id => ids[id], querySelectorAll: s => root.querySelectorAll(s), createElement: tag => { const n = new Element(tag); n.document = doc; return n; }, addEventListener: (n, fn) => { doc[n] = fn; }};
   function attach(n) { n.document = doc; n.children.forEach(attach); } attach(root);
@@ -187,14 +188,37 @@ function rendered(h, id) {
   // Reload deliberately leaves this DOM intact: clearing must happen before
   // navigation completes, including while an action is waiting for a reply.
   const headerFailures = [];
-  for (const trigger of ['sign-out', 'expiry', 'cross-tab', 'server-rejection']) for (const actionPending of [false, true]) {
+  const publicHeader = start('#queue'); await settle();
+  const headerSnapshot = h => {
+    const read = n => ({tag:n.tagName, text:n.textContent, classes:n.className.split(/\s+/).filter(Boolean).sort(),
+      attrs:Object.entries(n.attrs).filter(([key]) => !['class','hidden','title','datetime'].includes(key)).sort(),
+      data:Object.entries(n.dataset).sort(), title:n.title || '', dateTime:n.dateTime || '', hidden:n.hidden, children:n.children.map(read)});
+    return JSON.stringify(read(h.doc.querySelectorAll('header')[0]));
+  };
+  const neutralHeader = headerSnapshot(publicHeader);
+  for (const trigger of ['sign-out', 'expiry', 'cross-tab', 'server-rejection']) for (const frozen of [false, true]) for (const pendingKind of ['none','action','data-response','data-json','queue-response','queue-json']) {
+    const actionPending = pendingKind === 'action';
+    const label = trigger + ' ' + (frozen ? 'frozen' : 'enabled') + ' ' + pendingKind;
     const clock = {now:1791658800000}, store = new Map();
     let finishAction;
     const response = new Promise(resolve => { finishAction = resolve; });
     const h = start('#queue', store, '?token=fixture-auth', false, clock, 200, null, actionPending ? response : null); await settle();
     vm.runInContext("lastData = JSON.parse(JSON.stringify(lastData)); lastData.freeze = {since:'2026-10-11T00:00:00Z',reason:'Private fixture reason'}; lastData.lanes = [{lane:'fixture-a',state:'running'},{lane:'fixture-b',state:'running'}]; lastData.notes = [{id:'a',read:false},{id:'b',read:false}]; lastData.history = [{sections:{QUESTIONS:'Fixture question A'}},{sections:{QUESTIONS:'Fixture question B'}}]; render(lastData)", h.context);
+    if (!frozen) vm.runInContext('lastData.freeze = null; render(lastData)', h.context);
     const headerCounts = ['agentsTabCount','notesTabCount','questionsTabCount','queueTabCount'];
-    check(h.ids.freeze.title.includes('Private fixture reason') && h.ids.freeze.getAttribute('aria-label') === h.ids.freeze.title && headerCounts.every(id => Number(h.ids[id].textContent) > 0), 'private header control is populated');
+    check(h.ids.freeze.classList.contains(frozen ? 'red' : 'green') && (frozen ? h.ids.freeze.title.includes('Private fixture reason') : h.ids.freeze.title === 'Dispatch enabled') && h.ids.freeze.getAttribute('aria-label') === h.ids.freeze.title && headerCounts.every(id => Number(h.ids[id].textContent) > 0) && !!h.ids.lastRefresh.dateTime && !!h.ids.updated.title, 'private header control is populated: ' + label);
+    let finishRead, read;
+    if (pendingKind.startsWith('data-') || pendingKind.startsWith('queue-')) {
+      const path = pendingKind.startsWith('data-') ? '/data' : '/queue';
+      const data = path === '/data' ? vm.runInContext('lastData', h.context) : queueExample;
+      const pending = new Promise(resolve => { finishRead = resolve; });
+      h.context.fetch = async target => target === path ? (pendingKind.endsWith('-json') ? {status:200,ok:true,json:() => pending} : pending) : {status:403,ok:false};
+      read = vm.runInContext(path === '/data' ? 'refresh()' : 'loadQueue()', h.context);
+      await settle();
+      check(vm.runInContext(path === '/data' ? 'refreshing' : 'queueLoading', h.context), 'header proof holds a late read: ' + label);
+      const resolveRead = finishRead;
+      finishRead = () => resolveRead(pendingKind.endsWith('-json') ? data : {status:200,ok:true,json:async() => data});
+    }
     const action = actionPending ? h.ids.freezeButton.click() : null;
     if (actionPending) check(h.ids.freezeButton.disabled && !h.ids.signOut.disabled, 'header proof holds a pending action');
     if (trigger === 'sign-out') h.ids.signOut.click();
@@ -202,15 +226,19 @@ function rendered(h, id) {
     if (trigger === 'cross-tab') { store.delete('nuntius.web.credential'); h.win.storage({storageArea:vm.runInContext('localStorage', h.context),key:'nuntius.web.credential'}); }
     if (trigger === 'server-rejection') {
       if (actionPending) { finishAction({status:403,ok:false}); await action; }
+      else if (read) await vm.runInContext("action('unfreeze')", h.context);
       else { h.context.fetch = async () => ({status:403,ok:false}); await vm.runInContext('refresh()', h.context); }
     }
-    const cleared = () => h.ids.freeze.textContent === 'Signed out' && h.ids.freeze.title === 'Signed out' && h.ids.freeze.getAttribute('aria-label') === 'Signed out' && headerCounts.every(id => h.ids[id].textContent === '—');
+    const cleared = () => h.ids.freeze.textContent === 'Signed out' && h.ids.freeze.className === 'badge' && !['red','green','amber'].some(c => h.ids.freeze.classList.contains(c)) && h.ids.freeze.title === 'Signed out' && h.ids.freeze.getAttribute('aria-label') === 'Signed out' && headerCounts.every(id => h.ids[id].textContent === '—') && headerSnapshot(h) === neutralHeader;
     check(!vm.runInContext('authenticated()', h.context) && !store.has('nuntius.web.credential') && h.location.reloads === 1 && !h.ids.freeze.hidden && !h.ids.signInPanel.hidden && tabIDs.every(id => h.ids[id].hidden), 'header proof reaches signed-out view: ' + trigger);
-    if (!cleared()) headerFailures.push(trigger + (actionPending ? ' pending action' : ' held reload'));
+    if (!cleared()) headerFailures.push(label + ' held reload');
     if (actionPending && trigger !== 'server-rejection') {
       finishAction({status:200,ok:true}); await action; await settle();
-      if (!cleared()) headerFailures.push(trigger + ' late action');
+      if (!cleared()) headerFailures.push(label + ' late action');
     }
+    if (read) { finishRead(); await read; await settle(); if (!cleared()) headerFailures.push(label + ' late read'); }
+    h.timers[0]();
+    if (!cleared()) headerFailures.push(label + ' timer');
   }
   check(headerFailures.length === 0, 'private header cleared immediately: ' + headerFailures.join(', '));
   for(const first of tabIDs) {
