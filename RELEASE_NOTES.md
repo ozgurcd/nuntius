@@ -5,6 +5,19 @@ User-facing changes and upgrade actions are listed newest first. See the
 restart an existing server. Choose when to upgrade through the Homebrew tap
 and restart your MCP server or background dashboard to load the new binary.
 
+## Unreleased
+
+- If a background dashboard cannot start, the terminal now gives the known
+  cause and full web.log path. Tailscale sign-in failures, a busy local port,
+  another Serve mapping and Funnel no longer produce only “inspect web.log”.
+- `nuntius web status` shows the running dashboard version and warns if it
+  differs from the current CLI. A dashboard started by an older version may
+  report its version as unknown. This command does not restart anything.
+- Signed-out dashboard tabs, including Settings, show one clear sign-in panel.
+  Open the link from `nuntius web link` or iMessage to sign in.
+- Background-start test fixtures now always stop and reap their dashboard
+  children, including when startup fails before the dashboard records its state.
+
 ## v0.3.3 — 2026-10-11
 
 An unreadable or replaced Queue file now leaves the operational dashboard,

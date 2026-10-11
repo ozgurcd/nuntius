@@ -141,6 +141,11 @@ match the request's local origin, or the exact opted-in HTTPS origin below. `/da
 `X-Nuntius-Token` header; a query parameter cannot authenticate an API.
 Actions accept only POST.
 
+Every signed-out tab, including Settings, shows one sign-in panel instead of
+private content, editable forms or connection controls. Open the link from
+`nuntius web link` or iMessage to sign in. Tab navigation does not request
+private data while signed out; expiry and revocation return to the same panel.
+
 Use **Sign out** in the top bar to forget sign-in in this browser and clear
 the displayed private data and drafts. Other open tabs at this origin also
 sign out. This does not stop agent runs or revoke the link on other devices.
@@ -173,6 +178,11 @@ the per-user launchd job `gui/<uid>/nuntius.web`, with no RunAtLoad or KeepAlive
 and your inherited umask. On Linux it starts a detached session with a private
 `web.pid` in the data directory. Standard input is closed; stdout/stderr go to
 the private `web.log`, which never receives the sign-in link or QR.
+If startup fails, the terminal prints the known cause and full log path
+(by default `~/Library/Application Support/nuntius/web.log` on macOS).
+Diagnostics distinguish a missing/disconnected Tailscale CLI, unavailable
+status, an occupied local port, a conflicting Serve mapping and enabled Funnel.
+The parent receives only a known failure code; it does not copy log contents.
 An existing dashboard is left running; use `web start --replace` to restart it.
 
 ```sh
@@ -183,8 +193,12 @@ nuntius web stop
 ```
 
 `status` and `status --long` show the same credential-free dashboard line:
-running state, start time, PID/job, port, tailnet host, Serve mode and last
-iMessage result. `link` displays the current link and QR again; `--notify`
+running state and dashboard version, start time, PID/job, port, tailnet host,
+Serve mode and last iMessage result. A version mismatch warns with the current
+CLI version. An older dashboard record shows `version=unknown` and a warning;
+the installed CLI cannot infer the version of that already running process.
+Status does not restart or upgrade anything.
+`link` displays the current link and QR again; `--notify`
 resends to the handle used at start. `stop` sends a clean shutdown, removes
 the job and private access files, and succeeds when nothing is running.
 It does not stop agent runs. Plain `nuntius web` keeps foreground behaviour.

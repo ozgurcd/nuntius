@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Return known background dashboard startup causes and the full web.log path;
+  distinguish Tailscale connection/CLI/status failures, busy local ports,
+  conflicting Serve mappings and Funnel. Persist only allowlisted failure codes,
+  not captured output, and clear stale startup results before a new launch.
+- Record the running dashboard version and show it in web status/status --long;
+  warn when it differs from the CLI version or an older record lacks a version.
+- Show one shared signed-out panel on every dashboard tab, including Settings;
+  hide private forms and connection controls until sign-in. Keep immediate
+  sign-out, expiry, revocation and late-response guards covered offline.
+- Supervise test dashboards with compiled offline fixtures, unconditional
+  cleanup and explicit child reaping, including partial startup failures.
+
 ## v0.3.3 — 2026-10-11
 
 - Stabilize Settings conflict tests by stopping unused fixture status workers;
