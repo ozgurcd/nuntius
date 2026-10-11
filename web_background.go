@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 
 var webPlatform = runtime.GOOS
 var webExecutable = os.Executable
+var webVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$`)
 
 type webAccess struct {
 	Token        string `json:"token"`
@@ -311,7 +313,14 @@ func webStatusLine(state *webState) string {
 		job = "detached/foreground"
 	}
 	_, port, _ := net.SplitHostPort(state.Address)
-	return fmt.Sprintf("web: running since=%s pid=%d job=%s port=%s tailnet=%s serve=%s imessage=%s", state.Started.Format(time.RFC3339), state.PID, cell(job), port, webHost(state.Host), cell(state.Serve), cell(state.IMessage))
+	version, warning := state.Version, ""
+	if !webVersionPattern.MatchString(version) {
+		version = "unknown"
+		warning = "; warning: running version unavailable; installed=" + Version
+	} else if version != Version {
+		warning = "; warning: dashboard version differs from installed=" + Version
+	}
+	return fmt.Sprintf("web: running version=%s since=%s pid=%d job=%s port=%s tailnet=%s serve=%s imessage=%s%s", version, state.Started.Format(time.RFC3339), state.PID, cell(job), port, webHost(state.Host), cell(state.Serve), cell(state.IMessage), warning)
 }
 
 func (m *Manager) startWeb(ctx context.Context, args []string) (result error) {

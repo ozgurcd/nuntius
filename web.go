@@ -497,7 +497,7 @@ func (w *Web) Run(ctx context.Context, out, errOut io.Writer) error {
 	if e != nil {
 		return errors.New("cannot record dashboard identity")
 	}
-	state := webState{PID: os.Getpid(), ProcessStart: start, Host: w.allowHost, Serve: serve, Started: time.Now().UTC(), Address: w.address, Job: w.job, IMessage: message}
+	state := webState{Version: Version, PID: os.Getpid(), ProcessStart: start, Host: w.allowHost, Serve: serve, Started: time.Now().UTC(), Address: w.address, Job: w.job, IMessage: message}
 	defer func() { _ = w.manager.clearWebFiles() }()
 	if w.background {
 		if e = saveWebFile(filepath.Join(w.manager.store, "web-access.json"), webAccess{Token: w.token, Notify: w.notify, PID: state.PID, ProcessStart: start}); e != nil {

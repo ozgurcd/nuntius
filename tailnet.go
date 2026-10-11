@@ -260,6 +260,7 @@ func sendIMessage(ctx context.Context, handle, text string) error {
 // webState records a live tailnet dashboard for status --long. It never holds
 // the sign-in credential.
 type webState struct {
+	Version      string    `json:"version,omitempty"`
 	PID          int       `json:"pid"`
 	ProcessStart string    `json:"process_start"`
 	Host         string    `json:"tailnet_host"`
