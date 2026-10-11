@@ -122,6 +122,15 @@ func fakeOsascript() {
 }
 
 func main() {
+	if os.Getenv("NUNTIUS_FIXTURE_WEB_BINARY") != "" && len(os.Args) > 1 &&
+		(os.Args[1] == "__fixture_web" || os.Args[1] == "__nuntius_web_exec" || os.Args[1] == "--config") {
+		args := os.Args[1:]
+		if args[0] == "__fixture_web" {
+			args = args[1:]
+		}
+		fixtureWeb(args)
+		return
+	}
 	// Invoked through a symlink named like the real program, the fixture stands
 	// in for the Tailscale CLI or osascript. It never contacts either.
 	switch filepath.Base(os.Args[0]) {
@@ -213,6 +222,47 @@ func main() {
 	}
 	if strings.Contains(mode, "exit-seven") {
 		os.Exit(7)
+	}
+}
+
+// This fixture, unlike launchd, must explicitly reap the child it starts.
+// A stop file works even before the dashboard has saved its process identity.
+// The watchdog also bounds orphan lifetime if the test runner crashes.
+func fixtureWeb(args []string) {
+	dir := os.Getenv("NUNTIUS_FIXTURE_WEB_DIR")
+	name := filepath.Join(dir, strconv.Itoa(os.Getpid()))
+	if os.WriteFile(name+".started", nil, 0600) != nil {
+		return
+	}
+	defer func() { _ = os.WriteFile(name+".reaped", nil, 0600) }()
+	cmd := exec.Command(os.Getenv("NUNTIUS_FIXTURE_WEB_BINARY"), args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if cmd.Start() != nil {
+		return
+	}
+	_ = os.WriteFile(name+".pid", []byte(strconv.Itoa(cmd.Process.Pid)), 0600)
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(2 * time.Minute)
+	defer deadline.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-deadline.C:
+			_ = cmd.Process.Kill()
+			<-done
+			return
+		case <-ticker.C:
+			if _, err := os.Stat(filepath.Join(dir, "stop")); err == nil {
+				_ = cmd.Process.Kill()
+				<-done
+				return
+			}
+		}
 	}
 }
 
@@ -315,9 +365,22 @@ func fakeLaunchctl() {
 		if cmd.Start() != nil {
 			os.Exit(1)
 		}
-		_ = os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)), 0600)
-		fmt.Println(cmd.Process.Pid)
+		pid := strconv.Itoa(cmd.Process.Pid)
+		if dir := os.Getenv("NUNTIUS_FIXTURE_WEB_DIR"); dir != "" {
+			for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+				if b, err := os.ReadFile(filepath.Join(dir, pid+".pid")); err == nil && len(b) > 0 {
+					pid = string(b)
+					break
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}
+		_ = os.WriteFile(pidPath, []byte(pid), 0600)
+		fmt.Println(pid)
 		_ = cmd.Process.Release()
+		if _, err := os.Stat(filepath.Join(dir, "kickstart-after-start-fail")); err == nil {
+			os.Exit(1)
+		}
 	case "print":
 		if _, err := os.Stat(path); err != nil {
 			os.Exit(113)

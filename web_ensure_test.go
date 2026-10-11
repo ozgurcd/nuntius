@@ -606,7 +606,7 @@ func TestWebEnsureNativeBackground(t *testing.T) {
 	t.Setenv("NUNTIUS_FAKE_LAUNCHCTL", dir)
 	previousOS, previousExe := webPlatform, webExecutable
 	webPlatform = "darwin"
-	webExecutable = func() (string, error) { return cliBinary, nil }
+	webExecutable = func() (string, error) { return fakeBinary, nil }
 	t.Cleanup(func() {
 		var output bytes.Buffer
 		_ = m.webCommand(context.Background(), []string{"stop"}, &output, &output)
@@ -624,7 +624,7 @@ func TestWebEnsureNativeBackground(t *testing.T) {
 	}
 	r := ensureCall(t, m)
 	if r.Reason != "ready" || r.Operation != "started" || !r.SignIn {
-		t.Fatal("native fake-only start unavailable")
+		t.Fatalf("native fake-only start unavailable: %s", r.Reason)
 	}
 	state := m.webDashboard()
 	if state == nil {

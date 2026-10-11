@@ -115,7 +115,7 @@ func TestBackgroundWebLifecycle(t *testing.T) {
 			t.Setenv("NUNTIUS_FAKE_LAUNCHCTL", dir)
 			prevOS, prevExe := webPlatform, webExecutable
 			webPlatform = platform
-			webExecutable = func() (string, error) { return cliBinary, nil }
+			webExecutable = func() (string, error) { return fakeBinary, nil }
 			t.Cleanup(func() { webPlatform, webExecutable = prevOS, prevExe })
 			call := func(args ...string) (int, string) {
 				var out, errs bytes.Buffer
@@ -239,7 +239,7 @@ func TestBackgroundServeCleanupFailure(t *testing.T) {
 	dir := fakeTailscale(t, fixtureTailnetStatus)
 	prevOS, prevExe := webPlatform, webExecutable
 	webPlatform = "linux"
-	webExecutable = func() (string, error) { return cliBinary, nil }
+	webExecutable = func() (string, error) { return fakeBinary, nil }
 	defer func() { webPlatform, webExecutable = prevOS, prevExe }()
 	var out, errs bytes.Buffer
 	if CLI(context.Background(), []string{"web", "start", "--bind", "127.0.0.1:0", "--tailnet"}, strings.NewReader(""), &out, &errs) != 0 {
@@ -301,7 +301,7 @@ func TestBackgroundStartFailureCleanup(t *testing.T) {
 	t.Setenv("NUNTIUS_FAKE_LAUNCHCTL", dir)
 	prevOS, prevExe := webPlatform, webExecutable
 	webPlatform = "darwin"
-	webExecutable = func() (string, error) { return cliBinary, nil }
+	webExecutable = func() (string, error) { return fakeBinary, nil }
 	defer func() { webPlatform, webExecutable = prevOS, prevExe }()
 	if os.WriteFile(filepath.Join(dir, "kickstart-fail"), nil, 0600) != nil {
 		t.Fatal("fixture setup")
@@ -316,4 +316,5 @@ func TestBackgroundStartFailureCleanup(t *testing.T) {
 	if m.webDashboard() != nil || strings.Contains(out.String(), "?token=") {
 		t.Fatal("failed launch left access")
 	}
+	cleanupFixtureWeb(t, filepath.Join(store, "web-fixture"))
 }

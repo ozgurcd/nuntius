@@ -47,6 +47,13 @@ func cliFixture(t *testing.T, c Config, store string) {
 	}
 	t.Setenv("NUNTIUS_CONFIG", path)
 	t.Setenv("NUNTIUS_DATA_DIR", store)
+	dir := filepath.Join(store, "web-fixture")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal("fixture process directory")
+	}
+	t.Setenv("NUNTIUS_FIXTURE_WEB_BINARY", cliBinary)
+	t.Setenv("NUNTIUS_FIXTURE_WEB_DIR", dir)
+	t.Cleanup(func() { cleanupFixtureWeb(t, dir) })
 }
 
 func historyRows(t *testing.T, v any) []map[string]any {
