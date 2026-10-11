@@ -1,6 +1,7 @@
 package nuntius
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/hex"
@@ -193,10 +194,7 @@ func (m *Manager) consumeReviewedMessage(dir *os.File, receipt messageReceipt, o
 	if err := writeMessageReceipt(dir, receipt, ops); err != nil {
 		return err
 	}
-	if err := m.auditReviewedMessage(h, "held_message_send", "consumed", receipt.ChildID, ops); err != nil {
-		return err
-	}
-	if err := cleanReviewedMessage(dir); err != nil {
+	if err := m.finishReviewedMessage(dir, receipt, ops); err != nil {
 		return err
 	}
 	return laneControlCheckpoint(ops, "review-after-consume")
@@ -208,7 +206,95 @@ func (m *Manager) auditReviewedMessage(h heldMessage, tool, result, childID stri
 		return err
 	}
 	defer root.Close()
+	if result != "intent" {
+		found, err := recordedReviewedMessageAudit(root, h, tool, result, childID, ops)
+		if err != nil || found {
+			return err
+		}
+	}
 	return appendLaneControlRow(root, map[string]any{"time": time.Now().UTC(), "tool": tool, "lane": h.Lane, "goal_id": h.GoalID, "sha256": h.ContentSHA256, "result": result, "reason": childID, "run_id": h.RunID, "origin": h.Origin, "message_revision": h.Revision}, ops, "review-audit-"+result)
+}
+
+// The common control lock serializes reviewed-message writers. The audit lock
+// also excludes other audit appends while inspecting and confirming an outcome.
+// A visible row after a failed sync is reused only after both syncs succeed.
+func recordedReviewedMessageAudit(root *os.File, h heldMessage, tool, result, childID string, ops *laneControlIO) (bool, error) {
+	fd, err := unix.Openat(int(root.Fd()), "audit.jsonl", unix.O_RDWR|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return false, errLaneControlUnavailable
+	}
+	f := os.NewFile(uintptr(fd), "reviewed-message-audit")
+	defer f.Close()
+	if err = checkLaneControlFile(fd); err != nil {
+		return false, err
+	}
+	if err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		return false, errLaneControlUnavailable
+	}
+	defer unix.Flock(fd, unix.LOCK_UN)
+	var st unix.Stat_t
+	if err = unix.Fstat(fd, &st); err != nil {
+		return false, errLaneControlUnavailable
+	}
+	if st.Size > 0 {
+		var last [1]byte
+		if n, e := f.ReadAt(last[:], st.Size-1); e != nil || n != 1 || last[0] != '\n' {
+			return false, errLaneControlUnavailable
+		}
+	}
+	found := false
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 4096), 65536)
+	for scanner.Scan() {
+		var row struct {
+			Tool, Result, Lane, Reason, Origin string
+			RunID                              string `json:"run_id"`
+			GoalID                             string `json:"goal_id"`
+			SHA256                             string `json:"sha256"`
+			Revision                           uint64 `json:"message_revision"`
+		}
+		if json.Unmarshal(scanner.Bytes(), &row) != nil {
+			return false, errLaneControlUnavailable
+		}
+		if row.Tool == tool && row.Result == result && row.Lane == h.Lane && row.RunID == h.RunID && row.GoalID == h.GoalID && row.SHA256 == h.ContentSHA256 && row.Revision == h.Revision && row.Origin == h.Origin && row.Reason == childID {
+			found = true
+		}
+	}
+	if scanner.Err() != nil {
+		return false, errLaneControlUnavailable
+	}
+	if !found {
+		return false, nil
+	}
+	stage := "review-audit-" + result
+	if err = laneControlCheckpoint(ops, stage+".fsync"); err != nil {
+		return false, err
+	}
+	if err = f.Sync(); err != nil {
+		return false, err
+	}
+	if err = laneControlCheckpoint(ops, stage+".dirsync"); err != nil {
+		return false, err
+	}
+	return true, root.Sync()
+}
+
+func (m *Manager) finishReviewedMessage(dir *os.File, receipt messageReceipt, ops *laneControlIO) error {
+	// A prior rename may be visible while its directory sync is still uncertain.
+	if err := dir.Sync(); err != nil {
+		return err
+	}
+	if receipt.Discarded || receipt.State == "discarded" {
+		if err := m.auditReviewedMessage(receipt.Binding, "held_message_discard", "discarded", receipt.ChildID, ops); err != nil {
+			return err
+		}
+	}
+	if receipt.State == "consumed" {
+		if err := m.auditReviewedMessage(receipt.Binding, "held_message_send", "consumed", receipt.ChildID, ops); err != nil {
+			return err
+		}
+	}
+	return cleanReviewedMessage(dir)
 }
 
 // Internal only: adapters must pass the exact reviewed reservation, never text.
@@ -236,7 +322,7 @@ func (m *Manager) sendHeld(h heldMessage, ops *laneControlIO) (string, error) {
 			if err = m.consumeReviewedMessage(dir, *receipt, ops); err != nil {
 				return "", err
 			}
-		} else if err = cleanReviewedMessage(dir); err != nil {
+		} else if err = m.finishReviewedMessage(dir, *receipt, ops); err != nil {
 			return "", err
 		}
 		return receipt.ChildID, nil
@@ -339,7 +425,7 @@ func (m *Manager) discardHeld(h heldMessage, ops *laneControlIO) error {
 	defer dir.Close()
 	if receipt != nil {
 		if receipt.Discarded || receipt.State == "discarded" {
-			return cleanReviewedMessage(dir)
+			return m.finishReviewedMessage(dir, *receipt, ops)
 		}
 		// Discard removes only the reviewed content. A possible child remains
 		// reserved until positive launch reconciliation; never infer cancellation.
@@ -350,10 +436,7 @@ func (m *Manager) discardHeld(h heldMessage, ops *laneControlIO) error {
 		if err = writeMessageReceipt(dir, *receipt, ops); err != nil {
 			return err
 		}
-		if err = m.auditReviewedMessage(h, "held_message_discard", "discarded", receipt.ChildID, ops); err != nil {
-			return err
-		}
-		return cleanReviewedMessage(dir)
+		return m.finishReviewedMessage(dir, *receipt, ops)
 	}
 	if err = m.auditReviewedMessage(h, "held_message_discard", "intent", "", ops); err != nil {
 		return err
@@ -361,10 +444,7 @@ func (m *Manager) discardHeld(h heldMessage, ops *laneControlIO) error {
 	if err = writeMessageReceipt(dir, messageReceipt{Version: 1, Binding: h, State: "discarded", Discarded: true}, ops); err != nil {
 		return err
 	}
-	if err = m.auditReviewedMessage(h, "held_message_discard", "discarded", "", ops); err != nil {
-		return err
-	}
-	return cleanReviewedMessage(dir)
+	return m.finishReviewedMessage(dir, messageReceipt{Version: 1, Binding: h, State: "discarded", Discarded: true}, ops)
 }
 
 // B and future adapters may reconcile evidence, never launch from this method.
@@ -386,7 +466,7 @@ func (m *Manager) reconcileHeld(h heldMessage, ops *laneControlIO) error {
 		return errors.New("held_message_not_launched")
 	}
 	if receipt.State != "reserved" {
-		return cleanReviewedMessage(dir)
+		return m.finishReviewedMessage(dir, *receipt, ops)
 	}
 	if !m.identifiedMessageChild(r, *receipt) {
 		return errors.New("held_message_launch_uncertain")
