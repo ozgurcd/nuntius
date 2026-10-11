@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep private event bodies out of cached and served activity when markers
+  are displaced, incomplete or uncertain; also guard terminal-message fallback.
+- Reduce busy dashboard CPU by reusing bounded parsed event windows and avoiding
+  repeated redaction scans; cancel and freeze still send stop signals immediately.
 - Reset the signed-out header to a neutral badge with no retained freeze colour,
   overview counts or refresh timestamps, including while reload or replies wait.
 - Clear the freeze badge tooltip/accessibility label and navigation counts

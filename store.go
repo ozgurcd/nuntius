@@ -240,6 +240,16 @@ func readWindow(p string, tail bool) ([]byte, error) {
 	}
 	if offset > 0 {
 		if i := bytes.IndexByte(b, '\n'); i >= 0 {
+			if _, e = f.Seek(0, io.SeekStart); e != nil {
+				return nil, errors.New("cannot seek events")
+			}
+			if !publicEventPrefix(f, offset+int64(i)+1) {
+				return []byte("[REDACTED]\n"), nil
+			}
+			after, err := f.Stat()
+			if err != nil || after.Size() != st.Size() || !after.ModTime().Equal(st.ModTime()) {
+				return []byte("[REDACTED]\n"), nil
+			}
 			b = b[i+1:]
 		} else {
 			return nil, nil

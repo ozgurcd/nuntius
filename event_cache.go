@@ -12,8 +12,7 @@ type eventWindowID struct {
 }
 
 type cachedAction struct {
-	event      actionEvent
-	begin, end bool
+	event actionEvent
 }
 
 type cachedEventLine struct {
@@ -69,11 +68,20 @@ func (m *Manager) eventWindow(runID string, b []byte, prefix bool) *parsedEventW
 		return w
 	}
 	lines := bytes.Split(b, []byte("\n"))
+	private := privateEventLines(b, lines)
 	w.lines = make(map[[32]byte]cachedEventLine, min(len(lines), 8192))
 	pending := map[string]actionEvent{}
-	privateBlock := false
 	var summaries []string
-	for _, line := range lines {
+	for i, line := range lines {
+		if private != nil && private[i] {
+			w.final = "[REDACTED]"
+			w.latest = actionEvent{Summary: "[REDACTED]"}
+			pending = map[string]actionEvent{}
+			if len(summaries) == 0 || summaries[len(summaries)-1] != "[REDACTED]" {
+				summaries = append(summaries, "[REDACTED]")
+			}
+			continue
+		}
 		hash := sha256.Sum256(line)
 		parsed, ok := w.lines[hash]
 		if !ok && old != nil {
@@ -84,39 +92,20 @@ func (m *Manager) eventWindow(runID string, b []byte, prefix bool) *parsedEventW
 			final, asked, hasFinal := questionEvent(line)
 			parsed.final, parsed.asked, parsed.hasFinal = bounded(final, 8192), asked, hasFinal
 			for _, a := range eventActions(line) {
-				begin := strings.Contains(a.Text, "-----BEGIN ") && strings.Contains(a.Text, "PRIVATE KEY-----")
-				end := strings.Contains(a.Text, "-----END ") && strings.Contains(a.Text, "PRIVATE KEY-----")
 				a.Text = ""
 				a.Summary = strings.Clone(a.Summary)
-				parsed.actions = append(parsed.actions, cachedAction{a, begin, end})
+				parsed.actions = append(parsed.actions, cachedAction{a})
 			}
 		}
-		cacheable := !privateBlock
 		w.asked = w.asked || parsed.asked
 		if parsed.hasFinal {
-			if privateBlock {
-				w.final = "[REDACTED]"
-			} else {
-				w.final = parsed.final
-			}
+			w.final = parsed.final
 		}
 		if parsed.activity != "-" {
 			w.activity = parsed.activity
 		}
 		for _, cached := range parsed.actions {
 			a := cached.event
-			if cached.begin {
-				cacheable = false
-				privateBlock = true
-				summaries = append(summaries, "[REDACTED]")
-				w.latest = actionEvent{Summary: "[REDACTED]", Key: a.Key, At: a.At}
-			}
-			if privateBlock {
-				if cached.end {
-					privateBlock = false
-				}
-				continue
-			}
 			if a.Started && a.Command && a.ID != "" {
 				pending[a.ID] = a
 			}
@@ -130,7 +119,7 @@ func (m *Manager) eventWindow(runID string, b []byte, prefix bool) *parsedEventW
 		}
 		// A private block can span JSON events. Individually parsed body lines
 		// have no marker of their own; never retain their text in the cache.
-		if cacheable && len(w.lines) < 8192 {
+		if len(w.lines) < 8192 {
 			w.lines[hash] = parsed
 		}
 	}

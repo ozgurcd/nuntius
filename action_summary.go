@@ -203,19 +203,14 @@ func stringField(v map[string]any, key string) string { s, _ := v[key].(string);
 
 func streamActions(b []byte) []actionEvent {
 	var out []actionEvent
-	privateBlock := false
-	for _, line := range bytes.Split(b, []byte("\n")) {
+	lines := bytes.Split(b, []byte("\n"))
+	private := privateEventLines(b, lines)
+	for i, line := range lines {
+		if private != nil && private[i] {
+			out = append(out, actionEvent{Summary: "[REDACTED]"})
+			continue
+		}
 		for _, a := range eventActions(line) {
-			if strings.Contains(a.Text, "-----BEGIN ") && strings.Contains(a.Text, "PRIVATE KEY-----") {
-				privateBlock = true
-				out = append(out, actionEvent{Summary: "[REDACTED]", Key: a.Key, At: a.At})
-			}
-			if privateBlock {
-				if strings.Contains(a.Text, "-----END ") && strings.Contains(a.Text, "PRIVATE KEY-----") {
-					privateBlock = false
-				}
-				continue
-			}
 			a.Text = ""
 			out = append(out, a)
 		}

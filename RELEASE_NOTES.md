@@ -7,6 +7,10 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Private event blocks stay hidden even when their markers are incomplete or
+  outside the visible activity window.
+- Busy dashboards use much less CPU while refreshing lane activity; cancel
+  and freeze still act immediately.
 - Signed-out headers use one neutral badge and clear overview counts and refresh
   timestamps, so the previous dispatch state stays private before reload finishes.
 - Sign-out, expiry, sign-out in another tab and server rejection immediately

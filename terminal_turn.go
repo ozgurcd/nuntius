@@ -46,6 +46,7 @@ func (m *Manager) terminalTurn(r Run) (bool, string) {
 	var read int64
 	active, stopped := false, false
 	final, session := "", ""
+	private := false
 	for {
 		line, err := reader.ReadSlice('\n')
 		if err == io.EOF && len(line) == 0 {
@@ -55,6 +56,8 @@ func (m *Manager) terminalTurn(r Run) (bool, string) {
 			return false, ""
 		}
 		read += int64(len(line))
+		begin, end, uncertain := privateEventMarkers(line)
+		private = private || begin || end || uncertain
 		if read > maxStream {
 			return false, ""
 		}
@@ -95,7 +98,11 @@ func (m *Manager) terminalTurn(r Run) (bool, string) {
 				return false, ""
 			}
 			if v.Type == "text" && active {
-				final = terminalMessage(v.Part.Text)
+				if private {
+					final = "[REDACTED]"
+				} else {
+					final = terminalMessage(v.Part.Text)
+				}
 			}
 		default:
 			return false, ""
