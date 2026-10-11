@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Bound dashboard, Queue and Settings GETs to ten seconds through body decoding;
+  explicitly settle timeouts, abort obsolete reads and discard superseded replies.
+  Refresh immediately on visible/focus/pageshow, preserve Settings drafts and
+  show last-success age after failed reads. Never retry mutation requests.
+
 ## v0.3.4 — 2026-10-11
 
 - Keep recognizable private blocks in agent output out of cached and served

@@ -18,11 +18,21 @@ Queue reads once on entry and every ten seconds while visible and signed in,
 independently of the two-second operational poll. Filters, focus and expanded
 details remain in memory through refreshes. Snapshot publication time and last
 successful fetch time are separate. Failed refreshes show the last valid queue
-with a Last known queue banner. Snapshots older than fifteen minutes show an
+with a Last known queue banner and the age of the last successful read. Snapshots older than fifteen minutes show an
 old-snapshot warning. Missing default, disabled, missing override, invalid data,
 published-empty and no-match states are distinguished. Sign-out, expiry and
 cross-tab changes clear queue data; late responses cannot restore it. No queue
 data or filters enter browser storage.
+
+Dashboard, Queue and Settings reads have a ten-second client deadline covering
+both the request and JSON decoding. A stalled read cannot block later polls.
+Returning to a visible tab, focusing the window or restoring the page from
+browser history refreshes operational data and the selected polled tab at once.
+Events in the same turn share one refresh. New reads replace obsolete ones;
+older replies and failures cannot overwrite the latest result. Sign-out,
+expiry and leaving the page abort pending reads. Browser suspension can delay
+timers; returning to the page starts a fresh read. Mutation requests are never
+retried automatically.
 
 Any coordinator can publish the [portable snapshot format](queue-format.md).
 The local owner selects `queue_file`; the dashboard never exposes or edits it.
@@ -41,8 +51,9 @@ Save validates every field and busy/surviving agents before one atomic private
 config write. Busy shrink refuses the entire batch. New runs use new settings;
 running agents and historical launch identities keep theirs. Cancel restores
 the last received values. Drafts stay in memory across tabs and operational
-polling; they are never saved in browser storage. Re-entry/focus refreshes use
-at most one read per ten seconds. Reload updates current values but keeps a
+polling; they are never saved in browser storage. Visible Settings polls every
+ten seconds. Re-entry uses the same cadence; foreground restoration and Reload
+refresh immediately. Reload updates current values but keeps a
 draft for review. A stale revision cannot overwrite another tab or CLI change.
 
 Runtime, resume, desktop notification, paths, models/effort, lane identities,

@@ -29,6 +29,7 @@ if (!token) {
 function signOut(removeStored = true) {
   if (!token) return;
   token = ''; expiresAt = 0; authEpoch++;
+  cancelDashboardReads();
   clearSettings();
   clearQueue();
   signedOutView();
@@ -64,11 +65,66 @@ let laneSelection = '';
 const settingsKinds = ['claude', 'codex', 'opencode'];
 let settingsCurrent = null, settingsDraft = null, settingsLoading = false, settingsSaving = false;
 let settingsReadAt = 0, settingsConfirmed = false;
+let settingsFetched = 0;
 let settingsRetry = null;
 let settingsErrors = {};
 let settingsReadonlyID = 0;
 let queueData = null, queueFetched = 0, queueLoading = false, queueFailure = '';
 const queueRows = new Map();
+// Snapshot GETs only. Event streams and mutation POSTs have separate lifetimes.
+// Explicit settlement also handles a transport that fails to honor abort.
+const dashboardReadDeadline = 10000;
+const dashboardReads = new Map();
+let dashboardReadID = 0, pageActive = true, foregroundQueued = false;
+function beginDashboardRead(path, replace = false) {
+  const previous = dashboardReads.get(path);
+  if (previous && !replace) return null;
+  if (previous) previous.cancel();
+  const controller = new AbortController(), epoch = authEpoch;
+  let rejectRead;
+  const cancelled = new Promise((_, reject) => { rejectRead = reject; });
+  const request = {
+    id: ++dashboardReadID, epoch, controller,
+    current: () => dashboardReads.get(path) === request && epoch === authEpoch && authenticated(),
+    cancel: () => { controller.abort(); rejectRead(new Error('read cancelled')); },
+    json: async () => {
+      const timer = setTimeout(request.cancel, dashboardReadDeadline);
+      try {
+        return await Promise.race([cancelled, (async () => {
+          const response = await fetch(path, {headers:{'X-Nuntius-Token':token}, cache:'no-store', signal:controller.signal});
+          // Revocation does not require a decodable body.
+          const data = response.status === 403 ? null : await response.json();
+          return {response, data};
+        })()]);
+      } finally { clearTimeout(timer); }
+    },
+    finish: () => {
+      if (dashboardReads.get(path) !== request) return false;
+      dashboardReads.delete(path); return true;
+    }
+  };
+  dashboardReads.set(path, request);
+  return request;
+}
+function cancelDashboardReads() {
+  for (const request of dashboardReads.values()) request.cancel();
+  dashboardReads.clear();
+  refreshing = false; queueLoading = false; settingsLoading = false;
+  clearTimeout(settingsRetry); settingsRetry = null;
+}
+function foregroundRefresh() {
+  if (document.hidden) return;
+  pageActive = true;
+  if (foregroundQueued) return;
+  foregroundQueued = true;
+  Promise.resolve().then(() => {
+    foregroundQueued = false;
+    if (!pageActive || document.hidden || !authenticated()) return;
+    refresh(true);
+    if (!el('queue').hidden) loadQueue(true);
+    if (!el('settings').hidden) loadSettings(true);
+  });
+}
 const auditReadsKey = 'nuntius.web.audit.showReads';
 try {
   el('auditReads').checked = localStorage.getItem(auditReadsKey) === 'true';
@@ -513,21 +569,20 @@ function renderPanels(d, shown = '') {
 // The placeholder tbody is removed once; the table head is never reconciled.
 el('history').remove();
 el('laneHistoryPlaceholder').remove();
-async function refresh() {
+async function refresh(replace = false) {
   if (!authenticated()) {
     signedOutView();
     return;
   }
-  if (refreshing || acting || document.hidden) return;
+  if (acting || document.hidden || !pageActive) return;
+  const request = beginDashboardRead('/data', replace);
+  if (!request) return;
   refreshing = true;
-  const epoch = authEpoch;
   try {
-    const response = await fetch('/data', {headers: {'X-Nuntius-Token': token}, cache: 'no-store'});
-    if (epoch !== authEpoch || !authenticated()) return;
+    const {response, data:d} = await request.json();
+    if (!request.current()) return;
     if (response.status === 403) { signOut(); return; }
     if (!response.ok) throw new Error('unavailable');
-    const d = await response.json();
-    if (epoch !== authEpoch || !authenticated()) return;
     render(d);
     lastUpdate = Date.now();
     setText(el('lastRefresh'), 'Last refresh ' + new Date(lastUpdate).toLocaleTimeString());
@@ -536,10 +591,10 @@ async function refresh() {
     el('updated').title = el('lastRefresh').title;
     el('error').hidden = true;
   } catch {
-    if (epoch !== authEpoch || !authenticated()) return;
+    if (!request.current()) return;
     setText(el('error'), 'Unable to refresh dashboard. Showing the last received data. Retrying every 2 seconds.');
     el('error').hidden = false;
-  } finally { refreshing = false; }
+  } finally { if (request.finish()) refreshing = false; }
 }
 function signedOutView() {
   for (const tab of tabs) el(tab.getAttribute('aria-controls')).hidden = true;
@@ -604,8 +659,10 @@ el('auditReads').addEventListener('change', () => {
   filterAudit();
 });
 el('followTail').addEventListener('change', () => { if (lastData) renderLane(lastData); });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); if (!el('settings').hidden) loadSettings(); } });
-window.addEventListener('focus', () => { if (!el('settings').hidden) loadSettings(); });
+document.addEventListener('visibilitychange', foregroundRefresh);
+window.addEventListener('focus', foregroundRefresh);
+window.addEventListener('pageshow', foregroundRefresh);
+window.addEventListener('pagehide', () => { pageActive = false; cancelDashboardReads(); settingsUpdate(); });
 window.addEventListener('beforeunload', event => { if (token && settingsDiff().length) { event.preventDefault(); event.returnValue = ''; } });
 
 function settingsDiff() {
@@ -688,21 +745,24 @@ function settingsReadOnlyView(c) {
 function settingsFailure(code) {
   return {locked:'Settings busy, retrying. Your draft is kept.',configuration_unavailable:'Settings configuration source is unavailable. Run nuntius config check locally, then reload current values. Your draft is kept.',invalid_configuration:'Settings configuration is invalid or unreadable. Run nuntius config check locally, then reload current values. Your draft is kept.',rate_limited:'Too many settings requests. Wait briefly, then reload current values. Your draft is kept.'}[code] || 'Settings unavailable. Your draft is kept. Reload current values before saving.';
 }
+function settingsReadFailure(text) {
+  settingsBanner(text + (settingsFetched ? ' Last updated ' + Math.floor((Date.now()-settingsFetched)/1000) + 's ago.' : ''), true);
+}
 async function loadSettings(force = false, retry = 0) {
-  if (!authenticated() || settingsLoading || settingsSaving || (!force && settingsReadAt && Date.now() - settingsReadAt < 10000)) return;
+  if (!authenticated() || document.hidden || !pageActive || settingsSaving || (!force && settingsReadAt && Date.now() - settingsReadAt < 10000)) return;
+  const request = beginDashboardRead('/settings', force);
+  if (!request) return;
   clearTimeout(settingsRetry); settingsRetry = null;
   settingsLoading = true; settingsReadAt = Date.now(); const epoch = authEpoch;
   settingsUpdate();
   try {
-    const response = await fetch('/settings',{headers:{'X-Nuntius-Token':token},cache:'no-store'});
-    if (epoch !== authEpoch || !authenticated()) return;
+    const {response, data:c} = await request.json();
+    if (!request.current()) return;
     if (response.status === 403) { signOut(); return; }
-    const c = await response.json();
-    if (epoch !== authEpoch || !authenticated()) return;
     if (!response.ok) {
       settingsConfirmed = false;
       const again = c.code === 'locked' && retry < 3;
-      settingsBanner(c.code === 'locked' && !again ? 'Settings busy. Reload current values to retry. Your draft is kept.' : settingsFailure(c.code), true);
+      settingsReadFailure(c.code === 'locked' && !again ? 'Settings busy. Reload current values to retry. Your draft is kept.' : settingsFailure(c.code));
       if (again) settingsRetry = setTimeout(() => {
         if (epoch !== authEpoch || !authenticated()) return;
         settingsRetry = null;
@@ -712,14 +772,14 @@ async function loadSettings(force = false, retry = 0) {
       return;
     }
     const dirty = settingsDiff().length > 0;
-    settingsCurrent = c; settingsConfirmed = true; settingsReadOnlyView(c);
+    settingsCurrent = c; settingsConfirmed = true; settingsFetched = Date.now(); settingsReadOnlyView(c);
     if (!dirty) settingsResetDraft();
     settingsBanner(dirty ? 'Current values refreshed. Your draft is kept; review it before saving.' : '');
   } catch {
-    if (epoch !== authEpoch || !authenticated()) return;
+    if (!request.current()) return;
     settingsConfirmed = false;
-    settingsBanner(settingsFailure('settings_unavailable'),true);
-  } finally { if (epoch === authEpoch) { settingsLoading=false; settingsUpdate(); } }
+    settingsReadFailure(settingsFailure('settings_unavailable'));
+  } finally { if (request.finish()) { settingsLoading=false; settingsUpdate(); } }
 }
 async function saveSettings(event) {
   event?.preventDefault(); if (!authenticated()) return;
@@ -751,7 +811,7 @@ async function saveSettings(event) {
 }
 function clearSettings() {
   clearTimeout(settingsRetry); settingsRetry = null;
-  settingsCurrent=null; settingsDraft=null; settingsConfirmed=false; settingsLoading=false; settingsSaving=false; settingsReadAt=0;
+  settingsCurrent=null; settingsDraft=null; settingsConfirmed=false; settingsLoading=false; settingsSaving=false; settingsReadAt=0; settingsFetched=0;
   settingsErrors={};
   for (const k of settingsKinds) { el('setting-'+k).value=''; settingsFieldError(k,''); }
   el('setting-notify').checked=false; settingsFieldError('notify','');
@@ -771,7 +831,7 @@ if (!token) clearQueue();
 selectTab(location.hash.slice(1), false, false);
 refresh();
 setInterval(refresh, 2000);
-setInterval(loadQueue, 10000);
+setInterval(() => { loadQueue(); if (!el('settings').hidden) loadSettings(); }, 10000);
 
 function clearQueue() {
   queueData=null; queueFetched=0; queueFailure=''; queueRows.clear();
@@ -811,7 +871,7 @@ function renderQueue() {
   }
   setText(el('queueSnapshot'),'Coordinator snapshot '+queueData.updated+' · Last successful fetch '+new Date(queueFetched).toISOString());
   const old=Date.now()-Date.parse(queueData.updated)>15*60*1000;
-  if (queueFailure || old) {el('queueBanner').hidden=false;setText(el('queueBanner'),queueFailure?'Last known queue · refresh unavailable. These goals may have changed.':'Coordinator snapshot is old; check with the coordinator.');}
+  if (queueFailure || old) {el('queueBanner').hidden=false;setText(el('queueBanner'),queueFailure?'Last known queue · refresh unavailable. Last updated '+Math.floor((Date.now()-queueFetched)/1000)+'s ago. These goals may have changed.':'Coordinator snapshot is old; check with the coordinator.');}
   fillFilter(el('queueKind'),[...queueData.goals.flatMap(g=>g.lane_kinds),el('queueKind').value],'All kinds');
   const search=el('queueSearch').value.trim().toLowerCase(),kind=el('queueKind').value,state=el('queueState').value,owner=el('queueOwner').checked;
   const filtered=!!(search||kind||state||owner),items=queueData.goals.filter(g=>(!search||(g.id+' '+g.title).toLowerCase().includes(search))&&(!kind||g.lane_kinds.includes(kind))&&(!state||g.state===state)&&(!owner||g.needs_owner)).sort((a,b)=>a.order-b.order||(a.id<b.id?-1:a.id>b.id?1:0));
@@ -834,21 +894,22 @@ function renderQueue() {
   el('queueEmpty').hidden=true;el('queueTable').hidden=false;
   if(!items.length)queueEmpty(queueData.goals.length?'No matching goals':'No planned goals',queueData.goals.length?'Try another lane kind or state, or clear your filters.':'Running and finished work appears in Agents and History.');
 }
-async function loadQueue() {
-  if (!authenticated() || document.hidden || el('queue').hidden || queueLoading) return;
-  queueLoading=true;const epoch=authEpoch;
+async function loadQueue(replace = false) {
+  if (!authenticated() || document.hidden || !pageActive || el('queue').hidden) return;
+  const request = beginDashboardRead('/queue', replace);
+  if (!request) return;
+  queueLoading=true;
   try {
-    const response=await fetch('/queue',{headers:{'X-Nuntius-Token':token},cache:'no-store'});
-    if(epoch!==authEpoch||!authenticated())return;
+    const {response, data} = await request.json();
+    if(!request.current())return;
     if(response.status===403){signOut();return;}
-    const data=await response.json();if(epoch!==authEpoch||!authenticated())return;
     if(response.ok&&(data.status==='ok'||data.status==='disabled'||data.status==='not_configured')){
       queueData=data;queueFailure='';queueFetched=Date.now();
       if(data.status!=='ok'){queueRows.clear();el('queueRows').replaceChildren();}
     } else queueFailure=['missing','invalid','unavailable'].includes(data.status)?data.status:'unavailable';
     renderQueue();
-  } catch {if(epoch===authEpoch&&authenticated()){queueFailure='unavailable';renderQueue();}}
-  finally {queueLoading=false;}
+  } catch {if(request.current()){queueFailure='unavailable';renderQueue();}}
+  finally {if(request.finish())queueLoading=false;}
 }
 for(const id of ['queueSearch','queueKind','queueState','queueOwner'])el(id).addEventListener(id==='queueSearch'?'input':'change',renderQueue);
 el('queueReset').addEventListener('click',()=>{el('queueSearch').value='';el('queueKind').value='';el('queueState').value='';el('queueOwner').checked=false;renderQueue();});

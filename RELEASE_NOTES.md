@@ -5,6 +5,12 @@ User-facing changes and upgrade actions are listed newest first. See the
 restart an existing server. Choose when to upgrade through the Homebrew tap
 and restart your MCP server or background dashboard to load the new binary.
 
+## Unreleased
+
+- Queue counts recover from stalled connections without a reload. Returning
+  to the dashboard refreshes it immediately, including browser history restore.
+  Failed refreshes keep the last data and show its age; Settings drafts stay intact.
+
 ## v0.3.4 — 2026-10-11
 
 - Recognizable private blocks in agent output stay hidden in activity summaries,

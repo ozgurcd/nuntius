@@ -116,6 +116,144 @@ func TestDashboardRuntime(t *testing.T) {
 	}
 }
 
+func TestDashboardPollingRuntime(t *testing.T) {
+	for _, name := range []string{"fetch_deadline", "body_deadline", "foreground_visible", "foreground_focus", "foreground_pageshow", "ownership", "failure_age", "settings_draft", "read_cancellation", "settings_save_guard"} {
+		paths := []string{""}
+		if strings.Contains(name, "deadline") {
+			paths = []string{"/queue", "/data", "/settings"}
+		}
+		for _, path := range paths {
+			t.Run(name+"/"+strings.TrimPrefix(path, "/"), func(t *testing.T) {
+				assets := map[string]any{"test": name, "path": path}
+				for key, path := range map[string]string{"script": "app.js", "page": "index.html", "css": "app.css"} {
+					data, err := dashboardAssets.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					assets[key] = string(data)
+				}
+				data, err := os.ReadFile("testdata/dashboard-data.json")
+				if err != nil {
+					t.Fatal(err)
+				}
+				assets["data"] = json.RawMessage(data)
+				input, err := json.Marshal(assets)
+				if err != nil {
+					t.Fatal("cannot encode polling fixture")
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				// Share the existing offline DOM/transport harness, not its test sequence.
+				prefix := dashboardRuntimeTest[:strings.Index(dashboardRuntimeTest, "(async () => {")]
+				cmd := exec.CommandContext(ctx, "node", "-e", prefix+dashboardPollingTest)
+				cmd.Stdin = bytes.NewReader(input)
+				var diagnostic bytes.Buffer
+				cmd.Stderr = &diagnostic
+				if err := cmd.Run(); err != nil {
+					t.Fatalf("offline polling predicate failed: %v (%s)", err, diagnostic.String())
+				}
+			})
+		}
+	}
+}
+
+const dashboardPollingTest = `
+const deferred = () => { let resolve,reject; const promise=new Promise((a,b)=>{resolve=a;reject=b;}); return {promise,resolve,reject}; };
+const reply = (data,status=200) => ({ok:status===200,status,json:async()=>data});
+const read = (h,path,force=false) => vm.runInContext(path==='/data'?'refresh('+force+')':path==='/queue'?'loadQueue('+force+')':'loadSettings('+force+')',h.context);
+const poll = async h => { h.timers[1](); h.timers[2](); await settle(); };
+const expire = async (h,clock) => {
+  clock.now+=10000;
+  for(const [id,timer] of [...h.timeouts]) if(timer.delay===10000){h.timeouts.delete(id);timer.fn();}
+  await settle();
+};
+const make = async (tab='queue') => {const clock={now:Date.parse(queueExample.updated)+60000};const h=start('#'+tab,new Map(),'?token=fixture-auth',false,clock);await settle();return {h,clock};};
+(async()=>{
+  if(input.test==='fetch_deadline'||input.test==='body_deadline'){
+    for(const path of [input.path]){
+      const {h,clock}=await make(path==='/settings'?'settings':'queue'), pending=deferred(); let calls=0,signal;
+      const data=path==='/data'?input.data:path==='/queue'?{...queueExample,goals:[queueExample.goals[0]]}:exampleSettings;
+      h.context.fetch=async(target,options)=>{if(target!==path)return reply(input.data);calls++;signal=options.signal;return calls===1?(input.test==='body_deadline'?{ok:true,status:200,json:()=>pending.promise}:pending.promise):reply(data);};
+      read(h,path,true);await settle();await expire(h,clock);
+      check(signal?.aborted,'P01 deadline aborts '+path+' '+input.test);
+      await poll(h);if(path==='/settings')await read(h,path);await settle();
+      check(calls===2,'P02 next poll runs after uncooperative stall '+path);
+      if(path==='/queue')check(h.ids.queueTabCount.textContent==='1','P03 stalled Queue count recovers without reload');
+      pending.resolve(input.test==='body_deadline'?data:reply(data));await settle();
+    }
+  }
+  if(input.test.startsWith('foreground_')){
+    for(const tab of ['queue','settings']){
+      const {h}=await make(tab);const before=h.calls.length;
+      if(input.test==='foreground_visible'){h.doc.hidden=true;h.doc.visibilitychange();h.doc.hidden=false;h.doc.visibilitychange();}
+      if(input.test==='foreground_focus')h.win.focus();
+      if(input.test==='foreground_pageshow')h.win.pageshow?.({persisted:true});
+      await settle();
+      check(h.calls.length===before+2 && h.calls.slice(before).some(c=>c.path==='/'+tab),'P04 immediate foreground data and selected '+tab+' '+input.test);
+      h.win.focus();h.doc.visibilitychange();h.win.pageshow?.({persisted:true});await settle();
+      check(h.calls.length===before+4,'P05 one foreground burst coalesces to one read per endpoint');
+      h.doc.hidden=true;const count=h.calls.length;h.win.focus();h.win.pageshow?.({persisted:true});await settle();check(h.calls.length===count,'P06 hidden lifecycle skips reads');
+    }
+  }
+  if(input.test==='ownership'){
+    for(const path of ['/queue','/data','/settings'])for(const ending of ['response','body','error','403']){
+      const {h}=await make(path==='/settings'?'settings':'queue'),old=deferred(),newest=deferred();let calls=0;
+      const data=path==='/queue'?{...queueExample,goals:[queueExample.goals[0]]}:path==='/data'?{...input.data,lanes:[]}:exampleSettings;
+      h.context.fetch=async target=>{if(target!==path)return reply(input.data);calls++;if(calls===1)return ending==='body'?{ok:true,status:200,json:()=>old.promise}:old.promise;return newest.promise;};
+      read(h,path,true);await settle();h.win.focus();await settle();
+      check(calls===2,'P07 foreground supersedes pending '+path);
+      if(ending==='error')old.reject(new Error());else old.resolve(ending==='body'?data:reply(data,ending==='403'?403:200));await settle();
+      check(vm.runInContext('authenticated()',h.context),'P08 old rejection cannot sign out');
+      if(path==='/queue')check(h.ids.queueTabCount.textContent==='3' && h.ids.queueBanner.hidden,'P08 old Queue result or error cannot alter display');
+      if(path==='/data')check(Number(h.ids.runningCount.textContent)>0 && h.ids.error.hidden,'P08 old data result or error cannot alter display');
+      if(path==='/settings')check(vm.runInContext('settingsConfirmed',h.context) && h.ids.settingsBanner.hidden,'P08 old settings error cannot alter display');
+      check(vm.runInContext(path==='/queue'?'queueLoading':path==='/data'?'refreshing':'settingsLoading',h.context),'P09 old finally cannot release newer owner');
+      newest.resolve(reply(data));await settle();
+      if(path==='/queue')check(h.ids.queueTabCount.textContent==='1','P10 newest Queue owns count');
+      if(path==='/data')check(h.ids.runningCount.textContent==='0','P10 newest data owns header');
+      if(path==='/settings')check(vm.runInContext('settingsConfirmed',h.context),'P10 newest settings confirmed');
+      // A late body after the replacement has committed cannot roll it back.
+      const late=deferred();h.context.fetch=async target=>target===path?{ok:true,status:200,json:()=>late.promise}:reply(input.data);
+      read(h,path,true);await settle();h.context.fetch=async target=>reply(target===path?data:input.data);h.win.focus();await settle();late.resolve(path==='/queue'?queueExample:path==='/data'?input.data:{...exampleSettings,revision:'old'});await settle();
+      if(path==='/queue')check(h.ids.queueTabCount.textContent==='1','P11 out-of-order body ignored');
+      if(path==='/data')check(h.ids.runningCount.textContent==='0','P11 out-of-order data ignored');
+      if(path==='/settings')check(vm.runInContext('settingsCurrent.revision',h.context)==='example-revision','P11 out-of-order settings ignored');
+    }
+  }
+  if(input.test==='failure_age'){
+    const {h,clock}=await make();h.context.fetch=async()=>{throw new Error();};
+    for(let i=0;i<3;i++){clock.now+=10000;await read(h,'/queue');}
+    check(h.ids.queueTabCount.textContent==='3' && !h.ids.queueBanner.hidden && /30s ago/.test(h.ids.queueBanner.textContent),'P12 repeated failure shows last-success age');
+    h.context.fetch=async()=>reply(queueExample);await read(h,'/queue');check(h.ids.queueBanner.hidden,'P13 success clears stale status');
+    const s=await make('settings');s.clock.now+=30000;s.h.context.fetch=async()=>reply({code:'configuration_unavailable'},503);await read(s.h,'/settings',true);
+    check(/30s ago/.test(s.h.ids.settingsBanner.textContent),'P12 settings HTTP failure shows last-success age');
+  }
+  if(input.test==='settings_draft'){
+    const {h,clock}=await make('settings');h.ids['setting-codex'].value='3';h.ids['setting-codex'].listeners.input();const pending=deferred();
+    h.context.fetch=async target=>target==='/settings'?pending.promise:reply(input.data);read(h,'/settings',true);await settle();await expire(h,clock);
+    check(h.ids['setting-codex'].value==='3' && h.ids.settingsSave.disabled,'P14 timeout keeps draft and requires confirmed read');
+    h.context.fetch=async target=>reply(target==='/settings'?exampleSettings:input.data);h.win.focus();await settle();check(h.ids['setting-codex'].value==='3' && !h.ids.settingsSave.disabled,'P15 foreground confirms without dropping draft');
+  }
+  if(input.test==='read_cancellation'){
+    for(const path of ['/queue','/data','/settings'])for(const stage of ['fetch','body'])for(const ending of ['signout','expiry','pagehide']){
+      const {h,clock}=await make(path==='/settings'?'settings':'queue'),pending=deferred();let signal;
+      h.context.fetch=async(target,options)=>{signal=options.signal;return stage==='body'?{ok:true,status:200,json:()=>pending.promise}:pending.promise;};
+      read(h,path,true);await settle();if(ending==='signout')h.ids.signOut.click();else if(ending==='expiry'){clock.now+=7*24*60*60*1000;vm.runInContext('authenticated()',h.context);}else h.win.pagehide?.();await settle();
+      check(signal?.aborted,'P16 '+ending+' aborts '+path+' '+stage);
+      pending.resolve(stage==='body'?queueExample:reply(queueExample));await settle();
+      if(ending!=='pagehide')check(h.ids.queueTabCount.textContent==='—' && !vm.runInContext('authenticated()',h.context),'P17 late reply stays signed out');
+      else check(!vm.runInContext(path==='/queue'?'queueLoading':path==='/data'?'refreshing':'settingsLoading',h.context),'P17 pagehide releases request');
+    }
+  }
+  if(input.test==='settings_save_guard'){
+    const {h}=await make('settings');h.ids['setting-codex'].value='3';h.ids['setting-codex'].listeners.input();const pending=deferred();let posts=0,gets=0;
+    h.context.fetch=async(path,options)=>{if(options.method==='POST'){posts++;return pending.promise;}if(path==='/settings')gets++;return reply(input.data);};
+    const save=vm.runInContext('saveSettings()',h.context);await settle();h.win.focus();h.win.pageshow?.({persisted:true});await settle();await poll(h);
+    check(posts===1 && gets===0,'P18 no POST retry or read during save');pending.resolve(reply(exampleSettings));await save;
+  }
+})().catch(()=>{process.stderr.write(predicate);process.exitCode=1;});
+`
+
 const dashboardRuntimeTest = `
 const vm = require('node:vm');
 const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
@@ -173,10 +311,11 @@ function start(hash, store = new Map(), query = '', blocked = false, clock = {no
   const timeouts = new Map(); let timeoutID = 0;
   context.setTimeout = (fn, delay) => { const id = ++timeoutID; timeouts.set(id,{fn,delay}); return id; };
   context.clearTimeout = id => timeouts.delete(id);
+  context.AbortController = AbortController;
   vm.runInContext(input.script, context);
   return {context, ids, calls, timers, timeouts, doc, win, location, settingsControl,queueControl};
 }
-async function settle() { for (let i = 0; i < 16; i++) await Promise.resolve(); }
+async function settle() { for (let i = 0; i < 32; i++) await Promise.resolve(); }
 function rendered(h, id) {
   if (id === 'runs') return h.ids.runs.querySelectorAll('tbody').length === input.data.history.length;
   if (id === 'messages') return h.ids.notes.children.length === input.data.notes.length && h.ids.lane.options.length === input.data.lanes.length;
