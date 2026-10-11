@@ -1,6 +1,6 @@
 # Dashboard security notes
 
-## Dashboard Settings (Unreleased)
+## Dashboard Settings (v0.3.3)
 
 A valid dashboard grant now authorizes persistent pool-size and iMessage-enable
 changes. Anyone with that grant and network reachability, including a person
@@ -145,7 +145,7 @@ authenticated phone access remain outside local readiness guarantees. Tests
 use temporary stores, fake processes and compiled fake transports. A live
 owner phone pilot requires separate approval and never disrupts owner services
 as a proof technique.
-# Queue metadata (Unreleased)
+# Queue metadata (v0.3.3)
 
 The read-only Queue endpoint uses the existing Host/header-token/method/Origin
 guards and same-origin CSP. Browser queries cannot select files. Reads are

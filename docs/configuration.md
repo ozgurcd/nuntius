@@ -153,7 +153,7 @@ The dashboard Settings page uses the same Manager policy and private writer as
 these CLI setters. It can change existing pool sizes and this boolean only.
 Templates, recipients, paths and execution options remain local-only.
 
-`queue_file` (Unreleased) is local-only: omit it for `queue.json` under the
+`queue_file` (since v0.3.3) is local-only: omit it for `queue.json` under the
 resolved data directory, use an empty string to disable Queue, or supply a
 clean absolute regular-file path without symbolic links. An absent explicit
 file never falls back. Settings reports only default/configured/disabled;

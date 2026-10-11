@@ -1,4 +1,4 @@
-# Portable queue format v1 (Unreleased)
+# Portable queue format v1 (since v0.3.3)
 
 Any coordinator can publish a complete JSON snapshot. Nuntius displays the
 coordinator's plan; it does not approve, plan, resolve dependencies, execute
@@ -137,4 +137,4 @@ credentials, queries and fragments. The UI validates again and opens a link
 only on deliberate user action with noreferrer/noopener. Nuntius never fetches,
 previews, proxies or downloads briefs. No local brief route exists.
 
-See [dashboard behavior](dashboard.md#queue-unreleased) and [security](security.md).
+See [dashboard behavior](dashboard.md#queue-since-v033) and [security](security.md).

@@ -1,6 +1,6 @@
 ## Local oversight dashboard
 
-### Queue (Unreleased)
+### Queue (since v0.3.3)
 
 Open **Queue** or bookmark `/#queue` after signing in. It displays planned
 goals in coordinator order, with size, eligible lane kinds, preferred lane,
@@ -27,7 +27,7 @@ data or filters enter browser storage.
 Any coordinator can publish the [portable snapshot format](queue-format.md).
 The local owner selects `queue_file`; the dashboard never exposes or edits it.
 
-### Settings (Unreleased)
+### Settings (since v0.3.3)
 
 Open **Settings** or bookmark `/#settings` after signing in. Pool sizes for
 Claude, Codex and OpenCode accept whole numbers 0–8; zero disables an existing
@@ -63,7 +63,7 @@ Sign out stays usable during Save, clears private settings/drafts immediately,
 and ignores late responses. Expiry and cross-tab sign-out do the same.
 Failures preserve drafts. An unconfirmed save or committed-audit failure asks
 you to reload current values before retrying; never assume a rollback.
-See [the persistent-write threat model and audit limits](security.md#dashboard-settings-unreleased).
+See [the persistent-write threat model and audit limits](security.md#dashboard-settings-v033).
 
 ### Judge-only dashboard recovery
 

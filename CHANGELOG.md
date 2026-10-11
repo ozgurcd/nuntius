@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.3.3 — 2026-10-11
+
+- Stabilize Settings conflict tests by stopping unused fixture status workers;
+  preserve stale-revision and lock-refusal assertions, with additional content
+  identity and locked stale-request controls. Runtime behavior is unchanged.
 
 - Keep optional Queue file failures out of configuration reloads, so operational
   dashboard data, dispatch and reply continue while Queue reports unavailable.

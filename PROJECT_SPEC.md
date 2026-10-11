@@ -1,4 +1,4 @@
-# Nuntius v0.3.2 — specification as built
+# Nuntius v0.3.3 — specification as built
 
 ## Boundary
 
@@ -6,7 +6,7 @@ Nuntius is a Go stdio MCP server for an owner-approved
 judge on macOS or Linux. Linux CI tests the same process and file contracts. The module
 is `github.com/ozgurcd/nuntius`. It has no model-provider client, LLM or shell runner. Dashboard control uses
 loopback HTTP; Tailscale and Messages run through their installed programs.
-Version v0.3.2 is compiled in; publication is a separate release workflow.
+Version v0.3.3 is compiled in; publication is a separate release workflow.
 The optional menu-bar helper lives in its own module under menubar/. It uses
 fyne.io/systray v1.12.0 (Cocoa/cgo on macOS, D-Bus StatusNotifierItem on Linux),
 and is not imported by the pure-Go main binary. Background start launches it

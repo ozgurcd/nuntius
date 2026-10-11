@@ -5,7 +5,7 @@ User-facing changes and upgrade actions are listed newest first. See the
 restart an existing server. Choose when to upgrade through the Homebrew tap
 and restart your MCP server or background dashboard to load the new binary.
 
-## Unreleased
+## v0.3.3 — 2026-10-11
 
 An unreadable or replaced Queue file now leaves the operational dashboard,
 dispatch and reply available. Queue continues to report its own read failure.
@@ -35,6 +35,9 @@ the choice. Text, lane and action filters still combine, and the count shows
 matching entries from the latest received audit rows. Global entries show
 **all lanes**, and missing goals or briefs show **n/a**. The complete audit
 log and dashboard access rules stay unchanged. No restart or upgrade is automatic.
+
+Offline Settings checks also cover stale requests and content-based revisions.
+Test-only maintenance removes polling contention without changing runtime behavior.
 
 ## v0.3.2 — 2026-10-10
 
