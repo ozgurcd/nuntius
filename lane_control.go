@@ -3,6 +3,8 @@ package nuntius
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -262,6 +264,14 @@ func (m *Manager) laneControls() (laneControlSnapshot, error) {
 // opened relative to the verified root; never call the legacy path opener.
 // Creating this private coordination file does not create control state.
 func laneControlReadLock(root *os.File) (*os.File, error) {
+	lock, err := laneControlLock(root, unix.LOCK_SH)
+	if err != nil {
+		return nil, errLaneControlUnavailable
+	}
+	return lock, nil
+}
+
+func laneControlLock(root *os.File, mode int) (*os.File, error) {
 	fd, err := unix.Openat(int(root.Fd()), "locks", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, errLaneControlUnavailable
@@ -281,11 +291,552 @@ func laneControlReadLock(root *os.File) (*os.File, error) {
 		lock.Close()
 		return nil, errLaneControlUnavailable
 	}
-	if err = unix.Flock(lfd, unix.LOCK_SH|unix.LOCK_NB); err != nil {
+	if err = unix.Flock(lfd, mode|unix.LOCK_NB); err != nil {
 		lock.Close()
+		if errors.Is(err, unix.EWOULDBLOCK) {
+			return nil, &laneControlFault{Code: "locked"}
+		}
 		return nil, errLaneControlUnavailable
 	}
 	return lock, nil
+}
+
+// Internal adapter contract. Source is supplied by the trusted transport,
+// separately from decoded request arguments. CLI reads its revision in-lock.
+type laneControlChange struct {
+	Lane             string
+	Paused           bool
+	AfterCurrent     bool
+	ExpectedRevision *uint64
+}
+
+type laneControlResult struct {
+	Code     string
+	Revision uint64
+	Paused   bool
+	Changed  bool
+	Origin   string
+	// False on every error: visible state under an unresolved intent is not
+	// an admission snapshot. Adapters must report unavailable, never enabled.
+	Available bool
+}
+
+type laneControlFault struct{ Code string }
+
+func (e *laneControlFault) Error() string { return e.Code }
+
+// checkpoint injects an error before or after a real filesystem operation.
+// It is per invocation, never global; production always passes nil.
+type laneControlIO struct{ checkpoint func(string) error }
+
+func (m *Manager) setLaneControl(change laneControlChange, source string) (laneControlResult, error) {
+	return m.setLaneControlIO(change, source, nil)
+}
+
+func (m *Manager) setLaneControlIO(change laneControlChange, source string, ops *laneControlIO) (laneControlResult, error) {
+	if !validLaneControlSource(source) || !namePattern.MatchString(change.Lane) ||
+		(!change.Paused && change.AfterCurrent) ||
+		(source != "cli" && (change.ExpectedRevision == nil || *change.ExpectedRevision > laneControlMaxRevision)) {
+		return laneControlResult{}, &laneControlFault{Code: "invalid_request"}
+	}
+	if !m.mu.TryLock() {
+		return laneControlResult{}, &laneControlFault{Code: "locked"}
+	}
+	defer m.mu.Unlock()
+	root, err := openLaneControlRoot(m.store)
+	if err != nil {
+		return laneControlResult{}, &laneControlFault{Code: "lane_control_unavailable"}
+	}
+	defer root.Close()
+	guard, err := laneControlLock(root, unix.LOCK_EX)
+	if err != nil {
+		return laneControlResult{}, laneControlError(err)
+	}
+	defer guard.Close()
+	return m.setLaneControlLocked(root, change, source, ops)
+}
+
+func (m *Manager) recoverLaneControls(ops *laneControlIO) error {
+	if !m.mu.TryLock() {
+		return &laneControlFault{Code: "locked"}
+	}
+	defer m.mu.Unlock()
+	root, err := openLaneControlRoot(m.store)
+	if err != nil {
+		return laneControlError(err)
+	}
+	defer root.Close()
+	guard, err := laneControlLock(root, unix.LOCK_EX)
+	if err != nil {
+		return laneControlError(err)
+	}
+	defer guard.Close()
+	if err = reconcileLaneControl(root, ops); err != nil {
+		return &laneControlFault{Code: "audit_unavailable"}
+	}
+	return nil
+}
+
+func validLaneControlSource(source string) bool {
+	return source == "cli" || source == "web" || source == "mcp"
+}
+
+func laneControlError(err error) error {
+	var fault *laneControlFault
+	if errors.As(err, &fault) {
+		return fault
+	}
+	return &laneControlFault{Code: "lane_control_unavailable"}
+}
+
+func laneControlCheckpoint(ops *laneControlIO, stage string) error {
+	if ops != nil && ops.checkpoint != nil {
+		return ops.checkpoint(stage)
+	}
+	return nil
+}
+
+// The caller already owns manager -> shared control lock. This primitive
+// never acquires either lock and never dispatches, recovers or signals a run.
+func (m *Manager) setLaneControlLocked(root *os.File, change laneControlChange, source string, ops *laneControlIO) (laneControlResult, error) {
+	if !validLaneControlSource(source) || !namePattern.MatchString(change.Lane) ||
+		(!change.Paused && change.AfterCurrent) ||
+		(source != "cli" && (change.ExpectedRevision == nil || *change.ExpectedRevision > laneControlMaxRevision)) {
+		return laneControlResult{}, &laneControlFault{Code: "invalid_request"}
+	}
+	if err := reconcileLaneControl(root, ops); err != nil {
+		return laneControlResult{}, &laneControlFault{Code: "audit_unavailable"}
+	}
+	if err := m.reload(); err != nil {
+		return laneControlResult{}, &laneControlFault{Code: "lane_control_unavailable"}
+	}
+	configured := false
+	for _, lane := range m.config.Lanes {
+		if lane.Name == change.Lane {
+			configured = true
+			break
+		}
+	}
+	previous, err := readLaneControlFile(root)
+	if err != nil {
+		return laneControlResult{}, laneControlError(err)
+	}
+	old, exists := previous.Lanes[change.Lane]
+	// A retained hold can be cleared without growing a pool or recreating a
+	// configured lane. New holds require a current configured exact name.
+	if !configured {
+		code := "lane_not_found"
+		if exists && change.Paused {
+			code = "lane_not_configured"
+		}
+		if !exists || change.Paused {
+			return laneControlResult{}, &laneControlFault{Code: code}
+		}
+	}
+	result := laneControlResult{Revision: previous.Revision, Paused: old.Paused}
+	refuse := func(code string) (laneControlResult, error) {
+		// Refusal audit is best effort; its failure cannot replace the primary
+		// refusal or open admission. No caller text enters this row.
+		_ = appendLaneControlRow(root, map[string]any{"time": time.Now().UTC(), "tool": "lane_control", "lane": change.Lane, "source": source, "revision": previous.Revision, "result": code}, nil, "audit.refusal")
+		return result, &laneControlFault{Code: code}
+	}
+	if source != "cli" && *change.ExpectedRevision != previous.Revision {
+		return refuse("revision_conflict")
+	}
+	if old.Paused == change.Paused {
+		result.Code = "unchanged"
+		result.Available = true
+		return result, nil
+	}
+	if previous.Revision == laneControlMaxRevision {
+		return refuse("lane_control_unavailable")
+	}
+	if !exists && len(previous.Lanes) == laneControlMaxNames {
+		return refuse("lane_control_capacity")
+	}
+	next := laneControlStore{Version: 1, Revision: previous.Revision + 1, Lanes: make(map[string]laneControlRecord, len(previous.Lanes)+1)}
+	for name, record := range previous.Lanes {
+		next.Lanes[name] = record
+	}
+	record := laneControlRecord{Paused: change.Paused, RequestedAfterCurrent: change.AfterCurrent, Source: source, Since: time.Now().UTC().Format(time.RFC3339Nano), Revision: next.Revision}
+	next.Lanes[change.Lane] = record
+	beforeBytes, _ := encodeLaneControls(previous)
+	afterBytes, err := encodeLaneControls(next)
+	if err != nil {
+		return refuse("lane_control_capacity")
+	}
+	intent := laneControlIntent{Version: 1, Time: record.Since, Origin: "lane-control:" + rand.Text(), Lane: change.Lane, Source: source, Before: old.Paused, After: record, BeforeRevision: previous.Revision, Revision: next.Revision, BeforeDigest: laneControlDigest(beforeBytes), AfterDigest: laneControlDigest(afterBytes), PrepareHeldMessage: change.Paused}
+	b, err := json.Marshal(intent)
+	if err != nil {
+		return result, &laneControlFault{Code: "audit_unavailable"}
+	}
+	if err = replaceLaneControl(root, "lane-control-intent.json", b, ops, "intent"); err != nil {
+		return result, &laneControlFault{Code: "audit_unavailable"}
+	}
+	if err = appendLaneControlAudit(root, intent, "intent", ops); err != nil {
+		return result, &laneControlFault{Code: "audit_unavailable"}
+	}
+	if err = replaceLaneControl(root, "lane-control.json", afterBytes, ops, "state"); err != nil {
+		// The old or the new state may be visible. In both cases the intent
+		// remains; readLaneControlsLocked refuses until durable readback.
+		return result, &laneControlFault{Code: "save_unconfirmed"}
+	}
+	result = laneControlResult{Revision: next.Revision, Paused: record.Paused, Origin: intent.Origin}
+	if err = reconcileLaneControl(root, ops); err != nil {
+		return result, &laneControlFault{Code: "committed_audit_failed"}
+	}
+	result.Code, result.Changed = "committed", true
+	result.Available = true
+	return result, nil
+}
+
+// Digests bind the entire canonical old/new snapshot, including unrelated
+// lanes. A third state is uncertain, never inferred from only the lane value.
+type laneControlIntent struct {
+	Version            int               `json:"version"`
+	Time               string            `json:"time"`
+	Origin             string            `json:"origin"`
+	Lane               string            `json:"lane"`
+	Source             string            `json:"source"`
+	Before             bool              `json:"before"`
+	After              laneControlRecord `json:"after"`
+	BeforeRevision     uint64            `json:"before_revision"`
+	Revision           uint64            `json:"revision"`
+	BeforeDigest       string            `json:"before_sha256"`
+	AfterDigest        string            `json:"after_sha256"`
+	PrepareHeldMessage bool              `json:"prepare_held_message"`
+}
+
+func laneControlDigest(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
+
+func validLaneControlOrigin(origin string) bool {
+	if !strings.HasPrefix(origin, "lane-control:") || len(origin) != len("lane-control:")+26 {
+		return false
+	}
+	for _, c := range strings.TrimPrefix(origin, "lane-control:") {
+		if !(c >= 'A' && c <= 'Z') && !(c >= '2' && c <= '7') {
+			return false
+		}
+	}
+	return true
+}
+
+// Decode via the same duplicate-key, case-sensitive, closed JSON contract as
+// state. Re-marshalling a typed value must preserve every supplied field.
+func decodeLaneControlObject(b []byte, target any) error {
+	if len(b) > 4096 || !utf8.Valid(b) {
+		return errLaneControlUnavailable
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	raw, err := queueJSON(d, 1)
+	if err != nil {
+		return errLaneControlUnavailable
+	}
+	if _, err = d.Token(); err != io.EOF {
+		return errLaneControlUnavailable
+	}
+	if json.Unmarshal(b, target) != nil {
+		return errLaneControlUnavailable
+	}
+	canonical, err := json.Marshal(target)
+	if err != nil {
+		return errLaneControlUnavailable
+	}
+	check := json.NewDecoder(bytes.NewReader(canonical))
+	check.UseNumber()
+	want, err := queueJSON(check, 1)
+	actual, _ := json.Marshal(raw)
+	expected, _ := json.Marshal(want)
+	if err != nil || !bytes.Equal(actual, expected) {
+		return errLaneControlUnavailable
+	}
+	return nil
+}
+
+func validLaneControlIntent(i laneControlIntent) bool {
+	before, e1 := hex.DecodeString(i.BeforeDigest)
+	after, e2 := hex.DecodeString(i.AfterDigest)
+	return i.Version == 1 && namePattern.MatchString(i.Lane) && validLaneControlOrigin(i.Origin) &&
+		validLaneControlSource(i.Source) && i.BeforeRevision < laneControlMaxRevision && i.Revision == i.BeforeRevision+1 &&
+		i.After.Revision == i.Revision && validLaneControlRecord(i.After, i.Revision) &&
+		i.Time == i.After.Since && i.Source == i.After.Source && i.Before != i.After.Paused &&
+		i.PrepareHeldMessage == i.After.Paused && e1 == nil && e2 == nil && len(before) == 32 && len(after) == 32 &&
+		i.BeforeDigest != i.AfterDigest && hex.EncodeToString(before) == i.BeforeDigest && hex.EncodeToString(after) == i.AfterDigest
+}
+
+func reconcileLaneControl(root *os.File, ops *laneControlIO) error {
+	b, err := readLaneControlPrivate(root, "lane-control-intent.json", 4096)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var intent laneControlIntent
+	if decodeLaneControlObject(b, &intent) != nil || !validLaneControlIntent(intent) {
+		return errLaneControlUnavailable
+	}
+	s, err := readLaneControlFile(root)
+	if err != nil {
+		return err
+	}
+	state, err := encodeLaneControls(s)
+	if err != nil {
+		return err
+	}
+	result := "uncertain"
+	switch laneControlDigest(state) {
+	case intent.AfterDigest:
+		if s.Revision != intent.Revision || s.Lanes[intent.Lane] != intent.After {
+			return errLaneControlUnavailable
+		}
+		// A visible rename from a failed save is not yet a durability claim.
+		// Re-sync both the read-back file and its directory before outcome.
+		if err = syncLaneControlState(root, ops); err != nil {
+			return err
+		}
+		if intent.PrepareHeldMessage {
+			if err = prepareLaneControlHold(root, intent, ops); err != nil {
+				return err
+			}
+		}
+		result = "committed"
+	case intent.BeforeDigest:
+		if s.Revision != intent.BeforeRevision {
+			return errLaneControlUnavailable
+		}
+		result = "not_committed"
+	}
+	if err = appendLaneControlAudit(root, intent, result, ops); err != nil {
+		return err
+	}
+	if result == "uncertain" {
+		return errLaneControlUnavailable
+	}
+	if err = laneControlCheckpoint(ops, "intent.cleanup"); err != nil {
+		return err
+	}
+	if err = unix.Unlinkat(int(root.Fd()), "lane-control-intent.json", 0); err != nil {
+		return errLaneControlUnavailable
+	}
+	if err = root.Sync(); err != nil {
+		// Keep visible intent on cleanup uncertainty as well. An interrupted
+		// removal may replay the same outcome with the same origin after boot.
+		_ = replaceLaneControl(root, "lane-control-intent.json", b, nil, "intent")
+		return errLaneControlUnavailable
+	}
+	return nil
+}
+
+// A04 consumes this durable repair obligation only after marking accepted
+// messages held for review. Resume never removes it. Repeated pauses retain
+// the earliest boundary and extend the revision high-water mark; no message
+// text or run/session identity enters the control intent or public audit.
+type laneControlHold struct {
+	Version         int    `json:"version"`
+	Lane            string `json:"lane"`
+	Since           string `json:"since"`
+	ThroughRevision uint64 `json:"through_revision"`
+	Origin          string `json:"origin"`
+}
+
+func prepareLaneControlHold(root *os.File, intent laneControlIntent, ops *laneControlIO) error {
+	name := "lane-control-hold-" + intent.Lane + ".json"
+	hold := laneControlHold{Version: 1, Lane: intent.Lane, Since: intent.Time, ThroughRevision: intent.Revision, Origin: intent.Origin}
+	b, err := readLaneControlPrivate(root, name, 4096)
+	if err == nil {
+		var old laneControlHold
+		if decodeLaneControlObject(b, &old) != nil || old.Version != 1 || old.Lane != intent.Lane || !validLaneControlOrigin(old.Origin) || old.ThroughRevision == 0 || old.ThroughRevision > intent.Revision {
+			return errLaneControlUnavailable
+		}
+		t, e := time.Parse(time.RFC3339Nano, old.Since)
+		if e != nil || t.IsZero() || t.UTC().Format(time.RFC3339Nano) != old.Since {
+			return errLaneControlUnavailable
+		}
+		hold.Since, hold.Origin = old.Since, old.Origin
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	b, err = json.Marshal(hold)
+	if err != nil {
+		return err
+	}
+	return replaceLaneControl(root, name, b, ops, "hold")
+}
+
+func readLaneControlPrivate(root *os.File, name string, limit int64) ([]byte, error) {
+	fd, err := unix.Openat(int(root.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return nil, os.ErrNotExist
+	}
+	if err != nil {
+		return nil, errLaneControlUnavailable
+	}
+	f := os.NewFile(uintptr(fd), "lane-control-private")
+	defer f.Close()
+	if err = checkLaneControlFile(fd); err != nil {
+		return nil, err
+	}
+	b, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil || int64(len(b)) > limit {
+		return nil, errLaneControlUnavailable
+	}
+	return b, nil
+}
+
+func checkLaneControlFile(fd int) error {
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Mode&07777 != 0600 || st.Nlink != 1 || st.Uid != uint32(os.Geteuid()) {
+		return errLaneControlUnavailable
+	}
+	return nil
+}
+
+func syncLaneControlState(root *os.File, ops *laneControlIO) error {
+	fd, err := unix.Openat(int(root.Fd()), "lane-control.json", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return errLaneControlUnavailable
+	}
+	f := os.NewFile(uintptr(fd), "lane-control-state")
+	defer f.Close()
+	if err = checkLaneControlFile(fd); err != nil {
+		return err
+	}
+	if err = laneControlCheckpoint(ops, "reconcile.state.fsync"); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = laneControlCheckpoint(ops, "reconcile.state.dirsync"); err != nil {
+		return err
+	}
+	return root.Sync()
+}
+
+func appendLaneControlAudit(root *os.File, intent laneControlIntent, result string, ops *laneControlIO) error {
+	tool := "lane_resume"
+	if intent.After.Paused {
+		tool = "lane_pause"
+	}
+	stage := "audit.outcome"
+	if result == "intent" {
+		stage = "audit.intent"
+	}
+	return appendLaneControlRow(root, map[string]any{"time": intent.Time, "tool": tool, "lane": intent.Lane, "source": intent.Source, "before": intent.Before, "after": intent.After.Paused, "after_current": intent.After.RequestedAfterCurrent, "revision": intent.Revision, "origin": intent.Origin, "result": result, "reason": "lane_control"}, ops, stage)
+}
+
+func appendLaneControlRow(root *os.File, row map[string]any, ops *laneControlIO, stage string) error {
+	fd, err := unix.Openat(int(root.Fd()), "audit.jsonl", unix.O_RDWR|unix.O_CREAT|unix.O_APPEND|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0600)
+	if err != nil {
+		return errLaneControlUnavailable
+	}
+	f := os.NewFile(uintptr(fd), "lane-control-audit")
+	defer f.Close()
+	if err = checkLaneControlFile(fd); err != nil {
+		return err
+	}
+	if err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		return errLaneControlUnavailable
+	}
+	defer unix.Flock(fd, unix.LOCK_UN)
+	// An interrupted append can leave a prefix. Do not concatenate another
+	// row onto it or rewrite historical bytes; preserve intent and fail closed.
+	var st unix.Stat_t
+	if err = unix.Fstat(fd, &st); err != nil {
+		return errLaneControlUnavailable
+	}
+	if st.Size > 0 {
+		var last [1]byte
+		if n, e := f.ReadAt(last[:], st.Size-1); e != nil || n != 1 || last[0] != '\n' {
+			return errLaneControlUnavailable
+		}
+	}
+	b, err := json.Marshal(row)
+	if err != nil {
+		return err
+	}
+	if err = laneControlCheckpoint(ops, stage+".append"); err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	n, err := f.Write(b)
+	if err != nil || n != len(b) {
+		return errLaneControlUnavailable
+	}
+	if err = laneControlCheckpoint(ops, stage+".fsync"); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = laneControlCheckpoint(ops, stage+".dirsync"); err != nil {
+		return err
+	}
+	return root.Sync()
+}
+
+func replaceLaneControl(root *os.File, target string, b []byte, ops *laneControlIO, stage string) error {
+	// Refuse unsafe existing targets before any replacement. All names here
+	// are fixed or formed from validated exact lane names, never caller paths.
+	fd, err := unix.Openat(int(root.Fd()), target, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err == nil {
+		err = checkLaneControlFile(fd)
+		unix.Close(fd)
+		if err != nil {
+			return err
+		}
+	} else if !errors.Is(err, unix.ENOENT) {
+		return errLaneControlUnavailable
+	}
+	return replaceLaneControlBytes(root, target, b, ops, stage)
+}
+
+func replaceLaneControlBytes(root *os.File, target string, b []byte, ops *laneControlIO, stage string) error {
+	name := ".lane-control-" + rand.Text()
+	fd, err := unix.Openat(int(root.Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+	if err != nil {
+		return errLaneControlUnavailable
+	}
+	f := os.NewFile(uintptr(fd), "lane-control-temporary")
+	defer unix.Unlinkat(int(root.Fd()), name, 0)
+	if err = f.Chmod(0600); err == nil {
+		err = laneControlCheckpoint(ops, stage+".write")
+	}
+	if err == nil {
+		var n int
+		n, err = f.Write(b)
+		if err == nil && n != len(b) {
+			err = io.ErrShortWrite
+		}
+	}
+	if err == nil {
+		err = laneControlCheckpoint(ops, stage+".fsync")
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	ce := f.Close()
+	if err == nil {
+		err = ce
+	}
+	if err != nil {
+		return err
+	}
+	if err = laneControlCheckpoint(ops, stage+".rename"); err != nil {
+		return err
+	}
+	if err = unix.Renameat(int(root.Fd()), name, int(root.Fd()), target); err != nil {
+		return err
+	}
+	if err = laneControlCheckpoint(ops, stage+".renamed"); err != nil {
+		return err
+	}
+	if err = laneControlCheckpoint(ops, stage+".dirsync"); err != nil {
+		return err
+	}
+	return root.Sync()
 }
 
 // Storage-only primitive for A02's transaction, not a pause/resume API.
@@ -333,33 +884,7 @@ func (m *Manager) saveLaneControlsLocked(next laneControlStore) error {
 }
 
 func writeLaneControlFile(root *os.File, b []byte) error {
-	// CreateTemp's path is not used for I/O. Create a unique rooted file with
-	// O_EXCL instead; the name is independent of caller input and store paths.
-	name := ".lane-control-" + rand.Text()
-	fd, err := unix.Openat(int(root.Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
-	if err != nil {
-		return errLaneControlUnavailable
-	}
-	f := os.NewFile(uintptr(fd), "lane-control-temporary")
-	defer unix.Unlinkat(int(root.Fd()), name, 0)
-	// Set exact private permissions even under a restrictive inherited umask.
-	if err = f.Chmod(0600); err == nil {
-		_, err = f.Write(b)
-	}
-	if err == nil {
-		err = f.Sync()
-	}
-	ce := f.Close()
-	if err == nil {
-		err = ce
-	}
-	if err != nil {
-		return errLaneControlUnavailable
-	}
-	if err = unix.Renameat(int(root.Fd()), name, int(root.Fd()), "lane-control.json"); err != nil {
-		return errLaneControlUnavailable
-	}
-	if err = root.Sync(); err != nil {
+	if err := replaceLaneControl(root, "lane-control.json", b, nil, "state"); err != nil {
 		return errLaneControlUnavailable
 	}
 	return nil

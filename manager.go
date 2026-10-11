@@ -118,6 +118,10 @@ func NewManager(c Config, store string) (*Manager, error) {
 		return nil, e
 	}
 	m := &Manager{config: c, store: store, runtime: d, Grace: 30 * time.Second, active: map[string]*activeRun{}, closing: make(chan struct{}), launcher: newJobLauncher()}
+	// Reconcile only at startup or a control mutation. A failed reconciliation
+	// retains its intent, so admission reads fail closed without disabling
+	// observation, cancellation or other independent safety controls.
+	_ = m.recoverLaneControls(nil)
 	if _, e := m.Status(); e != nil {
 		return nil, e
 	}
