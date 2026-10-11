@@ -264,7 +264,7 @@ func (m *Manager) laneControls() (laneControlSnapshot, error) {
 // opened relative to the verified root; never call the legacy path opener.
 // Creating this private coordination file does not create control state.
 func laneControlReadLock(root *os.File) (*os.File, error) {
-	lock, err := laneControlLock(root, unix.LOCK_SH)
+	lock, err := openLaneControlLock(root, unix.LOCK_SH, false)
 	if err != nil {
 		return nil, errLaneControlUnavailable
 	}
@@ -272,6 +272,41 @@ func laneControlReadLock(root *os.File) (*os.File, error) {
 }
 
 func laneControlLock(root *os.File, mode int) (*os.File, error) {
+	return openLaneControlLock(root, mode, true)
+}
+
+// Admission opens the permanent coordination inode, never creates it. Startup
+// and control mutations prepare it using laneControlLock. The caller holds the
+// manager mutex first. No lane lifetime lock is acquired here.
+func (m *Manager) admissionControlLock() (*os.File, error) {
+	root, err := openLaneControlRoot(m.store)
+	if err != nil {
+		return nil, errLaneControlUnavailable
+	}
+	defer root.Close()
+	lock, err := openLaneControlLock(root, unix.LOCK_EX, false)
+	if err != nil {
+		return nil, errLaneControlUnavailable
+	}
+	return lock, nil
+}
+
+func openLaneControlLock(root *os.File, mode int, create bool) (*os.File, error) {
+	lock, err := openLaneControlLockFile(root, create)
+	if err != nil {
+		return nil, err
+	}
+	if err = unix.Flock(int(lock.Fd()), mode|unix.LOCK_NB); err != nil {
+		lock.Close()
+		if errors.Is(err, unix.EWOULDBLOCK) {
+			return nil, &laneControlFault{Code: "locked"}
+		}
+		return nil, errLaneControlUnavailable
+	}
+	return lock, nil
+}
+
+func openLaneControlLockFile(root *os.File, create bool) (*os.File, error) {
 	fd, err := unix.Openat(int(root.Fd()), "locks", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, errLaneControlUnavailable
@@ -282,7 +317,11 @@ func laneControlLock(root *os.File, mode int) (*os.File, error) {
 	if err = unix.Fstat(fd, &st); err != nil || st.Mode&07777 != 0700 || st.Uid != uint32(os.Geteuid()) {
 		return nil, errLaneControlUnavailable
 	}
-	lfd, err := unix.Openat(fd, "control.lock", unix.O_RDWR|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0600)
+	flags := unix.O_RDWR | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
+	if create {
+		flags |= unix.O_CREAT
+	}
+	lfd, err := unix.Openat(fd, "control.lock", flags, 0600)
 	if err != nil {
 		return nil, errLaneControlUnavailable
 	}
@@ -291,14 +330,57 @@ func laneControlLock(root *os.File, mode int) (*os.File, error) {
 		lock.Close()
 		return nil, errLaneControlUnavailable
 	}
-	if err = unix.Flock(lfd, mode|unix.LOCK_NB); err != nil {
-		lock.Close()
-		if errors.Is(err, unix.EWOULDBLOCK) {
-			return nil, &laneControlFault{Code: "locked"}
-		}
-		return nil, errLaneControlUnavailable
-	}
 	return lock, nil
+}
+
+// laneAdmissionFault stays internal until the later adapter steps. It carries
+// only fixed safe codes; no prompt, session or store path belongs in a refusal.
+type laneAdmissionFault struct {
+	Code      string   `json:"code"`
+	Lane      string   `json:"lane"`
+	Paused    bool     `json:"paused"`
+	Retryable bool     `json:"retryable"`
+	Blockers  []string `json:"blockers"`
+}
+
+func (e *laneAdmissionFault) Error() string { return e.Code }
+
+// admitLaneLocked is the final H2 boundary. Both the manager mutex and common
+// control lock must already be held; never call a lock-acquiring snapshot or
+// intent reconciliation here. Every launch (including follow/Recover) uses it
+// before allocating an ID, prompt, run directory or child.
+func (m *Manager) admitLaneLocked(name string) error {
+	if _, err := m.lane(name); err != nil {
+		return err
+	}
+	// Some established successor callers acquired the common inode through
+	// the legacy helper. Validate coordination health without another flock,
+	// even when their held descriptor outlives a missing or unsafe path.
+	root, err := openLaneControlRoot(m.store)
+	if err != nil {
+		return errLaneControlUnavailable
+	}
+	coordination, err := openLaneControlLockFile(root, false)
+	root.Close()
+	if err != nil {
+		return errLaneControlUnavailable
+	}
+	coordination.Close()
+	controls, err := m.readLaneControlsLocked()
+	if err != nil {
+		return errLaneControlUnavailable
+	}
+	if controls.Lanes[name].Paused {
+		blockers := []string{"lane_paused"}
+		frozen, err := m.freezeState()
+		if err != nil {
+			blockers = append(blockers, "freeze_unavailable")
+		} else if frozen != nil {
+			blockers = append(blockers, "frozen")
+		}
+		return &laneAdmissionFault{Code: "lane_paused", Lane: name, Paused: true, Blockers: blockers}
+	}
+	return nil
 }
 
 // Internal adapter contract. Source is supplied by the trusted transport,

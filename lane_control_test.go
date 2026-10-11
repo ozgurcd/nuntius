@@ -2,6 +2,7 @@ package nuntius
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,9 +12,408 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 const laneControlSample = `{"lane_control_version":1,"revision":1,"lanes":{"codex":{"paused":true,"since":"2026-10-11T12:00:00Z","source":"cli","requested_after_current":false,"revision":1}}}`
+
+// Admission effects exclude the append-only refusal audit and observation
+// timestamps. Every run/prompt/event/message artifact and stop field is checked.
+func admissionArtifacts(t *testing.T, store string) map[string][32]byte {
+	t.Helper()
+	out := map[string][32]byte{}
+	err := filepath.WalkDir(filepath.Join(store, "runs"), func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			out[path] = [32]byte{}
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		out[path] = sha256.Sum256(b)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func admissionCall(m *Manager, op string) error {
+	switch op {
+	case "dispatch":
+		_, err := m.Dispatch("codex", "REFUSED", "answer")
+		return err
+	case "reply":
+		_, err := m.Reply("codex", "answer")
+		return err
+	case "send":
+		return m.SendMessage("codex", "answer", false)
+	default:
+		return m.SendMessage("codex", "answer", true)
+	}
+}
+
+func admissionPause(t *testing.T, m *Manager, after bool) {
+	t.Helper()
+	result, err := m.setLaneControl(laneControlChange{Lane: "codex", Paused: true, AfterCurrent: after}, "cli")
+	if err != nil || !result.Available || !result.Paused {
+		t.Fatal("pause failed")
+	}
+}
+
+func TestLaneAdmissionRefusals(t *testing.T) {
+	for _, after := range []bool{false, true} {
+		for _, state := range []string{"idle", "ended", "busy"} {
+			for _, op := range []string{"dispatch", "reply", "send", "stop-and-send"} {
+				t.Run(fmt.Sprintf("after=%t/%s/%s", after, state, op), func(t *testing.T) {
+					m, store := laneControlCommitFixture(t)
+					if state != "idle" {
+						text := "worked"
+						if state == "busy" {
+							text = "wait"
+						}
+						if _, err := m.Dispatch("codex", "ORIGINAL", text); err != nil {
+							t.Fatal(err)
+						}
+						if state == "busy" {
+							waitReady(t, m, "codex")
+						} else {
+							waitState(t, m, "codex", "ended")
+						}
+					}
+					// Separate manager models another adapter/process, without adopting
+					// a second supervisor or changing the running goal's lifetime lock.
+					control := &Manager{config: m.config, store: store}
+					admissionPause(t, control, after)
+					m.mu.Lock()
+					before := admissionArtifacts(t, store)
+					m.mu.Unlock()
+					err := admissionCall(m, op)
+					if err == nil || !strings.Contains(err.Error(), "lane_paused") {
+						t.Error("missing lane_paused refusal")
+					}
+					m.mu.Lock()
+					afterArtifacts := admissionArtifacts(t, store)
+					m.mu.Unlock()
+					if !reflect.DeepEqual(before, afterArtifacts) {
+						t.Error("refusal changed run/prompt/message/child or stop metadata")
+					}
+					if state == "busy" {
+						r, err := m.latest("codex")
+						if err != nil || r == nil || !sameProcess(*r) || r.StopAt != nil || r.StopReason != "" {
+							t.Error("pause admission interrupted current run")
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestLaneAdmissionDrainsAndIsolation(t *testing.T) {
+	for _, after := range []bool{false, true} {
+		t.Run(fmt.Sprint(after), func(t *testing.T) {
+			m, store := laneControlCommitFixture(t)
+			id, err := m.Dispatch("codex", "ADMISSION-RUN", "admission-barrier")
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitReady(t, m, "codex")
+			original, err := m.latest("codex")
+			if err != nil {
+				t.Fatal(err)
+			}
+			control := &Manager{config: m.config, store: store}
+			admissionPause(t, control, after)
+			for _, op := range []string{"dispatch", "reply", "send", "stop-and-send"} {
+				if err := admissionCall(m, op); err == nil || !strings.Contains(err.Error(), "lane_paused") {
+					t.Errorf("%s accepted during drain", op)
+				}
+			}
+			current, err := m.latest("codex")
+			if err != nil || current.ID != id || current.ProcessStart != original.ProcessStart || !sameProcess(*current) || current.StopAt != nil || current.StopReason != "" {
+				t.Error("current process did not remain alive unchanged")
+			}
+			if _, err := m.Dispatch("claude", "OTHER-LANE", "worked"); err != nil {
+				t.Fatal("other lane blocked")
+			}
+			waitState(t, m, "claude", "ended")
+			if err := os.WriteFile(filepath.Join(m.config.ReportsDir, "admission-release"), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			waitState(t, m, "codex", "ended")
+			current, err = m.latest("codex")
+			if err != nil || current.ID != id || current.StopReason != "completed" || current.Ended == nil || current.StopAt != nil || !m.reportExists(*current) {
+				t.Error("draining goal did not deliver its normal report/end")
+			}
+			runs, err := m.history()
+			if err != nil || len(runs) != 2 {
+				t.Error("unexpected successor or child")
+			}
+		})
+	}
+}
+
+func TestLaneAdmissionUnavailable(t *testing.T) {
+	for _, health := range []string{"corrupt", "resume-intent", "missing-lock", "unsafe-lock"} {
+		for _, op := range []string{"dispatch", "reply", "send", "stop-and-send"} {
+			t.Run(health+"/"+op, func(t *testing.T) {
+				m, store := laneControlCommitFixture(t)
+				if _, err := m.Dispatch("codex", "ORIGINAL", "worked"); err != nil {
+					t.Fatal(err)
+				}
+				waitState(t, m, "codex", "ended")
+				switch health {
+				case "corrupt":
+					if err := os.WriteFile(filepath.Join(store, "lane-control.json"), []byte("{"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				case "resume-intent":
+					admissionPause(t, m, false)
+					_, err := m.setLaneControlIO(laneControlChange{Lane: "codex"}, "cli", &laneControlIO{checkpoint: func(stage string) error {
+						if stage == "audit.outcome.append" {
+							return errors.New("injected")
+						}
+						return nil
+					}})
+					if laneControlCode(err) != "committed_audit_failed" || laneControlRaw(t, store).Lanes["codex"].Paused {
+						t.Fatal("unresolved resume setup")
+					}
+				case "missing-lock", "unsafe-lock":
+					if err := os.Remove(filepath.Join(store, "locks", "control.lock")); err != nil {
+						t.Fatal(err)
+					}
+					if health == "unsafe-lock" {
+						if err := os.Symlink(filepath.Join(store, "untouched"), filepath.Join(store, "locks", "control.lock")); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				before := admissionArtifacts(t, store)
+				err := admissionCall(m, op)
+				if err == nil || !strings.Contains(err.Error(), "lane_control_unavailable") {
+					t.Error("unhealthy controls admitted work")
+				}
+				if !reflect.DeepEqual(before, admissionArtifacts(t, store)) {
+					t.Error("unavailable controls changed artifacts")
+				}
+				if health == "resume-intent" {
+					if _, err := os.Stat(filepath.Join(store, "lane-control-intent.json")); err != nil {
+						t.Error("admission reconciled intent")
+					}
+				}
+				if health == "missing-lock" {
+					if _, err := os.Lstat(filepath.Join(store, "locks", "control.lock")); !os.IsNotExist(err) {
+						t.Error("admission created coordination inode")
+					}
+				}
+				if health == "unsafe-lock" {
+					if _, err := os.Stat(filepath.Join(store, "untouched")); !os.IsNotExist(err) {
+						t.Error("admission followed unsafe coordination link")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestLaneAdmissionFrozenAndValidation(t *testing.T) {
+	m, _ := laneControlCommitFixture(t)
+	admissionPause(t, m, false)
+	if err := m.Freeze("fixture"); err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []string{"dispatch", "reply", "send", "stop-and-send"} {
+		err := admissionCall(m, op)
+		if err == nil || !strings.Contains(err.Error(), "lane_paused") {
+			t.Errorf("%s freeze replaced primary pause refusal", op)
+		}
+		b, _ := json.Marshal(err)
+		var refusal struct {
+			Code, Lane        string
+			Paused, Retryable bool
+			Blockers          []string
+		}
+		if json.Unmarshal(b, &refusal) != nil || refusal.Code != "lane_paused" || refusal.Lane != "codex" || !refusal.Paused || refusal.Retryable || !reflect.DeepEqual(refusal.Blockers, []string{"lane_paused", "frozen"}) {
+			t.Error("missing safe typed pause/freeze contract")
+		}
+	}
+	if _, err := m.Dispatch("unknown", "VALID", "answer"); err == nil || err.Error() != "unknown lane" {
+		t.Error("unknown name lost validation")
+	}
+	if _, err := m.Dispatch("codex", "bad goal", "answer"); err == nil || err.Error() != "invalid goal_id" {
+		t.Error("invalid goal lost validation")
+	}
+	if _, err := m.Reply("codex", ""); err == nil || !strings.Contains(err.Error(), "text must contain") {
+		t.Error("invalid reply text lost validation")
+	}
+	if err := m.SendMessage("unknown", "answer", true); err == nil || err.Error() != "unknown lane" {
+		t.Error("invalid send name lost validation")
+	}
+	m.mu.Lock()
+	m.config.Lanes = m.config.Lanes[:1]
+	m.mu.Unlock()
+	if _, err := m.Dispatch("codex", "VALID", "answer"); err == nil || err.Error() != "unknown lane" {
+		t.Error("retained removed lane became configured")
+	}
+}
+
+func TestLaneAdmissionSafetyControls(t *testing.T) {
+	for _, after := range []bool{false, true} {
+		for _, action := range []string{"cancel", "freeze", "timeout"} {
+			t.Run(fmt.Sprintf("after=%t/%s", after, action), func(t *testing.T) {
+				m, _ := laneControlCommitFixture(t)
+				m.mu.Lock()
+				m.Grace = 10 * time.Millisecond
+				m.mu.Unlock()
+				if _, err := m.Dispatch("codex", "SAFETY", "ignore-int"); err != nil {
+					t.Fatal(err)
+				}
+				waitReady(t, m, "codex")
+				admissionPause(t, m, after)
+				switch action {
+				case "cancel":
+					if err := m.Cancel("codex"); err != nil {
+						t.Fatal(err)
+					}
+				case "freeze":
+					if err := m.Freeze("fixture"); err != nil {
+						t.Fatal(err)
+					}
+				case "timeout":
+					m.mu.Lock()
+					m.runtime = time.Nanosecond
+					m.mu.Unlock()
+				}
+				status := waitState(t, m, "codex", "ended")
+				if action == "timeout" && status.Outcome != "timed_out" {
+					t.Error("timeout outcome missing")
+				}
+				r, err := m.latest("codex")
+				if err != nil || r.StopAt == nil || sameProcess(*r) {
+					t.Fatal("independent safety stop failed")
+				}
+			})
+		}
+	}
+}
+
+// Direct successors bypass start. A03 protects launch itself; A04 owns
+// successor bookkeeping and the held-message binding above that boundary.
+func TestLaneAdmissionFinalLaunch(t *testing.T) {
+	for _, health := range []string{"paused", "intent", "missing-lock", "unsafe-lock"} {
+		t.Run(health, func(t *testing.T) {
+			m, store := laneControlCommitFixture(t)
+			admissionPause(t, m, false)
+			if health == "missing-lock" || health == "unsafe-lock" {
+				laneControlSet(t, m, false, 1)
+			}
+			if health == "intent" {
+				if err := os.WriteFile(filepath.Join(store, "lane-control-intent.json"), []byte("{}"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			m.mu.Lock()
+			guard, err := m.controlLock()
+			if err != nil {
+				m.mu.Unlock()
+				t.Fatal(err)
+			}
+			if health == "missing-lock" || health == "unsafe-lock" {
+				if err := os.Remove(filepath.Join(store, "locks", "control.lock")); err != nil {
+					guard.Close()
+					m.mu.Unlock()
+					t.Fatal(err)
+				}
+				if health == "unsafe-lock" {
+					if err := os.Symlink(filepath.Join(store, "untouched"), filepath.Join(store, "locks", "control.lock")); err != nil {
+						guard.Close()
+						m.mu.Unlock()
+						t.Fatal(err)
+					}
+				}
+			}
+			lock, err := m.lock("codex")
+			if err != nil {
+				guard.Close()
+				m.mu.Unlock()
+				t.Fatal(err)
+			}
+			before := admissionArtifacts(t, store)
+			lane, _ := m.lane("codex")
+			_, err = m.launch(lane, "SUCCESSOR", "worked", "fixture-thread", lock, nil)
+			expected := "lane_paused"
+			if health != "paused" {
+				expected = "lane_control_unavailable"
+			}
+			if err == nil || !strings.Contains(err.Error(), expected) {
+				t.Error("final launch guard missing")
+			}
+			if !reflect.DeepEqual(before, admissionArtifacts(t, store)) {
+				t.Error("final guard allocated artifacts")
+			}
+			if health == "missing-lock" {
+				if _, err := os.Lstat(filepath.Join(store, "locks", "control.lock")); !os.IsNotExist(err) {
+					t.Error("final admission created lock inode")
+				}
+			}
+			if health == "unsafe-lock" {
+				if _, err := os.Stat(filepath.Join(store, "untouched")); !os.IsNotExist(err) {
+					t.Error("final admission followed unsafe inode")
+				}
+			}
+			guard.Close()
+			m.mu.Unlock()
+			if err != nil {
+				lock.Close()
+			}
+		})
+	}
+}
+
+func TestLaneAdmissionSharedReadNoCreate(t *testing.T) {
+	m, path := laneControlFixture(t)
+	locks := filepath.Join(m.store, "locks")
+	if err := os.Mkdir(locks, 0700); err != nil {
+		t.Fatal(err)
+	}
+	laneControlPut(t, path, laneControlSample)
+	beforeState, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRoot, err := os.Stat(m.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeLocks, err := os.Stat(locks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.laneControls(); !errors.Is(err, errLaneControlUnavailable) {
+		t.Error("missing coordination inode must refuse read")
+	}
+	if _, err := os.Lstat(filepath.Join(locks, "control.lock")); !os.IsNotExist(err) {
+		t.Error("shared read created coordination inode")
+	}
+	afterState, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(beforeState, afterState) {
+		t.Error("shared read changed state bytes")
+	}
+	afterRoot, err := os.Stat(m.store)
+	if err != nil || !beforeRoot.ModTime().Equal(afterRoot.ModTime()) {
+		t.Error("shared read changed root directory")
+	}
+	afterLocks, err := os.Stat(locks)
+	if err != nil || !beforeLocks.ModTime().Equal(afterLocks.ModTime()) {
+		t.Error("shared read changed locks directory")
+	}
+}
 
 func laneControlFixture(t *testing.T) (*Manager, string) {
 	t.Helper()
@@ -444,6 +844,17 @@ func TestLaneControlReadLockAndNoMutation(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(m.store, "locks"), 0700); err != nil {
 		t.Fatal(err)
 	}
+	// Startup/mutation prepares coordination; projection only opens it.
+	root, err := openLaneControlRoot(m.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startup, err := laneControlLock(root, syscall.LOCK_EX)
+	root.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	startup.Close()
 	initial, err := m.laneControls()
 	if err != nil || initial.Version != 1 || initial.Revision != 0 || len(initial.Lanes) != 2 {
 		t.Fatal("missing initial snapshot")

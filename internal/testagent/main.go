@@ -190,6 +190,19 @@ func main() {
 	fmt.Println(`{"type":"item.completed","item":{"type":"agent_message","text":"codex answer"}}`)
 	fmt.Println(`{"type":"item.completed","item":{"type":"command_execution","command":"fixture command","aggregated_output":"must-not-return"}}`)
 	emit("done")
+	if strings.Contains(mode, "admission-barrier") {
+		emit("ready")
+		for {
+			if _, err := os.Stat(filepath.Join(cwd, "admission-release")); err == nil {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if err := os.WriteFile(filepath.Join(cwd, "ADMISSION-RUN.txt"), []byte("Normal fixture report\n"), 0600); err != nil {
+			os.Exit(24)
+		}
+		return
+	}
 	if strings.Contains(mode, "orphan-detect") {
 		parent := os.Getppid()
 		emit("ready")

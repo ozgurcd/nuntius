@@ -309,17 +309,25 @@ func (m *Manager) SendMessage(lane, text string, stop bool) error {
 		return errors.New("text must contain 1..12000 bytes")
 	}
 	m.mu.Lock()
-	guard, e := m.controlLock()
+	guard, e := m.admissionControlLock()
 	if e != nil {
 		m.mu.Unlock()
 		return e
 	}
-	if e = m.checkFrozen(); e != nil {
+	if e = m.reload(); e != nil {
 		_ = guard.Close()
 		m.mu.Unlock()
 		return e
 	}
 	_, e = m.lane(lane)
+	if e != nil {
+		_ = guard.Close()
+		m.mu.Unlock()
+		return e
+	}
+	if e = m.admitLaneLocked(lane); e == nil {
+		e = m.checkFrozen()
+	}
 	if e != nil {
 		_ = guard.Close()
 		m.mu.Unlock()

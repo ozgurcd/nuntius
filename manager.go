@@ -162,7 +162,7 @@ func (m *Manager) Reply(lane, text string) (string, error) { return m.start(lane
 func (m *Manager) start(name, goal, text string, resume bool) (id string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	guard, e := m.controlLock()
+	guard, e := m.admissionControlLock()
 	if e != nil {
 		return "", e
 	}
@@ -181,12 +181,6 @@ func (m *Manager) start(name, goal, text string, resume bool) (id string, err er
 			_ = m.audit(tool, name, goal, digest, "refused", err.Error())
 		}
 	}()
-	if e = m.checkFrozen(); e != nil {
-		return "", e
-	}
-	if m.closed {
-		return "", errors.New("server is closing")
-	}
 	lane, e := m.lane(name)
 	if e != nil {
 		return "", e
@@ -196,6 +190,15 @@ func (m *Manager) start(name, goal, text string, resume bool) (id string, err er
 	}
 	if !resume && !goalPattern.MatchString(goal) {
 		return "", errors.New("invalid goal_id")
+	}
+	if e = m.admitLaneLocked(name); e != nil {
+		return "", e
+	}
+	if e = m.checkFrozen(); e != nil {
+		return "", e
+	}
+	if m.closed {
+		return "", errors.New("server is closing")
 	}
 	lock, e := m.lock(name)
 	if e != nil {
@@ -246,6 +249,9 @@ func (m *Manager) start(name, goal, text string, resume bool) (id string, err er
 // launch requires the manager mutex and the lane's process-shared lock.
 func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, parent *Run) (string, error) {
 	name := lane.Name
+	if err := m.admitLaneLocked(name); err != nil {
+		return "", err
+	}
 	sum := sha256.Sum256([]byte(text))
 	digest := hex.EncodeToString(sum[:])
 	tool := "nuntius_dispatch"
