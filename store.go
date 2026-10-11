@@ -217,11 +217,14 @@ func (m *Manager) appendAudit(nonblocking bool, tool, lane, goal, digest, result
 	return nil
 }
 func readWindow(p string, tail bool) ([]byte, error) {
-	f, e := privateFile(p, os.O_RDONLY)
+	f, e := privateFile(p, os.O_RDONLY|syscall.O_NONBLOCK)
 	if e != nil {
 		return nil, e
 	}
 	defer f.Close()
+	if checkLaneControlFile(int(f.Fd())) != nil {
+		return nil, errors.New("events must be owned, private and single-link")
+	}
 	st, e := f.Stat()
 	if e != nil {
 		return nil, errors.New("cannot stat events")

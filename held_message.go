@@ -124,10 +124,12 @@ func latchLaneMessages(root *os.File, intent laneControlIntent, ops *laneControl
 		if err == nil {
 			var old heldMessage
 			text, e := pendingText(message)
-			if e != nil || decodeLaneControlObject(b, &old) != nil || old.Version != 1 || old.RunID != r.ID || old.Lane != r.Lane || old.GoalID != r.GoalID || old.RunSHA256 != r.SHA256 || old.ContentSHA256 != laneControlDigest([]byte(text)) || old.Revision == 0 || old.Revision > intent.Revision || !validLaneControlOrigin(old.Origin) {
+			if e != nil || decodeLaneControlObject(b, &old) != nil || old.Version != 1 || old.RunID != r.ID || old.Lane != r.Lane || old.GoalID != r.GoalID || old.RunSHA256 != r.SHA256 || old.ContentSHA256 != laneControlDigest([]byte(text)) || old.Revision == 0 || old.Revision > intent.Revision || !validLaneControlOrigin(old.Origin) || (old.SessionID != "" && !sessionPattern.MatchString(old.SessionID)) || (old.SessionID != "" && r.SessionID != "" && old.SessionID != r.SessionID) {
 				return errLaneControlUnavailable
 			}
-			return nil // Repeated pauses preserve the first identity and revision.
+			// A previous rename can be visible without being durable. Preserve
+			// the first bytes/revision, but prove persistence before intent cleanup.
+			return syncHeldMessage(dir, b, ops)
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -142,7 +144,7 @@ func latchLaneMessages(root *os.File, intent laneControlIntent, ops *laneControl
 		// Capture the accepted run's session from its own rooted event file,
 		// even if status has not yet persisted the process's session metadata.
 		if r.SessionID == "" {
-			fd, e := unix.Openat(int(dir.Fd()), "events.jsonl", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+			fd, e := unix.Openat(int(dir.Fd()), "events.jsonl", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 			if e != nil {
 				return errLaneControlUnavailable
 			}
@@ -179,6 +181,41 @@ func latchLaneMessages(root *os.File, intent laneControlIntent, ops *laneControl
 		}
 		return replaceLaneControl(dir, "message-hold.json", b, ops, "held")
 	})
+}
+
+func syncHeldMessage(dir *os.File, expected []byte, ops *laneControlIO) error {
+	fd, err := unix.Openat(int(dir.Fd()), "message-hold.json", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return errLaneControlUnavailable
+	}
+	f := os.NewFile(uintptr(fd), "held-message")
+	defer f.Close()
+	if err = checkLaneControlFile(fd); err != nil {
+		return err
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 4097))
+	if err != nil || !bytes.Equal(b, expected) {
+		return errLaneControlUnavailable
+	}
+	if err = laneControlCheckpoint(ops, "held.fsync"); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = laneControlCheckpoint(ops, "held.dirsync"); err != nil {
+		return err
+	}
+	if err = dir.Sync(); err != nil {
+		return err
+	}
+	// Confirm that the durable directory entry still names the validated,
+	// synced inode, rather than a replacement or a newly linked file.
+	var opened, named unix.Stat_t
+	if checkLaneControlFile(fd) != nil || unix.Fstat(fd, &opened) != nil || unix.Fstatat(int(dir.Fd()), "message-hold.json", &named, unix.AT_SYMLINK_NOFOLLOW) != nil || opened.Dev != named.Dev || opened.Ino != named.Ino {
+		return errLaneControlUnavailable
+	}
+	return nil
 }
 
 func laneHasHeldMessage(root *os.File, lane string) (bool, error) {
