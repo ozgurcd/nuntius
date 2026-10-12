@@ -54,6 +54,13 @@ No public native adapter, host registration or automatic grant is exposed.
 Existing manual-tool Ask approval still belongs to the owner's judge host.
 
 Dispatch reservations and phase transitions share one writer/replay predicate.
+Private ordered root/ancestor observations bind each canonical path to its
+corresponding approved write. The same predicate precedes native end/report
+and release transitions; missing or invalid evidence cannot become released
+ownership. Replay needs no current filesystem, while launch rechecks the exact
+captured paths and filesystem identities. Private evidence never enters public
+audit. A content-addressed record binds retained bytes; it does not authenticate
+a coherent same-user replacement or reconstruct an old filesystem.
 Uncertain launch stays bound to the full ID and canonical scope. Only exact
 process identity permits supervision or a signal; short IDs and remembered
 PIDs do not. Audit exposes safe event identity and fixed phase results, never

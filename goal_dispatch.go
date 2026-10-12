@@ -54,6 +54,7 @@ type goalDispatchRecord struct {
 	ApprovalRevision uint64              `json:"approval_revision"`
 	Delivery         goalBriefDelivery   `json:"delivery"`
 	Writes           []string            `json:"canonical_writes"`
+	Scope            []goalWriteEvidence `json:"scope_evidence"`
 	PID              int                 `json:"pid"`
 	ProcessStart     string              `json:"process_start"`
 	Job              string              `json:"job"`
@@ -130,10 +131,9 @@ func validGoalDispatchJSON(m map[string]any) bool {
 		default:
 			return false
 		}
-		if _, err := decodeNativeGoalSpec([]byte(d.Spec)); err != nil {
-			return false
-		}
-		if d.Writes == nil || len(d.Writes) > nativeGoalMaxList {
+		// This predicate includes strict approved-spec decoding. Do not parse
+		// the same sealed spec again before evaluating its ordered binding.
+		if !goalDispatchScopeValid(d) {
 			return false
 		}
 		for _, path := range d.Writes {
@@ -153,6 +153,9 @@ func goalDispatchScopeChanged(a, b string) bool {
 // One predicate for the writer, low-level candidate commit and saved replay.
 // Retained approval cannot invent, release or rebind a held launch.
 func goalDispatchHistoryValid(old, next goalReplayRecord, a, b goalRecordData, seals [][]byte) bool {
+	if !goalDispatchScopesValid(a) || !goalDispatchScopesValid(b) {
+		return false
+	}
 	if len(a.Dispatches) == 0 && len(b.Dispatches) == 0 {
 		return true
 	}
@@ -393,7 +396,7 @@ func (m *Manager) dispatchGoal(req goalDispatchRequest, ctx goalDispatchContext,
 		return goalDispatchResult{}, errGoalDispatch
 	}
 	d := goalDispatchRecord{Request: req, RunID: hex.EncodeToString(random), Phase: "reserved", Source: ctx.Source, Root: ctx.Profile.Root, Spec: string(approvedBytes), SealRef: old.sealRef, ApprovalRevision: data.ApprovalRevision, Delivery: delivery}
-	d.Writes, _, ok = goalAdmissionPaths(spec.Writes, ctx.Environment.Roots)
+	d.Writes, _, d.Scope, ok = goalCanonicalScope(spec.Writes, ctx.Environment.Roots)
 	if !ok {
 		return goalDispatchResult{}, errGoalDispatch
 	}
@@ -431,8 +434,8 @@ func (m *Manager) dispatchGoal(req goalDispatchRequest, ctx goalDispatchContext,
 		if code := goalAdmissionSourceState(spec, seal, ctx.Environment.SourceState); code != "" {
 			return errGoalDispatch
 		}
-		writes, repos, ok := goalAdmissionPaths(spec.Writes, ctx.Environment.Roots)
-		if !ok || !reflect.DeepEqual(writes, d.Writes) {
+		writes, repos, scope, ok := goalCanonicalScope(spec.Writes, ctx.Environment.Roots)
+		if !ok || !reflect.DeepEqual(writes, d.Writes) || !reflect.DeepEqual(scope, d.Scope) {
 			return errGoalDispatch
 		}
 		if len(repos) > 0 {
@@ -665,6 +668,9 @@ func goalDispatchPopulationValid(p *goalProjection) bool {
 			return false
 		}
 		for _, d := range data.Dispatches {
+			if !goalDispatchScopeValid(d) {
+				return false
+			}
 			if keys[d.Request.Key] || ids[d.RunID] {
 				return false
 			}

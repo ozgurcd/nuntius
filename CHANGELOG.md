@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Bind each native reservation's canonical write to immutable, ordered
+  repository-root and ancestor evidence. Refuse substituted paths on save,
+  replay and end/release; preserve genuine aliases and historical scope when
+  roots disappear, and recheck physical identity before launch.
+
 - Record actual native attempt ends automatically, including immediate exits,
   timeout and cancellation. Keep ended goals open for judge review, bind bounded
   report digests to the current attempt, and repair saved ends after journal or
@@ -11,8 +16,8 @@
 - Add internal dispatch of saved approved native goals with revision and retry
   checks, durable full-ID reservations, exact brief delivery and running
   receipts. Uncertain launch holds resources and adopts only the identified
-  child; native IDs refuse legacy text replacement. Public controls, automatic
-  end accounting and successors remain assigned to later steps.
+  child; native IDs refuse legacy text replacement. Public controls and
+  successors remain assigned to later steps.
 
 - Add internal native goal admission with shared locked Ready/Startable checks,
   current lane and source observations, canonical write/resource reservations,

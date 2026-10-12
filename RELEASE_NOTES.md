@@ -7,6 +7,11 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Native reservations keep an exact saved mapping from reviewed writes to
+  their physical repository paths. Changed mappings refuse on save, restart
+  replay and end/release. Genuine path aliases remain supported; a changed
+  repository identity prevents launch.
+
 - Internal native goals now record when their agent ends, even without a report
   or a separate tracking script. Ended work stays open until the judge reviews
   it. Saved ends and report observations can be repaired after restart; uncertain
@@ -15,7 +20,7 @@ and restart your MCP server or background dashboard to load the new binary.
 - Internal native dispatch now starts the saved approved brief by goal ID.
   A repeated request keeps its original run. If start is uncertain, the goal
   stays held for review rather than starting another child. Public goal
-  controls and automatic end/successor handling are not enabled yet.
+  controls and successor handling are not enabled yet.
 
 - Native admission now explains whether reviewed work is ready and whether a
   lane can start it. Pauses, missing review, unavailable claims and overlapping

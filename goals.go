@@ -253,6 +253,9 @@ func goalRecordHistoryValid(old, next goalReplayRecord, seals ...[]byte) bool {
 		return false
 	}
 	b, err := goalRecordMetadata(next)
+	// Metadata decoding applies goalDispatchScopeValid to every retained
+	// receipt before these end/report or unchanged-record shortcuts. Repeating
+	// strict spec parsing here adds cost without checking another observation.
 	if err == nil && (!reflect.DeepEqual(a.Ends, b.Ends) || !reflect.DeepEqual(a.Reports, b.Reports)) {
 		return goalAttemptsHistoryValid(old, next, a, b)
 	}

@@ -708,10 +708,29 @@ supervision.
 The journal stores a permanent receipt in the record's closed `dispatches`
 array. It binds request, original approved spec and seal, delivery descriptor,
 canonical write paths, full run ID, adapter source and launch phase. Resource
-names remain in the approved spec. Goal-wide and lane/write/resource holds
+names remain in the approved spec. Private `scope_evidence` retains one ordered
+observation per approved write: its exact write, physical repository root,
+lexical existing ancestor, resolved ancestor and root/ancestor filesystem
+identities. The common predicate reconstructs each canonical path from that
+observation and its approved suffix. It checks correspondence before phase,
+end/report, unchanged-record or release shortcuts. Retained observations cannot
+be replaced, even together with a matching replacement canonical path.
+Goal-wide and lane/write/resource holds
 survive cooperating managers and restart. Writer and replay share the same
 retained-phase predicate, including transitions that append no decision or
 keep the same seal. No scope edit can release unsettled work.
+
+Trusted roots may use genuine case aliases, symlinks, trailing separators or
+dot/parent components; links resolve before lexical normalization. Approved
+relative write grammar remains unchanged. In-root descendant links retain
+their observed transformation. Launch repeats the observation and requires the
+same paths and filesystem identities; changed roots or links refuse before
+start. Historical replay uses the saved evidence without accessing today's
+roots, so disappearance or relinking cannot rewrite old scope.
+Prototype reservations without this evidence fail closed and stay available
+on disk for owner review. They are not silently migrated, released or rewritten.
+This is structural integrity under trusted capture, not authentication of a
+coherent same-user rewrite or proof of a historical filesystem.
 
 The public goal stays approved while the internal phase is reserved or starting.
 The reservation and its audited intent sync before private run preparation.
@@ -737,7 +756,11 @@ Retry confirms durability before publishing the same result. A torn final
 frame remains nonvisible and holds native dispatch. Readers never repair it.
 Receipts are limited to eight per goal and the existing record, event and byte
 limits still apply; there is no eviction or forgotten retry key. Publication
-headroom is checked before starting. Capacity refusal requires owner review.
+headroom for dispatch publication is checked before starting. The retained
+evidence consumes the same record and aggregate historical byte budgets. This
+does not reserve unlimited terminal/report headroom: an end that cannot yet
+publish retains its private run observation for reconstruction and delivery
+remains held. Capacity refusal requires owner review.
 
 Native ends now use the observer below. Linked successors remain a later
 component; legacy reply and recovery cannot launch them for a stored native ID.

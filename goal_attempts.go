@@ -135,6 +135,9 @@ func validGoalAttemptsJSON(m map[string]any) bool {
 }
 
 func goalAttemptReleased(data goalRecordData, id string) bool {
+	if !goalDispatchScopesValid(data) {
+		return false
+	}
 	for _, e := range data.Ends {
 		if e.RunID == id {
 			return !e.Held
@@ -146,7 +149,7 @@ func goalAttemptReleased(data goalRecordData, id string) bool {
 // This is the sole end transition predicate, used by the writer and replay.
 // All retained approval, scope, seal and unrelated history remain identical.
 func applyGoalAttemptEnd(data goalRecordData, e goalAttemptEnd) (goalRecordData, error) {
-	if !validGoalAttemptEnd(e) || goalRecordTerminal(data.State) {
+	if !goalDispatchScopesValid(data) || !validGoalAttemptEnd(e) || goalRecordTerminal(data.State) {
 		return data, errGoalEndPending
 	}
 	for _, previous := range data.Ends {
@@ -186,7 +189,7 @@ func applyGoalAttemptEnd(data goalRecordData, e goalAttemptEnd) (goalRecordData,
 }
 
 func applyGoalAttemptReport(data goalRecordData, report goalAttemptReport) (goalRecordData, error) {
-	if !validGoalAttemptReport(report) || data.State != nativeGoalEnded || data.Attempt == nil || !data.Attempt.Ended || data.Attempt.ID != report.RunID || data.Attempt.ReportDigest != "" {
+	if !goalDispatchScopesValid(data) || !validGoalAttemptReport(report) || data.State != nativeGoalEnded || data.Attempt == nil || !data.Attempt.Ended || data.Attempt.ID != report.RunID || data.Attempt.ReportDigest != "" {
 		return data, errGoalEndPending
 	}
 	for _, e := range data.Ends {

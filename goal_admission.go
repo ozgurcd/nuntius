@@ -274,6 +274,10 @@ func goalAdmissionReservations(p *goalProjection, runs []Run, root *os.File, env
 			add(id, goalAdmissionScope{Writes: s.Writes, Resources: s.Resources})
 		}
 		for _, d := range data.Dispatches {
+			if !goalDispatchScopeValid(d) {
+				unknown = true
+				continue
+			}
 			if d.Phase == "failed" || goalAttemptReleased(data, d.RunID) {
 				continue
 			}
@@ -321,61 +325,9 @@ func goalAdmissionReservations(p *goalProjection, runs []Run, root *os.File, env
 }
 
 func goalAdmissionPaths(writes []string, roots map[string]string) ([]string, []string, bool) {
-	if !nativeStringSet(writes, nativeGoalMaxList, nativeWrite) {
-		return nil, nil, false
-	}
-	out, repos := []string{}, []string{}
-	seen := map[string]bool{}
-	for _, write := range writes {
-		name, rest, _ := strings.Cut(write, "/")
-		base := roots[name]
-		if !filepath.IsAbs(base) || filepath.Clean(base) != base {
-			return nil, nil, false
-		}
-		base, err := filepath.EvalSymlinks(base)
-		if err != nil {
-			return nil, nil, false
-		}
-		info, err := os.Stat(base)
-		if err != nil || !info.IsDir() {
-			return nil, nil, false
-		}
-		resolved, err := goalAdmissionCanonical(filepath.Join(base, filepath.FromSlash(rest)))
-		if err != nil || !goalAdmissionContains(base, resolved) {
-			return nil, nil, false
-		}
-		out = append(out, resolved)
-		if !seen[base] {
-			seen[base] = true
-			repos = append(repos, base)
-		}
-	}
+	out, repos, _, ok := goalCanonicalScope(writes, roots)
 	sort.Strings(repos)
-	return out, repos, true
-}
-
-func goalAdmissionCanonical(path string) (string, error) {
-	// Resolve an existing ancestor and preserve absent descendants. Broken
-	// symlinks and traversal outside the explicitly known repository refuse.
-	missing := []string{}
-	for {
-		_, err := os.Lstat(path)
-		if err == nil {
-			resolved, err := filepath.EvalSymlinks(path)
-			if err != nil {
-				return "", err
-			}
-			for i := len(missing) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, missing[i])
-			}
-			return resolved, nil
-		}
-		if !os.IsNotExist(err) || filepath.Dir(path) == path {
-			return "", err
-		}
-		missing = append(missing, filepath.Base(path))
-		path = filepath.Dir(path)
-	}
+	return out, repos, ok
 }
 
 func goalAdmissionContains(parent, child string) bool {
