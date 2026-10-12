@@ -17,6 +17,165 @@ import (
 
 type webGuardBody struct{ reads int }
 
+func TestLaneHTTPHeldProjection(t *testing.T) {
+	for _, session := range []string{"held-session", ""} {
+		t.Run(map[bool]string{true: "session", false: "no-session"}[session != ""], func(t *testing.T) {
+			m, h := heldReviewFixture(t, session)
+			w, _ := NewWeb(m, "127.0.0.1:8123")
+			snapshot := func() map[string][]byte {
+				files := map[string][]byte{}
+				if err := filepath.WalkDir(m.store, func(p string, d os.DirEntry, err error) error {
+					if err == nil && !d.IsDir() {
+						files[p], err = os.ReadFile(p)
+					}
+					return err
+				}); err != nil {
+					t.Fatal("fixture census failed")
+				}
+				return files
+			}
+			before := snapshot()
+			read := func() map[string]any {
+				req := httptest.NewRequest("GET", "http://localhost:8123/data", nil)
+				req.Header.Set("X-Nuntius-Token", w.token)
+				out := httptest.NewRecorder()
+				w.ServeHTTP(out, req)
+				var data map[string]any
+				if out.Code != 200 || json.Unmarshal(out.Body.Bytes(), &data) != nil {
+					t.Fatal("operational read failed")
+				}
+				v, ok := data["held_messages"].(map[string]any)
+				if !ok || v["schema_version"] != float64(1) || v["status"] != "ok" {
+					t.Fatal("held review projection missing")
+				}
+				return v
+			}
+			v := read()
+			rows, ok := v["messages"].([]any)
+			if !ok || len(rows) != 1 {
+				t.Fatal("held identity missing")
+			}
+			row := rows[0].(map[string]any)
+			if row["lane"] != h.Lane || row["run_id"] != h.RunID || row["goal_id"] != h.GoalID || row["content_revision"] != float64(h.Revision) || row["content_sha256"] != h.ContentSHA256 || row["state"] != "held_for_review" || row["text"] != Redact(reviewedText) || row["session_available"] != (session != "") || row["delivery_confirmed"] != false {
+				t.Fatal("held review identity/content/session projection differs")
+			}
+			for _, key := range []string{"session_id", "run_sha256", "path"} {
+				if _, exists := row[key]; exists {
+					t.Fatal("private binding field exposed")
+				}
+			}
+			after := snapshot()
+			if len(before) != len(after) {
+				t.Fatal("GET created held/control/audit artifacts")
+			}
+			for p, b := range before {
+				if !bytes.Equal(b, after[p]) {
+					t.Fatal("GET changed held/control/audit artifacts")
+				}
+			}
+			laneReply(t, laneHTTP(t, w, "/held-message", heldBody(h, "discard-held")), 200, "")
+			row = read()["messages"].([]any)[0].(map[string]any)
+			if row["state"] != "discarded" || row["text"] != "" || row["delivery_confirmed"] != false {
+				t.Fatal("terminal discard receipt not projected")
+			}
+		})
+	}
+}
+
+func TestLaneHTTPHeldProjectionBound(t *testing.T) {
+	m, h := heldReviewFixture(t, "held-session")
+	original, err := loadRun(filepath.Join(m.store, "runs", h.RunID), h.RunID)
+	if err != nil || original == nil {
+		t.Fatal("fixture run unavailable")
+	}
+	for i := 1; i <= 65; i++ {
+		r := *original
+		r.ID = fmt.Sprintf("%032x", i)
+		r.Started = original.Started.Add(-time.Duration(i) * time.Minute)
+		if err := privateDir(filepath.Join(m.store, "runs", r.ID)); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.save(&r); err != nil {
+			t.Fatal(err)
+		}
+		binding := h
+		binding.RunID = r.ID
+		b, _ := json.Marshal(messageReceipt{Version: 1, Binding: binding, State: "discarded", Discarded: true})
+		if err := atomicPrivate(filepath.Join(m.store, "runs", r.ID, "message-receipt.json"), b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w, _ := NewWeb(m, "127.0.0.1:8123")
+	req := httptest.NewRequest("GET", "http://localhost:8123/data", nil)
+	req.Header.Set("X-Nuntius-Token", w.token)
+	out := httptest.NewRecorder()
+	w.ServeHTTP(out, req)
+	var data struct {
+		HeldMessages struct {
+			Status               string            `json:"status"`
+			Messages             []json.RawMessage `json:"messages"`
+			OlderReceiptsOmitted bool              `json:"older_receipts_omitted"`
+		} `json:"held_messages"`
+	}
+	if out.Code != 200 || json.Unmarshal(out.Body.Bytes(), &data) != nil || data.HeldMessages.Status != "ok" || len(data.HeldMessages.Messages) != 65 || !data.HeldMessages.OlderReceiptsOmitted {
+		t.Fatal("bounded terminal history hid the active held message")
+	}
+	var first map[string]any
+	if json.Unmarshal(data.HeldMessages.Messages[0], &first) != nil || first["run_id"] != h.RunID || first["state"] != "held_for_review" {
+		t.Fatal("active review must precede terminal receipt history")
+	}
+}
+
+func TestLaneHTTPHeldProjectionSend(t *testing.T) {
+	m, h := heldReviewFixture(t, "held-session")
+	w, _ := NewWeb(m, "127.0.0.1:8123")
+	started := time.Now().UTC()
+	t.Cleanup(func() {
+		_ = m.Cancel(h.Lane)
+		waitState(t, m, h.Lane, "ended")
+		runs, err := m.history()
+		if err != nil {
+			t.Error("fixture history failed")
+		}
+		for _, r := range runs {
+			if sameProcess(r) {
+				t.Error("offline fake child survived")
+			}
+		}
+		t.Logf("offline projected-send fixture start=%s end=%s teardown=verified", started.Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
+	})
+	laneReply(t, laneHTTP(t, w, "/held-message", heldBody(h, "send-held")), 200, "")
+	read := func() webHeldSnapshot {
+		req := httptest.NewRequest("GET", "http://localhost:8123/data", nil)
+		req.Header.Set("X-Nuntius-Token", w.token)
+		out := httptest.NewRecorder()
+		w.ServeHTTP(out, req)
+		var data struct {
+			HeldMessages webHeldSnapshot `json:"held_messages"`
+		}
+		if out.Code != 200 || json.Unmarshal(out.Body.Bytes(), &data) != nil || data.HeldMessages.Status != "ok" || len(data.HeldMessages.Messages) != 1 {
+			t.Fatal("receipt projection failed")
+		}
+		return data.HeldMessages
+	}
+	row := read().Messages[0]
+	if row.State != "consumed" || !row.DeliveryConfirmed || row.RunID != h.RunID || row.Text != "" {
+		t.Fatal("identified consumed receipt missing")
+	}
+	heldReviewChildren(t, m, h, 1)
+	original, err := loadRun(filepath.Join(m.store, "runs", h.RunID), h.RunID)
+	if err != nil || original == nil {
+		t.Fatal("original fixture run unavailable")
+	}
+	original.ContinueRunID = strings.Repeat("d", 32)
+	if err := m.save(original); err != nil {
+		t.Fatal(err)
+	}
+	if read().Messages[0].DeliveryConfirmed {
+		t.Fatal("wrong follow-up identity claimed delivery")
+	}
+}
+
 func (b *webGuardBody) Read([]byte) (int, error) { b.reads++; return 0, errors.New("RAW-PRIVATE") }
 func (b *webGuardBody) Close() error             { return nil }
 

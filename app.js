@@ -75,6 +75,7 @@ let queueData = null, queueFetched = 0, queueLoading = false, queueFailure = '';
 const queueRows = new Map();
 let laneControls = null;
 const laneSaves = new Map();
+const heldRows = new Map(), heldSaves = new Map(), retainedHolds = new Map();
 // One control client for Agents and future native Queue consumers. No storage.
 function validLaneControls(c) {
   return c?.lane_control_version === 1 && Number.isSafeInteger(c.revision) && c.revision >= 0 &&
@@ -134,11 +135,14 @@ function updateLaneControls(v, lane) {
 function clearLaneControls() {
   for (const request of laneSaves.values()) request.cancel();
   laneSaves.clear(); laneControls = null;
+  for (const request of heldSaves.values()) request.cancel();
+  heldSaves.clear();
 }
 async function setLaneControl(lane, operation, afterCurrent = false) {
   if (!authenticated() || laneSaves.has(lane)) return;
-  const c = controlFor(lane), v = cards.get(lane);
-  if (!v || !c || c.phase === 'unavailable' || (operation === 'pause' && !c.configured)) return;
+  const c = controlFor(lane), v = cards.get(lane) || retainedHolds.get(lane);
+  const retainedResume = operation === 'resume' && retainedHolds.get(lane) === v && c && !c.configured && !c.blockers.includes('lane_control_unavailable');
+  if (!v || !c || (c.phase === 'unavailable' && !retainedResume) || (operation === 'pause' && !c.configured)) return;
   const epoch = authEpoch, controller = new AbortController();
   let rejectSave;
   const cancelled = new Promise((_, reject) => { rejectSave = reject; });
@@ -146,7 +150,7 @@ async function setLaneControl(lane, operation, afterCurrent = false) {
   const current = () => laneSaves.get(lane) === request && epoch === authEpoch && authenticated();
   laneSaves.set(lane, request);
   setText(v.controlStatus, 'Save pending · current hold is not yet confirmed. Sign out stays available.');
-  updateLaneControls(v, lane);
+  if (cards.get(lane) === v) updateLaneControls(v, lane); else updateRetainedHold(v, c);
   const payload = {schema_version:1,lane,operation,expected_revision:laneControls.revision};
   if (operation === 'pause') payload.after_current = afterCurrent;
   const timer = setTimeout(request.cancel, 10000);
@@ -187,11 +191,154 @@ async function setLaneControl(lane, operation, afterCurrent = false) {
       laneSaves.delete(lane);
       if (epoch === authEpoch && authenticated()) {
         for (const [name,view] of cards) updateLaneControls(view, name);
+        renderRetainedHolds();
+        updateHeldControls();
         updateMessageControls();
       }
     }
   }
   if (reread && epoch === authEpoch && authenticated()) await refresh(true);
+}
+
+function makeRetainedHold(c) {
+  const root = node('article', 'held-card'), name = node('h4', '', c.name);
+  const reason = node('p', 'hint'), controlStatus = node('p', 'hint');
+  controlStatus.setAttribute('role', 'status');
+  const resume = button('Resume retained lane', '', () => setLaneControl(c.name, 'resume'));
+  root.append(name, reason, resume, controlStatus);
+  return {root, reason, resume, controlStatus};
+}
+function updateRetainedHold(v, c) {
+  setText(v.reason, c.paused ? 'Paused · no longer configured. ' + blockerWords(c.blockers) : 'Hold cleared · still not configured. This action started no work.');
+  v.resume.disabled = !token || laneSaves.has(c.name) || !c.paused || c.blockers.includes('lane_control_unavailable');
+}
+function renderRetainedHolds() {
+  const entries = (laneControls?.lanes || []).filter(c => !c.configured && (c.paused || retainedHolds.has(c.name)));
+  reconcile(el('retainedHolds'), entries, retainedHolds, makeRetainedHold, updateRetainedHold, c => c.name);
+  for (const [name,v] of retainedHolds) if (!entries.some(c => c.name === name)) {
+    v.resume.disabled = true;
+    setText(v.reason, 'Current state for this retained hold is unavailable. Read again before another action.');
+  }
+  el('retainedSection').hidden = el('retainedHolds').children.length === 0;
+}
+function validHeldSnapshot(value) {
+  return value?.schema_version === 1 && value.status === 'ok' && typeof value.older_receipts_omitted === 'boolean' && Array.isArray(value.messages) && value.messages.length <= 128 &&
+    new Set(value.messages.map(m => m?.lane + ':' + m?.run_id)).size === value.messages.length && value.messages.every(m =>
+      m && typeof m.lane === 'string' && /^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$/.test(m.lane) && typeof m.run_id === 'string' && /^[a-f0-9]{32}$/.test(m.run_id) && typeof m.goal_id === 'string' &&
+      Number.isSafeInteger(m.content_revision) && m.content_revision > 0 && typeof m.content_sha256 === 'string' && /^[a-f0-9]{64}$/.test(m.content_sha256) &&
+      typeof m.text === 'string' && m.text.length <= 16384 && ['held_for_review','reserved','consumed','discarded'].includes(m.state) &&
+      typeof m.session_available === 'boolean' && typeof m.delivery_confirmed === 'boolean' && typeof m.content_discarded === 'boolean');
+}
+function heldIdentity(m) { return m.lane + ':' + m.run_id; }
+function sameHeldContent(a, b) {
+  return a && b && heldIdentity(a) === heldIdentity(b) && a.goal_id === b.goal_id && a.content_revision === b.content_revision && a.content_sha256 === b.content_sha256 && a.text === b.text;
+}
+function heldSendReason(m) {
+  const c = controlFor(m.lane);
+  if (!c || c.phase === 'unavailable') return 'Lane controls are unavailable. Read current state before sending.';
+  if (c.paused) return 'Lane is paused. Resume clears only the lane hold; the message still needs review.';
+  if (lastData?.freeze) return 'Dispatch is frozen. Sending is blocked; reading and discard remain available.';
+  if (!c.configured) return 'Lane is no longer configured. Sending is blocked.';
+  if (!m.session_available) return 'The original session is unavailable. Sending is blocked.';
+  const blockers = c.blockers.filter(b => b !== 'held_message');
+  return blockers.length ? blockerWords(blockers) + '. Sending is blocked.' : '';
+}
+function makeHeldRow(m) {
+  const root = node('article', 'held-card'), title = node('h4'), state = node('p', 'hint'), guard = node('p', 'hint');
+  const review = node('details'), summary = node('summary', '', 'Review the held message and original identity');
+  const text = node('pre', 'report-text'), identity = node('p', 'hint');
+  const label = node('label', 'follow'), confirm = node('input'); confirm.type = 'checkbox';
+  label.append(confirm, node('span', '', 'I reviewed this exact message for its original goal.'));
+  const send = button('Send reviewed message', 'primary', () => mutateHeld(heldIdentity(m), 'send-held'));
+  const discard = button('Discard reviewed message', '', () => mutateHeld(heldIdentity(m), 'discard-held'));
+  const actions = node('div', 'actions'); actions.append(send, discard);
+  const status = node('p', 'hint'); status.setAttribute('role', 'status');
+  review.append(summary, identity, text, label); root.append(title, state, review, guard, actions, status);
+  const v = {root,title,state,guard,review,text,identity,confirm,send,discard,status,data:m};
+  confirm.addEventListener('change', () => updateHeldRow(v, v.data));
+  review.addEventListener('toggle', () => updateHeldRow(v, v.data));
+  return v;
+}
+function updateHeldRow(v, m) {
+  if (!sameHeldContent(v.data, m)) v.confirm.checked = false;
+  v.data = m;
+  setText(v.title, m.lane + ' · Original goal: ' + m.goal_id);
+  setText(v.identity, 'Original run: ' + m.run_id + ' · Content revision: ' + m.content_revision + ' · Review digest: ' + m.content_sha256);
+  setText(v.text, m.text || 'Message content is no longer retained with this receipt.');
+  setText(v.state, m.content_discarded && m.state === 'reserved' ? 'Reviewed content discarded. A possible follow-up run still needs review; discard does not cancel it.' : m.state === 'held_for_review' ? 'Held message needs your review. Resume never sends it automatically.' :
+    m.state === 'discarded' ? 'Discarded · durable receipt for this reviewed message.' :
+    m.state === 'consumed' && m.delivery_confirmed ? 'Sent to a follow-up run · durable receipt and original run identity confirmed. This does not confirm successful work.' :
+    'Delivery is not confirmed. A reservation or receipt needs a separate review; do not send again automatically.');
+  const snapshot = lastData?.held_messages;
+  const present = validHeldSnapshot(snapshot) && snapshot.messages.some(current => sameHeldContent(current, m) && current.state === m.state);
+  if (!present) setText(v.state, 'Last-known review state: ' + v.state.textContent);
+  const pending = heldSaves.has(heldIdentity(m)), reason = heldSendReason(m);
+  setText(v.guard, present ? reason : 'Current held-message state is unavailable. Read again before another action.');
+  const reviewRequired = !token || pending || !present || !v.review.open || !v.confirm.checked;
+  v.send.disabled = acting || reviewRequired || m.state !== 'held_for_review' || !!reason;
+  v.discard.disabled = acting || reviewRequired || !['held_for_review','reserved'].includes(m.state) || !!m.content_discarded;
+}
+function updateHeldControls() {
+  for (const v of heldRows.values()) updateHeldRow(v, v.data);
+}
+function renderHeldMessages(d) {
+  const value = d.held_messages;
+  if (!validHeldSnapshot(value)) {
+    setText(el('heldSummary'), 'Could not read held messages or receipts. Last-known messages stay visible; no delivery is confirmed.');
+    updateHeldControls(); return;
+  }
+  setText(el('heldSummary'), (value.messages.length ? 'Review the original goal and message before Send or Discard. Resume never replays a held message.' : 'No held messages or receipts in this received snapshot.') +
+    (value.older_receipts_omitted ? ' Older terminal receipts are outside this view; all readable active reviews are retained.' : ''));
+  const pinned = heldSaves.size || Array.from(heldRows.values()).some(v => busy(v.root) || v.review.open);
+  let entries = value.messages;
+  if (pinned) {
+    const received = new Map(value.messages.map(m => [heldIdentity(m), m]));
+    entries = Array.from(heldRows.values()).map(v => received.get(heldIdentity(v.data)) || v.data)
+      .concat(value.messages.filter(m => !heldRows.has(heldIdentity(m))));
+  }
+  reconcile(el('heldMessages'), entries, heldRows, makeHeldRow, updateHeldRow, heldIdentity);
+  // A disappeared row that owns focus stays readable but cannot be acted on.
+  updateHeldControls();
+}
+async function mutateHeld(key, operation) {
+  if (!authenticated() || heldSaves.has(key) || !['send-held','discard-held'].includes(operation)) return;
+  const v = heldRows.get(key), snapshot = lastData?.held_messages;
+  if (!v || !validHeldSnapshot(snapshot)) return;
+  const m = snapshot.messages.find(m => heldIdentity(m) === key);
+  if (!sameHeldContent(v.data, m) || !v.review.open || !v.confirm.checked || acting ||
+      (operation === 'send-held' ? m.state !== 'held_for_review' || heldSendReason(m) : !['held_for_review','reserved'].includes(m.state) || m.content_discarded)) return;
+  const epoch = authEpoch, controller = new AbortController(); let rejectSave;
+  const cancelled = new Promise((_, reject) => { rejectSave = reject; });
+  const request = {cancel: () => { controller.abort(); rejectSave(new Error('held action unconfirmed')); }};
+  const current = () => heldSaves.get(key) === request && epoch === authEpoch && authenticated();
+  const payload = {schema_version:1,lane:m.lane,run_id:m.run_id,content_revision:m.content_revision,content_sha256:m.content_sha256,operation};
+  heldSaves.set(key, request); updateHeldControls();
+  setText(v.status, 'Action pending. This held message has not been confirmed sent or discarded. Sign out stays available.');
+  const timer = setTimeout(request.cancel, 10000);
+  try {
+    const {response, data} = await Promise.race([cancelled, (async () => {
+      const response = await fetch('/held-message', {method:'POST',headers:{'X-Nuntius-Token':token,'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal});
+      if (!current()) return {};
+      if (response.status === 403) return {response};
+      return {response, data:await response.json()};
+    })()]);
+    if (!current()) return;
+    if (response.status === 403) { signOut(); return; }
+    const valid = response.ok && data?.schema_version === 1 && data.operation === operation && /^[a-f0-9]{32}$/.test(data.run_id) && (operation !== 'discard-held' || data.run_id === m.run_id);
+    setText(v.status, valid ? 'The reviewed action was accepted. Reading its durable receipt before confirming the result.' :
+      data?.code === 'revision_conflict' ? 'The reviewed message changed. Nothing is confirmed; read its current identity and review again.' :
+      'Action not confirmed. The message may have changed. Reading its receipt; do not retry automatically.');
+  } catch {
+    if (!current()) return;
+    setText(v.status, 'Action not confirmed. The message may have changed. Reading its receipt; do not retry automatically.');
+  } finally {
+    clearTimeout(timer);
+    if (heldSaves.get(key) === request) {
+      heldSaves.delete(key); v.confirm.checked = false;
+      if (epoch === authEpoch && authenticated()) updateHeldControls();
+    }
+  }
+  if (epoch === authEpoch && authenticated()) await refresh(true);
 }
 // Snapshot GETs only. Event streams and mutation POSTs have separate lifetimes.
 // Explicit settlement also handles a transport that fails to honor abort.
@@ -790,9 +937,20 @@ function render(d) {
   full.setAttribute('aria-hidden', 'true'); short.setAttribute('aria-hidden', 'true');
   el('freeze').replaceChildren(full, short);
   el('freezeButton').hidden = frozen; el('unfreezeButton').hidden = !frozen;
-  setText(el('runningCount'), d.lanes.filter(s => s.state === 'running').length);
-  setText(el('idleCount'), d.lanes.filter(s => s.state === 'idle').length);
-  setText(el('endedCount'), d.lanes.filter(s => !['running', 'idle'].includes(s.state)).length);
+  const controls = d.lane_control_version === 1 && validLaneControls(d.lane_control) ? d.lane_control.lanes : null;
+  const running = d.lanes.filter(s => s.state === 'running').length;
+  const available = controls ? d.lanes.filter(s => {
+    const c = controls.find(c => c.name === s.lane);
+    return s.state !== 'running' && c?.configured && c.phase === 'enabled' && !c.paused && c.dispatch_eligible && !c.blockers.length && !d.freeze;
+  }).length : null;
+  const paused = controls ? controls.filter(c => c.paused).length : null;
+  const overlap = controls ? d.lanes.filter(s => s.state === 'running' && controls.find(c => c.name === s.lane)?.paused).length : null;
+  setText(el('runningCount'), running);
+  setText(el('idleCount'), available ?? '—');
+  setText(el('pausedCount'), paused ?? '—');
+  setText(el('endedCount'), d.lanes.filter(s => ['ended','ended_no_report','failed','cancelled','timed_out','interrupted'].includes(s.state)).length);
+  setText(el('countMeaning'), 'One received operational snapshot. Running counts current runs. Available means configured, not busy and no known or unknown holds. Paused includes draining and retained holds; counts overlap, never add them as separate lanes. ' +
+    (overlap == null ? 'Lane controls are unknown; Available and Paused counts are unavailable.' : overlap + ' running lane' + (overlap === 1 ? '' : 's') + ' also paused: each is the same lane. Ended counts process outcomes independently of holds.'));
   setText(el('agentsTabCount'), d.lanes.filter(s => s.state === 'running').length);
   setText(el('notesTabCount'), d.notes.filter(n => !n.read).length);
   setText(el('questionsTabCount'), d.history.filter(r => {
@@ -803,6 +961,7 @@ function render(d) {
   el('questionsTabCount').title = 'Report attention among ' + d.history.length + ' received attempts; repeated resumed questions are counted per attempt. Review state is not independently checked.';
   renderPanels(d);
   updateMessageControls();
+  updateHeldControls();
 }
 function panelReady(id, shown) {
   const panel = el(id);
@@ -815,7 +974,9 @@ function renderPanels(d, shown = '') {
     for (const [lane,v] of cards) v.root.hidden = !d.lanes.some(s => s.lane === lane) || (!!laneSelection && lane !== laneSelection);
     renderLane(d);
     el('agentsEmpty').hidden = d.lanes.length !== 0;
+    renderRetainedHolds();
   }
+  if (!el('messages').hidden) renderHeldMessages(d);
   if (panelReady('messages', shown)) {
     fillFilter(el('noteLane'), d.lanes.map(s => s.lane), 'Judge (shared)');
     const select = el('lane'), chosen = select.value;
@@ -888,7 +1049,7 @@ async function refresh(replace = false) {
 function signedOutView() {
   clearLaneControls();
   lastData = undefined;
-  for (const cache of [cards, runs, notes, laneRuns, audits, agentTabs]) {
+  for (const cache of [cards, runs, notes, laneRuns, audits, agentTabs, heldRows, retainedHolds]) {
     for (const v of cache.values()) {
       v.resetCancel?.(); v.detail?.replaceChildren(); v.tailText?.replaceChildren();
       if (v.tailState) { v.tailState.lines = []; v.tailState.run = ''; }
@@ -899,6 +1060,12 @@ function signedOutView() {
   renderedPanels.clear(); laneSelection = '';
   el('agentOrderNotice').hidden = true;
   setText(el('messageHold'),'');
+  setText(el('heldSummary'),''); setText(el('countMeaning'),'');
+  el('heldMessages').replaceChildren(); el('retainedHolds').replaceChildren(); el('retainedSection').hidden = true;
+  el('lane').replaceChildren(); el('lane').value = ''; el('noteLane').replaceChildren(); el('noteLane').value = '';
+  for (const id of ['auditLane','auditAction']) { el(id).replaceChildren(); el(id).value = ''; }
+  el('auditFilter').value = '';
+  setText(el('auditCount'),'');
   for (const id of ['message','note','filter']) el(id).value = '';
   for (const id of ['laneTail','laneNotes','laneSignals','oversight','historyBound']) { el(id).replaceChildren(); delete el(id).dataset.value; }
   el('laneDetail').hidden = true;
@@ -911,7 +1078,7 @@ function signedOutView() {
   stateBadge(el('freeze'), 'Signed out');
   el('freeze').title = 'Signed out';
   el('freeze').setAttribute('aria-label', 'Signed out');
-  for (const id of ['runningCount','idleCount','endedCount','agentsTabCount','notesTabCount','questionsTabCount','queueTabCount']) setText(el(id), '—');
+  for (const id of ['runningCount','idleCount','pausedCount','endedCount','agentsTabCount','notesTabCount','questionsTabCount','queueTabCount']) setText(el(id), '—');
   el('questionsTabCount').title = '';
   lastUpdate = 0;
   setText(el('updated'), 'Waiting for first update');
@@ -945,6 +1112,7 @@ async function action(name, lane = '', text = '', stop = false) {
     acting = false; buttons.forEach(b => { b.disabled = false; }); settingsUpdate();
     for (const [name,view] of cards) updateLaneControls(view,name);
     updateMessageControls();
+    updateHeldControls();
   }
   if (ok) await refresh();
   return ok;

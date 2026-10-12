@@ -256,7 +256,7 @@ const make = async (tab='queue') => {const clock={now:Date.parse(queueExample.up
 
 // Lane controls share the shipped script and offline DOM; no real HTTP or agents.
 func TestDashboardLaneControls(t *testing.T) {
-	for _, name := range []string{"presentation", "schema", "save", "conflict", "uncertainty", "revocation", "deadline", "order_focus", "unavailable_revision", "stale_pause", "stale_resume", "unchanged"} {
+	for _, name := range []string{"presentation", "schema", "save", "conflict", "uncertainty", "revocation", "deadline", "order_focus", "unavailable_revision", "stale_pause", "stale_resume", "unchanged", "held_resume", "held_guards", "held_delivery", "held_discard", "held_wrong_run", "held_uncertainty", "held_focus", "held_signout", "held_counts"} {
 		t.Run(name, func(t *testing.T) {
 			assets := map[string]any{"test": name}
 			for key, path := range map[string]string{"script": "app.js", "page": "index.html", "css": "app.css"} {
@@ -278,7 +278,11 @@ func TestDashboardLaneControls(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			prefix := dashboardRuntimeTest[:strings.Index(dashboardRuntimeTest, "(async () => {")]
-			cmd := exec.CommandContext(ctx, "node", "-e", prefix+dashboardLaneControlTest)
+			test := dashboardLaneControlTest
+			if strings.HasPrefix(name, "held_") {
+				test = dashboardHeldViewsTest
+			}
+			cmd := exec.CommandContext(ctx, "node", "-e", prefix+test)
 			cmd.Stdin = bytes.NewReader(input)
 			var diagnostic bytes.Buffer
 			cmd.Stderr = &diagnostic
@@ -288,6 +292,116 @@ func TestDashboardLaneControls(t *testing.T) {
 		})
 	}
 }
+
+const dashboardHeldViewsTest = `
+const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {resolve,promise};};
+const reply=(data,status=200)=>({ok:status===200,status,json:async()=>data});
+const receipt=(run='a'.repeat(32))=>({lane:'codex-1',run_id:run,goal_id:'ORIGINAL-GOAL',content_revision:1,content_sha256:'b'.repeat(64),text:'<img src=x onerror=alert(1)> Review my original message.',state:'held_for_review',session_available:true,delivery_confirmed:false,content_discarded:false});
+const inject=(h,d)=>{h.context.fixture=d;vm.runInContext('render(fixture)',h.context);};
+const make=async()=>{
+ const d=JSON.parse(JSON.stringify(input.data));d.held_messages={schema_version:1,status:'ok',older_receipts_omitted:false,messages:[receipt()]};
+ d.lane_control.lanes.find(l=>l.name==='codex-1').blockers=['held_message'];
+ d.lane_control.lanes.find(l=>l.name==='codex-1').dispatch_eligible=false;
+ const h=start('#messages',new Map(),'?token=fixture-auth');await settle();inject(h,d);return {h,d};
+};
+const row=h=>vm.runInContext('heldRows.values().next().value',h.context);
+const review=async h=>{const v=row(h);v.review.open=true;v.confirm.checked=true;v.confirm.listeners.change();return v;};
+const posts=h=>h.calls.filter(c=>c.options?.method==='POST');
+(async()=>{
+ predicate='A10/U03 '+input.test+' exists on shipped assets';
+ const {h,d}=await make();
+ check(h.ids.heldMessages && h.ids.heldMessages.children.length===1,'held message review is visible');
+ if(input.test==='held_resume'){
+  const v=row(h),c=d.lane_control.lanes.find(l=>l.name==='codex-1');c.paused=true;c.phase='paused';c.blockers=['lane_paused','held_message'];inject(h,d);
+  vm.runInContext("selectTab('agents')",h.context);const card=vm.runInContext("cards.get('codex-1')",h.context);
+  h.context.fetch=async(path,o)=>{h.calls.push({path,options:o});if(o.method==='POST'){const controls=JSON.parse(JSON.stringify(d.lane_control));const lane=controls.lanes.find(l=>l.name==='codex-1');lane.paused=false;lane.phase='enabled';lane.blockers=['held_message'];return reply({schema_version:1,revision:0,paused:false,changed:true,lane_control:controls});}return reply(d);};
+  await card.resume.click();await settle();check(card.controlStatus.textContent.includes('started no work'),'resume explains no launch');
+  c.paused=false;c.phase='enabled';c.blockers=['held_message'];inject(h,d);vm.runInContext("selectTab('messages')",h.context);
+  check(row(h)===v && v.root.textContent.includes('ORIGINAL-GOAL') && v.root.textContent.includes('needs your review'),'resume and new snapshot retain held message');
+  check(posts(h).length===1 && posts(h)[0].path==='/lane-control','resume never replays a message');
+ }
+ if(input.test==='held_guards'){
+  const v=await review(h),c=d.lane_control.lanes.find(l=>l.name==='codex-1');check(!v.send.disabled,'reviewed enabled session can send');
+  for(const guard of ['paused','frozen','session','running','unknown','missing','removed','freeze_unavailable']){
+   c.paused=false;c.phase='enabled';c.configured=true;c.blockers=['held_message'];d.freeze=null;d.held_messages.messages[0].session_available=true;
+   if(guard==='paused'){c.paused=true;c.phase='paused';c.blockers.push('lane_paused');}
+   if(guard==='frozen')d.freeze={reason:'Fixture freeze'};
+   if(guard==='session')d.held_messages.messages[0].session_available=false;
+   if(guard==='running')c.blockers.push('running');
+   if(guard==='unknown')c.phase='unavailable';
+   if(guard==='removed')c.configured=false;
+   if(guard==='freeze_unavailable')c.blockers.push('freeze_unavailable');
+   const saved=d.lane_control.lanes;if(guard==='missing')d.lane_control.lanes=saved.filter(l=>l!==c);
+   inject(h,d);check(v.send.disabled && !v.discard.disabled,'send blocked but reviewed discard remains explicit: '+guard);
+   const before=posts(h).length;await vm.runInContext("mutateHeld('codex-1:'+ 'a'.repeat(32),'send-held')",h.context);check(posts(h).length===before,'guard checked again before send '+guard);d.lane_control.lanes=saved;
+  }
+  d.held_messages.status='unavailable';inject(h,d);check(v.send.disabled && v.discard.disabled && v.root.textContent.includes('Last-known'),'unavailable receipt retains last-known message with both actions blocked');
+ }
+ if(input.test==='held_delivery'||input.test==='held_discard'){
+  const operation=input.test==='held_delivery'?'send-held':'discard-held',v=row(h);check(v.send.disabled && v.discard.disabled,'explicit content review required');
+  await review(h);let gets=0;h.context.fetch=async(path,o)=>{h.calls.push({path,options:o});if(o.method==='POST')return reply({schema_version:1,operation,run_id:operation==='send-held'?'c'.repeat(32):'a'.repeat(32)});gets++;return reply(d);};
+  await (operation==='send-held'?v.send:v.discard).click();await settle();
+  const call=posts(h)[0],body=JSON.parse(call.options.body);
+  check(call.path==='/held-message' && JSON.stringify(body)===JSON.stringify({schema_version:1,lane:'codex-1',run_id:'a'.repeat(32),content_revision:1,content_sha256:'b'.repeat(64),operation}),'exact A08 identity-bound schema');
+  check(call.options.headers['Content-Type']==='application/json' && gets===1,'mutation rereads receipt once');
+  check(v.root.textContent.includes('ORIGINAL-GOAL') && !v.status.textContent.includes('delivered'),'HTTP success alone does not consume or claim delivery');
+  d.held_messages.messages[0].state=operation==='send-held'?'consumed':'discarded';d.held_messages.messages[0].text='';d.held_messages.messages[0].delivery_confirmed=operation==='send-held';inject(h,d);
+  check(v.state.textContent.includes(operation==='send-held'?'Sent to a follow-up run':'Discarded') && v.send.disabled && v.discard.disabled,'durable terminal receipt confirms exact explicit result');
+ }
+ if(input.test==='held_wrong_run'){
+  const v=await review(h);d.held_messages.messages.push(receipt('d'.repeat(32)));inject(h,d);const other=vm.runInContext("heldRows.get('codex-1:'+ 'd'.repeat(32))",h.context);
+  h.context.fetch=async(path,o)=>{h.calls.push({path,options:o});return o.method==='POST'?reply({code:'revision_conflict'},409):reply(d);};
+  await v.discard.click();check(v.root.textContent.includes('needs your review') && other.root.textContent.includes('needs your review'),'refused stale identity consumes neither run');
+  d.held_messages.messages[0].content_revision=2;d.held_messages.messages[0].content_sha256='e'.repeat(64);inject(h,d);
+  check(!v.confirm.checked && v.send.disabled && v.discard.disabled,'changed content requires a new explicit review');
+  d.held_messages.messages=d.held_messages.messages.slice(1);inject(h,d);const before=posts(h).length;
+  await vm.runInContext("mutateHeld('codex-1:'+ 'a'.repeat(32),'discard-held')",h.context);check(posts(h).length===before && other.root.textContent.includes('needs your review'),'vanished original cannot consume replacement');
+ }
+ if(input.test==='held_uncertainty')for(const ending of ['network','uncertain','malformed','deadline-fetch','deadline-body']){
+  const {h,d}=await make(),v=await review(h),p=deferred();let gets=0;
+  h.context.fetch=async(path,o)=>{h.calls.push({path,options:o});if(o.method==='POST'){if(ending==='network')throw new Error();if(ending==='deadline-fetch')return p.promise;if(ending==='deadline-body')return {ok:true,status:200,json:()=>p.promise};return ending==='malformed'?reply({}):reply({code:'uncertain'},503);}gets++;return reply(d);};
+  const action=v.send.click();await settle();if(ending.startsWith('deadline'))for(const [id,t]of [...h.timeouts])if(t.delay===10000){h.timeouts.delete(id);t.fn();}await action;await settle();
+  check(posts(h).length===1 && gets===1 && v.status.textContent.includes('not confirmed') && v.root.textContent.includes('needs your review') && !v.status.textContent.includes('delivered'),'uncertainty retains message and rereads without retry '+ending);
+  p.resolve(ending==='deadline-body'?{schema_version:1,operation:'send-held',run_id:'c'.repeat(32)}:reply({schema_version:1,operation:'send-held',run_id:'c'.repeat(32)}));await settle();check(v.state.textContent.includes('needs your review'),'late result cannot claim consumption');
+ }
+ if(input.test==='held_focus'){
+  const v=await review(h);v.send.focus();inject(h,JSON.parse(JSON.stringify(d)));
+  check(row(h)===v && h.doc.activeElement===v.send && v.review.open && v.confirm.checked,'snapshot preserves review details and keyboard focus');
+  d.held_messages.messages.push(receipt('d'.repeat(32)));inject(h,d);const before=[...h.ids.heldMessages.children];d.held_messages.messages.reverse();inject(h,d);
+  check(before.every((n,i)=>h.ids.heldMessages.children[i]===n) && h.doc.activeElement===v.send && v.review.open,'receipt reorder keeps focused review in place');
+  check(v.text.textContent===receipt().text && v.text.children.length===0,'message rendered as safe text');
+  vm.runInContext("selectTab('agents')",h.context);const c=vm.runInContext("cards.get('claude-1')",h.context);check(c.reportLink.textContent.includes('Previous goal report') && c.reportStatus.textContent.includes('no report yet'),'older report never called current');
+ }
+ if(input.test==='held_signout')for(const trigger of ['signout','expiry','cross-tab','403'])for(const stage of ['fetch','body','after-body']){
+  const {h,d}=await make(),v=await review(h),p=deferred();h.ids.message.value='PRIVATE DRAFT';h.ids.note.value='PRIVATE NOTE';h.ids.lane.value='codex-1';
+  const revoke=()=>{if(trigger==='signout')h.ids.signOut.click();if(trigger==='expiry')vm.runInContext('expiresAt=Date.now();authenticated()',h.context);if(trigger==='cross-tab')h.win.storage({storageArea:vm.runInContext('localStorage',h.context),key:'nuntius.web.credential'});if(trigger==='403')vm.runInContext('signOut()',h.context);};
+  h.context.fetch=async()=>stage==='fetch'?p.promise:{ok:true,status:200,json:()=>stage==='after-body'?(revoke(),Promise.resolve({schema_version:1,operation:'send-held',run_id:'c'.repeat(32)})):p.promise};const action=v.send.click();await settle();check(!h.ids.signOut.disabled,'signout enabled during held action');
+  if(stage!=='after-body')revoke();
+  check(h.ids.heldMessages.children.length===0 && h.ids.message.value==='' && h.ids.note.value==='' && h.ids.lane.options.length===0 && h.ids.noteLane.options.length===0 && !h.doc.documentElement.textContent.includes('ORIGINAL-GOAL'),'private held rows, drafts and lane selectors cleared immediately '+trigger);
+  p.resolve(stage==='body'?{schema_version:1,operation:'send-held',run_id:'c'.repeat(32)}:reply({},trigger==='403'?403:200));await action;await settle();
+  check(vm.runInContext('heldRows.size===0 && heldSaves.size===0 && retainedHolds.size===0 && lastData===undefined',h.context) && h.ids.heldMessages.children.length===0,'late body cannot restore private state');
+ }
+ if(input.test==='held_signout'){
+  const {h}=await make(),v=await review(h);h.context.fetch=async()=>({ok:false,status:403});await v.send.click();await settle();check(h.ids.heldMessages.children.length===0 && !vm.runInContext('authenticated()',h.context),'direct held endpoint revocation clears private display without a body');
+ }
+ if(input.test==='held_counts'){
+  d.lanes=d.lanes.filter(l=>l.lane==='claude-1'||l.lane==='claude-2');const c=d.lane_control.lanes.find(l=>l.name==='claude-1');c.paused=true;c.phase='draining';c.blockers=['running','lane_paused'];
+  inject(h,d);check(h.ids.runningCount.textContent==='1' && h.ids.pausedCount.textContent==='1' && h.ids.countMeaning.textContent.includes('same lane'),'Running 1 and Paused 1 describe the same draining lane');
+  const retained={...c,name:'retained-1',configured:false,phase:'unavailable',dispatch_eligible:false,blockers:['lane_paused','not_configured']};d.lane_control.lanes.push(retained);inject(h,d);
+  check(h.ids.runningCount.textContent==='1' && h.ids.pausedCount.textContent==='2' && h.ids.idleCount.textContent==='1' && h.ids.endedCount.textContent==='1','counts use actual runs and configured eligibility, include retained holds');
+  check(h.ids.countMeaning.textContent.includes('overlap') && h.ids.countMeaning.textContent.includes('same lane') && h.ids.countMeaning.textContent.includes('1 running lane'),'draining overlap explained, never added as two lanes');
+  vm.runInContext("selectTab('agents')",h.context);const failed=vm.runInContext("cards.get('claude-2')",h.context);check(failed.badge.className==='badge red' && failed.reportStatus.textContent.includes('no report'),'missing-report badge and ended count independent of holds');
+  check(h.ids.retainedHolds.children.length===1 && !h.ids.retainedHolds.textContent.includes('grow') && !h.ids.retainedHolds.textContent.includes('Recreate'),'retained section only offers Resume');
+  const r=vm.runInContext("retainedHolds.get('retained-1')",h.context);check(!r.resume.disabled && !r.root.querySelector('input') && !r.root.querySelector('select'),'retained resume cannot change capacity');
+  h.context.fetch=async(path,o)=>{h.calls.push({path,options:o});const controls=JSON.parse(JSON.stringify(d.lane_control));const l=controls.lanes.find(l=>l.name==='retained-1');l.paused=false;l.phase='enabled';l.blockers=['not_configured'];return reply({schema_version:1,revision:0,changed:true,paused:false,lane_control:controls});};await r.resume.click();check(posts(h).length===1 && posts(h)[0].path==='/lane-control' && r.controlStatus.textContent.includes('started no work'),'retained resume uses same A08 control client');
+  // A control-save response cannot mix a newer revision into snapshot totals.
+  d.lane_control.revision=1;for(const l of d.lane_control.lanes)l.revision=1;inject(h,d);const newer=JSON.parse(JSON.stringify(d.lane_control));newer.revision=2;for(const l of newer.lanes){l.revision=2;l.paused=false;l.phase='enabled';}h.context.newer=newer;vm.runInContext('acceptLaneControls(newer,1)',h.context);
+  inject(h,d);check(h.ids.pausedCount.textContent==='2','totals use one received operational snapshot rather than control-response cache');
+  for(const blocker of ['held_message','waiting_to_resume','frozen','running','unrecognized']){d.lane_control.lanes.find(l=>l.name==='claude-2').blockers=[blocker];inject(h,d);check(h.ids.idleCount.textContent==='0','Available excludes every blocker '+blocker);}
+  d.lane_control.lanes.find(l=>l.name==='claude-2').blockers=[];d.lane_control.lanes.find(l=>l.name==='claude-2').phase='unavailable';inject(h,d);check(h.ids.idleCount.textContent==='0','Available excludes unknown controls');
+ }
+})().catch(()=>{process.stderr.write(predicate);process.exitCode=1;});
+`
 
 const dashboardLaneControlTest = `
 const deferred = () => { let resolve,reject; const promise=new Promise((a,b)=>{resolve=a;reject=b;}); return {promise,resolve,reject}; };
@@ -972,6 +1086,7 @@ func TestDashboardFixtureMatchesData(t *testing.T) {
 	type dashboard struct {
 		LaneControlVersion int                 `json:"lane_control_version"`
 		LaneControl        laneControlSnapshot `json:"lane_control"`
+		HeldMessages       webHeldSnapshot     `json:"held_messages"`
 		Freeze             *FreezeState        `json:"freeze"`
 		Lanes              []webLane           `json:"lanes"`
 		Tails              map[string][]string `json:"tails"`

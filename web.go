@@ -461,7 +461,7 @@ func (w *Web) dataContext(parent context.Context) (any, error) {
 	if e != nil {
 		return nil, e
 	}
-	return map[string]any{"lane_control_version": controls.Version, "lane_control": controls, "freeze": frozen, "lanes": lanes, "tails": tails, "history": views, "notes": notes, "audit": audit, "signals": laneSignals, "oversight": readDisplay(oversight, 64000)}, nil
+	return map[string]any{"lane_control_version": controls.Version, "lane_control": controls, "held_messages": m.webHeldMessages(controls), "freeze": frozen, "lanes": lanes, "tails": tails, "history": views, "notes": notes, "audit": audit, "signals": laneSignals, "oversight": readDisplay(oversight, 64000)}, nil
 }
 
 // webLane adds presentation fields without changing Status JSON for CLI or MCP.

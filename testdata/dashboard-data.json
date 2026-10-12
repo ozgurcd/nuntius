@@ -1,5 +1,6 @@
 {
   "lane_control_version": 1,
+  "held_messages": {"schema_version": 1, "status": "ok", "older_receipts_omitted": false, "messages": []},
   "lane_control": {
     "lane_control_version": 1,
     "revision": 0,

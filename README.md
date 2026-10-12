@@ -112,6 +112,14 @@ You (owner)
 
 6. **Read the report.** Ask the chat to read the report for `FIRST-REVIEW`, or open it through dashboard History. Check its questions and evidence before asking for more work. `nuntius history` shows the completed run; a missing report stays visible.
 
+The dashboard's **Messages & notes** view lets you review a held message for its
+original goal before an explicit Send or Discard. Resume clears only the lane
+hold; the message stays visible and never replays automatically. A missing
+session, freeze, pause or unknown controls blocks sending. The header separates
+Running, Available, Paused and Ended: a paused lane finishing work is also
+Running, so these counts overlap. Removed lanes retain a Resume-only hold view.
+See [lane holds and reviewed messages](docs/dashboard.md#lane-holds-and-reviewed-messages-unreleased).
+
 ## Concepts
 
 - **Lanes and pools:** a lane is one named place to run an agent. A pool creates up to eight lanes of one kind from a shared template. Each lane handles one run at a time; a busy dispatch is refused, not queued. Pool sizes can be zero.

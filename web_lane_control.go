@@ -21,6 +21,126 @@ func (w *Web) controlRoute(path string) bool {
 	return path == "/lane-control" || path == "/held-message"
 }
 
+// Only public review fields cross the dashboard boundary. In particular, the
+// private session binding is represented by a boolean, never its value.
+type webHeldMessage struct {
+	Lane              string `json:"lane"`
+	RunID             string `json:"run_id"`
+	GoalID            string `json:"goal_id"`
+	ContentRevision   uint64 `json:"content_revision"`
+	ContentSHA256     string `json:"content_sha256"`
+	Text              string `json:"text"`
+	State             string `json:"state"`
+	SessionAvailable  bool   `json:"session_available"`
+	DeliveryConfirmed bool   `json:"delivery_confirmed"`
+	ContentDiscarded  bool   `json:"content_discarded"`
+}
+
+type webHeldSnapshot struct {
+	Version              int              `json:"schema_version"`
+	Status               string           `json:"status"`
+	Messages             []webHeldMessage `json:"messages"`
+	OlderReceiptsOmitted bool             `json:"older_receipts_omitted"`
+}
+
+func (m *Manager) webHeldMessages(controls laneControlSnapshot) webHeldSnapshot {
+	unknown := webHeldSnapshot{Version: 1, Status: "unavailable", Messages: []webHeldMessage{}}
+	if !m.mu.TryLock() {
+		return unknown
+	}
+	defer m.mu.Unlock()
+	root, err := openLaneControlRoot(m.store)
+	if err != nil {
+		return unknown
+	}
+	defer root.Close()
+	guard, err := laneControlReadLock(root)
+	if err != nil {
+		return unknown
+	}
+	defer guard.Close()
+	if _, err = readLaneControlsAt(root); err != nil {
+		return unknown
+	}
+	result := webHeldSnapshot{Version: 1, Status: "ok", Messages: []webHeldMessage{}}
+	type datedReceipt struct {
+		message webHeldMessage
+		started time.Time
+	}
+	terminal := []datedReceipt{}
+	newestFirst := func(i, j int) bool {
+		return terminal[i].started.After(terminal[j].started) || (terminal[i].started.Equal(terminal[j].started) && terminal[i].message.RunID < terminal[j].message.RunID)
+	}
+	for _, lane := range controls.Lanes {
+		err = visitLaneMessages(root, lane.Name, func(dir *os.File, r Run, message []byte) error {
+			receipt, err := readMessageReceipt(dir, r)
+			if err != nil {
+				return err
+			}
+			var binding heldMessage
+			state := "held_for_review"
+			if receipt != nil {
+				binding, state = receipt.Binding, receipt.State
+			} else {
+				b, err := readLaneControlPrivate(dir, "message-hold.json", 4096)
+				if errors.Is(err, os.ErrNotExist) {
+					return nil
+				}
+				if err != nil || decodeLaneControlObject(b, &binding) != nil || !validMessageBinding(binding, r) {
+					return errLaneControlUnavailable
+				}
+			}
+			text := ""
+			// The same A05 binding/content predicates, on this already-open
+			// run, avoid scanning every run again for each receipt.
+			if receipt == nil || (receipt.State == "reserved" && !receipt.Discarded) {
+				b, err := readLaneControlPrivate(dir, "message-hold.json", 4096)
+				var stored heldMessage
+				if err != nil || decodeLaneControlObject(b, &stored) != nil || stored != binding {
+					return errLaneControlUnavailable
+				}
+				text, err = pendingText(message)
+				if err != nil || laneControlDigest([]byte(text)) != binding.ContentSHA256 {
+					return errLaneControlUnavailable
+				}
+			}
+			confirmed := receipt != nil && state == "consumed" && m.identifiedMessageChild(r, *receipt)
+			session := sessionPattern.MatchString(binding.SessionID) && r.SessionID == binding.SessionID
+			for _, configured := range m.config.Lanes {
+				if configured.Name == lane.Name && configured.Kind != r.Kind {
+					session = false
+				}
+			}
+			row := webHeldMessage{Lane: binding.Lane, RunID: binding.RunID, GoalID: binding.GoalID, ContentRevision: binding.Revision, ContentSHA256: binding.ContentSHA256, Text: Redact(text), State: state, SessionAvailable: session, DeliveryConfirmed: confirmed, ContentDiscarded: receipt != nil && receipt.Discarded}
+			if state == "discarded" || (state == "consumed" && confirmed) {
+				terminal = append(terminal, datedReceipt{row, r.Started})
+				sort.Slice(terminal, newestFirst)
+				if len(terminal) > 64 {
+					terminal = terminal[:64]
+					result.OlderReceiptsOmitted = true
+				}
+			} else {
+				if len(result.Messages) >= 64 {
+					return errLaneControlUnavailable
+				}
+				result.Messages = append(result.Messages, row)
+			}
+			return nil
+		})
+		if err != nil {
+			return unknown
+		}
+	}
+	sort.Slice(result.Messages, func(i, j int) bool {
+		a, b := result.Messages[i], result.Messages[j]
+		return a.Lane < b.Lane || (a.Lane == b.Lane && a.RunID < b.RunID)
+	})
+	for _, receipt := range terminal {
+		result.Messages = append(result.Messages, receipt.message)
+	}
+	return result
+}
+
 // One authenticated mutation budget for every dashboard write, including
 // Settings and the pre-existing action endpoint. Authentication runs first.
 func (w *Web) allowMutation() error {

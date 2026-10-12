@@ -17,11 +17,52 @@ on a removed lane may be resumed without recreating the lane.
 
 `POST /held-message` accepts `schema_version: 1`, `lane`, full `run_id`, numeric
 `content_revision`, `content_sha256` and `operation: "send-held"` or
-`"discard-held"`. Use the exact identity and content reviewed through the existing
-held-message review command. There is no free-text or path override. Sending
+`"discard-held"`. Use the exact identity and content reviewed in **Messages & notes**
+or through the held-message review command. There is no free-text or path override. Sending
 checks pause, freeze, session and admission again. Discard affects only that
 reviewed message. Durable receipts prevent another delivery after a known send;
 uncertain results require reading current state before any further decision.
+
+Messages & notes shows held messages with their original goal, full run identity,
+content revision and review digest. Open the message and check **I reviewed this
+exact message for its original goal** before choosing **Send reviewed message**
+or **Discard reviewed message**. Content changes clear that check. Send is blocked
+while paused, frozen, busy, unconfigured, without its original session, or with
+unknown controls or other admission blockers. Discard needs the same explicit
+review but does not start work. Resume leaves the message visible across refreshes;
+there is no automatic replay. Failed or timed-out requests keep it visible and
+read the current receipt once, without an automatic retry. An HTTP success alone
+does not claim delivery. A consumed receipt with a verified original/follow-up
+identity shows **Sent to a follow-up run**; that does not confirm successful work.
+Reserved or unverified receipts keep their uncertainty visible.
+
+The authenticated `/data` response carries a versioned `held_messages` projection
+from the A05 bindings and receipts. It exposes redacted text and session
+availability, never the private session value. Reads do not reconcile receipts,
+consume messages or start a child. Unavailable data retains last-known rows with
+actions disabled; it never implies that a message was sent or discarded.
+The view retains up to 64 active held or uncertain reviews and the latest 64
+confirmed terminal receipts, ordered by original run start time. It names omitted
+older terminal receipts. Exceeding the active-review bound fails closed.
+An uncertain reservation can still be explicitly reviewed and discarded; that
+removes only the reviewed content and does not cancel a possible follow-up run.
+
+The header uses one received operational snapshot. **Running** counts actual
+current runs. **Available** counts configured, nonbusy lanes with known enabled
+controls, no blockers and dispatch eligibility. **Paused** includes draining and
+retained removed-lane holds. A draining lane appears in both Running and Paused;
+the explanation names that overlap, and these counts must not be added.
+**Ended** counts terminal process outcomes among the current lane statuses,
+independently of holds and report availability. Missing reports keep their
+attention badge. Agents has a **Retained holds on removed lanes** section with
+Resume only; it never grows a pool or recreates a lane. A removed lane is never
+Available. No native goal-readiness reason is inferred from an idle lane.
+
+Sign-out, expiry and cross-tab sign-out immediately clear held and retained rows,
+review checks, private selectors and drafts, even with a pending request or body.
+Late responses cannot restore them. The wrapping layout uses both system themes;
+real-browser geometry and focus checks at 1280/390/320 pixels and 200% zoom remain
+separate from the offline DOM tests.
 
 Errors include a plain reason. A conflict means read again; a busy lock means
 retry later after a fresh read. An uncertain result may already have changed
@@ -370,8 +411,8 @@ tailscale serve --https=443 off
 See the official [Serve command reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
 
 The dashboard adapts to laptop and phone-width windows and your system's light
-or dark mode. The sticky top bar shows dispatch/freeze controls, running, idle
-and ended counts, and refresh freshness on every tab. Agents opens by default;
+or dark mode. The sticky top bar shows dispatch/freeze controls, Running,
+Available, Paused and Ended counts, and refresh freshness on every tab. Agents opens by default;
 Messages & notes, Digest, Reports & runs, Audit and Settings have their own panels. Arrow keys
 and Home/End navigate tabs. The URL hash selects the view on start and reload.
 The phone header uses two lines: brand and freeze controls, then counts and

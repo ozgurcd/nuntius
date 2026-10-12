@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add identity-bound held-message review, explicit Send and Discard, durable
+  receipt explanations and retained removed-lane Resume. Resume never replays
+  messages. Unknown or timed-out results reread once without claiming delivery.
+- Show Running, Available, overlapping Paused and outcome-based Ended totals
+  from one operational snapshot. Keep missing-report attention independent of
+  holds and clear held rows, private selectors and drafts on sign-out.
+
 - Fail closed when fresh lane controls are unavailable, even at a lower
   fallback revision. Explain newer changes after stale save replies and read
   current state once without retrying the change. Say when a lane was already

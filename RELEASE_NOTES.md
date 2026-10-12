@@ -7,6 +7,15 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Review held messages in Messages & notes before sending or discarding the
+  exact original message. Resume clears a lane hold and leaves the message
+  visible; it starts no work and never sends the message automatically.
+  Uncertain responses read the receipt again without claiming delivery.
+- Available now means a configured lane without running work or admission
+  blockers. Paused includes a running lane that is finishing its current work;
+  the header explains that overlap. Removed lanes have a retained-holds section
+  with Resume only, and private review rows and drafts clear when you sign out.
+
 - Pause or resume a lane from its Agents card. Pause blocks new work while
   the current run finishes. Resume starts no work and explains remaining holds.
   Unconfirmed saves read current state before you choose another action.
