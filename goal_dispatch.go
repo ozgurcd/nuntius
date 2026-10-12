@@ -160,8 +160,11 @@ func goalDispatchHistoryValid(old, next goalReplayRecord, a, b goalRecordData, s
 		return false
 	}
 	if reflect.DeepEqual(a.Dispatches, b.Dispatches) {
+		if !reflect.DeepEqual(a.Attempt, b.Attempt) || a.Outcome != b.Outcome || a.State != b.State && len(a.Decisions) == len(b.Decisions) && reflect.DeepEqual(a.Closure, b.Closure) {
+			return false
+		}
 		for _, d := range a.Dispatches {
-			if d.Phase != "failed" && (old.sealRef != next.sealRef || goalDispatchScopeChanged(old.spec, next.spec) || a.ApprovalRevision != b.ApprovalRevision || a.GrantBinding != b.GrantBinding || !reflect.DeepEqual(a.Attempt, b.Attempt) || a.State != b.State || a.Outcome != b.Outcome) {
+			if d.Phase != "failed" && !goalAttemptReleased(a, d.RunID) && (old.sealRef != next.sealRef || goalDispatchScopeChanged(old.spec, next.spec) || a.ApprovalRevision != b.ApprovalRevision || a.GrantBinding != b.GrantBinding || a.State != b.State) {
 				return false
 			}
 		}
@@ -540,6 +543,12 @@ func (m *Manager) reconcileGoalDispatchLocked(root *os.File, old goalReplayRecor
 	if err != nil {
 		return result, errGoalLaunchHeld
 	}
+	for _, end := range data.Ends {
+		if end.RunID == d.RunID {
+			result.Phase = "ended"
+			return result, nil
+		}
+	}
 	var total int64
 	sealBytes, err := readGoalBlob(root, d.SealRef, "goal-seal-", goalSealMaxBytes, &total)
 	if err != nil {
@@ -560,6 +569,18 @@ func (m *Manager) reconcileGoalDispatchLocked(root *os.File, old goalReplayRecor
 	}
 	r := m.goalDispatchChild(d)
 	if r == nil {
+		if ended := m.goalAttemptRun(d); ended != nil && goalAttemptDefinitelyGone(*ended) {
+			var err error
+			if ended.Ended == nil {
+				err = m.recoverEnded(ended)
+			} else {
+				err = m.publishGoalAttemptEndLocked(ended, fault)
+			}
+			if err == nil {
+				result.Phase = "ended"
+				return result, nil
+			}
+		}
 		return result, errGoalLaunchHeld
 	}
 	if m.superviseGoalDispatch(*r, nil) != nil {
@@ -648,7 +669,7 @@ func goalDispatchPopulationValid(p *goalProjection) bool {
 				return false
 			}
 			keys[d.Request.Key], ids[d.RunID] = true, true
-			if d.Phase != "failed" {
+			if d.Phase != "failed" && !goalAttemptReleased(data, d.RunID) {
 				if lanes[d.Request.Lane] {
 					return false
 				}
@@ -715,7 +736,7 @@ func (m *Manager) nativeSupervisionAllowed(r Run) bool {
 			return false
 		}
 		if d.Phase == "running" && !sameProcess(r) {
-			return true
+			return goalAttemptDefinitelyGone(r)
 		}
 		return m.goalDispatchChild(d) != nil
 	}

@@ -32,6 +32,19 @@ See [the delivery protocol](queue-format.md#native-audit-mirror-local-unpublishe
 
 ## Native dispatch boundary (local, unpublished)
 
+Native end observations contain bounded identity, times, typed outcome and
+optional report digest/size/time. They never store report or output bodies.
+The internal observer uses the trusted `native` audit source; this does not
+claim that a judge approved the observation. Report presence does not confer
+approval or verification. Candidate saves and replay share the same retained
+scope and approval predicate, including unchanged-seal transitions. Strict end
+keys reject aliases, duplicate decoded keys, null/coerced fields and unsafe
+one-line text. Existing private-event filtering and report display bounds stay
+in force. A same-user writer is not authenticated by a timestamp or digest,
+and offline repair tests do not certify physical power-loss durability.
+Failed native repair leaves independent reports and safety controls available;
+its bounded status warning confers no admission or approval authority.
+
 Internal dispatch accepts only a saved approved goal ID, current revision,
 retry key and eligible lane. It reads the approved bytes; native IDs cannot
 use legacy free-text dispatch, reply or recovery to replace them. The trusted

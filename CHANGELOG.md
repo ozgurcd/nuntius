@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Record actual native attempt ends automatically, including immediate exits,
+  timeout and cancellation. Keep ended goals open for judge review, bind bounded
+  report digests to the current attempt, and repair saved ends after journal or
+  audit delivery failure. Audit views explain ends and available reports as
+  successful observations. Linked continuation launches remain unavailable.
+
 - Add internal dispatch of saved approved native goals with revision and retry
   checks, durable full-ID reservations, exact brief delivery and running
   receipts. Uncertain launch holds resources and adopts only the identified

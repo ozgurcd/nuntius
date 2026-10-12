@@ -284,6 +284,16 @@ func readNativeAuditRecords(root *os.File) (nativeAuditState, []nativeAuditRow, 
 					rows[len(rows)-1].Result = "dispatch_" + phase
 				}
 			}
+			for _, end := range metadata.Ends {
+				if event.OperationID == goalAttemptOperation(end.RunID) {
+					rows[len(rows)-1].Result = "attempt_ended"
+				}
+			}
+			for _, report := range metadata.Reports {
+				if event.OperationID == "attempt-report-"+report.RunID {
+					rows[len(rows)-1].Result = "report_available"
+				}
+			}
 		}
 		data = data[size:]
 	}
@@ -426,7 +436,7 @@ func validNativeAuditEventID(id string) bool {
 }
 
 func validNativeAuditRow(row nativeAuditRow) bool {
-	resultOK := row.Result == "updated" || row.Result == "dispatch_reserved" || row.Result == "dispatch_starting" || row.Result == "dispatch_running" || row.Result == "dispatch_failed"
+	resultOK := row.Result == "updated" || row.Result == "dispatch_reserved" || row.Result == "dispatch_starting" || row.Result == "dispatch_running" || row.Result == "dispatch_failed" || row.Result == "attempt_ended" || row.Result == "report_available"
 	return row.Version == 1 && row.Tool == nativeAuditTool && validNativeAuditEventID(row.EventID) && row.Sequence > 0 && row.Sequence <= goalJournalMaxEvents && row.Revision > 0 && row.Revision <= row.Sequence && goalPattern.MatchString(row.GoalID) && validNativeAuditSource(row.Source) && !row.Time.IsZero() && row.Time.Location() == time.UTC && resultOK
 }
 

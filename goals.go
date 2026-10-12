@@ -47,6 +47,8 @@ type goalRecordData struct {
 	Attempt          *goalDecisionAttempt   `json:"attempt,omitempty"`
 	Closure          *goalCoverageEvidence  `json:"closure,omitempty"`
 	Dispatches       []goalDispatchRecord   `json:"dispatches,omitempty"`
+	Ends             []goalAttemptEnd       `json:"ends,omitempty"`
+	Reports          []goalAttemptReport    `json:"reports,omitempty"`
 }
 
 type goalRecordRequest struct {
@@ -166,7 +168,7 @@ func decodeGoalRecord(b []byte) (goalRecordData, error) {
 		return r, errGoalRecord
 	}
 	m, ok := raw.(map[string]any)
-	if !ok || !nativeClosedFields(m, []string{"version", "state", "notes"}, []string{"outcome", "approval_revision", "grant_binding", "decisions", "attempt", "closure", "dispatches"}) || !validGoalDecisionJSON(m) || !validGoalCoverageJSON(m) || !validGoalDispatchJSON(m) {
+	if !ok || !nativeClosedFields(m, []string{"version", "state", "notes"}, []string{"outcome", "approval_revision", "grant_binding", "decisions", "attempt", "closure", "dispatches", "ends", "reports"}) || !validGoalDecisionJSON(m) || !validGoalCoverageJSON(m) || !validGoalDispatchJSON(m) || !validGoalAttemptsJSON(m) {
 		return r, errGoalRecord
 	}
 	version, ok := m["version"].(json.Number)
@@ -244,13 +246,16 @@ func goalRecordHistoryValid(old, next goalReplayRecord, seals ...[]byte) bool {
 		data, err := goalRecordMetadata(next)
 		// Initial bookkeeping fixtures may describe observations, but there is
 		// no prior stored revision for a decision to have reviewed.
-		return err == nil && len(data.Decisions) == 0 && data.Closure == nil && len(data.Dispatches) == 0
+		return err == nil && len(data.Decisions) == 0 && data.Closure == nil && len(data.Dispatches) == 0 && len(data.Ends) == 0 && len(data.Reports) == 0
 	}
 	a, err := goalRecordMetadata(old)
 	if err != nil {
 		return false
 	}
 	b, err := goalRecordMetadata(next)
+	if err == nil && (!reflect.DeepEqual(a.Ends, b.Ends) || !reflect.DeepEqual(a.Reports, b.Reports)) {
+		return goalAttemptsHistoryValid(old, next, a, b)
+	}
 	if err == nil && !goalDispatchHistoryValid(old, next, a, b, seals) {
 		return false
 	}

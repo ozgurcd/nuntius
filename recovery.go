@@ -25,6 +25,9 @@ func (m *Manager) Recover() error {
 	if err = m.reload(); err != nil {
 		return err
 	}
+	if err = m.reconcileGoalAttemptsLocked(goalCommitIO{}); err != nil {
+		return err
+	}
 	runs, err := m.history()
 	if err != nil {
 		return err

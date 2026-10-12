@@ -33,7 +33,9 @@ func (m *Manager) endRun(r *Run) error {
 	if err := m.save(r); err != nil {
 		return err
 	}
-	return m.emitSignal(*r, "ended")
+	// Legacy notification failure must not suppress native journal repair.
+	nativeErr := m.publishGoalAttemptEndLocked(r, goalCommitIO{})
+	return errors.Join(nativeErr, m.emitSignal(*r, "ended"))
 }
 
 func (m *Manager) emitSignal(r Run, suffix string) error {

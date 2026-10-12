@@ -25,12 +25,38 @@ Once invocation is possible, an error or an absent process is insufficient
 evidence to release the reservation. Journal and audit sync failures retain the
 same operation. Ordinary legacy recovery cannot launch a replacement native ID.
 
-Native automatic end accounting and successors belong to B12/B13. An immediate
-exit remains bound to its original launch and holds resources conservatively.
+Native automatic end accounting now repairs the original full run identity,
+including an immediate exit before running publication. Linked successors and
+native continuation launches remain a later component.
 Cancel, Freeze, report and tail remain separate safety/read operations. Lane
 pause changes no timeout or signal policy. Offline killed-caller tests prove
 conservative adoption or hold; they do not certify physical power loss or an
 installed host.
+
+### Native end repair (local, unpublished)
+
+Writable startup and maintenance reconcile actual native ends without starting
+replacement work. The saved run end is the retry source if its native journal
+append or audit delivery fails. An already-ended run is included in repair;
+read-only status and replay leave files unchanged. A complete frame after a
+failed sync must be confirmed before its original receipt is accepted. An
+incomplete final frame is repaired only by a locked writer. Corrupt history
+remains held for review rather than rewritten.
+
+The last settled attempt becomes ended, still open for judge review. Missing
+reports, timeout, cancellation and terminal report-delivery failure keep their
+typed outcomes; numeric exit is never guessed. A report seen later may add its
+bounded full-file digest to the current attempt without changing that outcome
+or verifying work. Held messages, recovery pending, successor links, surviving
+unverified process identity and failed delivery keep work reserved. Lane pause
+does not stop or extend the current run; its end is recorded while paused.
+Legacy native-ID recovery remains refused until linked launch accounting exists.
+
+A failed native repair does not prevent manager startup, report access or
+identity-checked cancellation. Writable status carries a plain `native_attention`
+warning while repair remains pending. Native admission still checks authoritative
+history and required audit delivery and refuses damaged authority. Stores without
+a native journal or actual run require no end-reconciliation scan.
 
 ### Legacy runs
 

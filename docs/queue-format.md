@@ -551,8 +551,9 @@ previous attempt or a changed report cannot verify work. Explicit alternate
 reviewed evidence can replace a report, including reviewed work without a run,
 but it must still match the committed accounting observation. Missing
 accounting, active successors and uncertain launches refuse verification.
-This component publishes no attempt observation in production; later lifecycle
-steps supply those observations. Test fixtures do not certify a real run.
+The internal end observer now supplies attempt-bound observations from native
+dispatches. It records an actual process end without a judge decision. Public
+goal surfaces and linked continuation launches remain later components.
 
 Park and goal cancel are bookkeeping. They never signal or stop a process,
 change a lane hold, freeze work, run recovery or schedule a launch. A running
@@ -738,8 +739,57 @@ Receipts are limited to eight per goal and the existing record, event and byte
 limits still apply; there is no eviction or forgotten retry key. Publication
 headroom is checked before starting. Capacity refusal requires owner review.
 
-B11 does not automatically account for native ends or permit successors.
-An immediate child exit stays bound and conservatively reserved; a report
-cannot verify the goal. B12 and B13 own end and successor integration.
+Native ends now use the observer below. Linked successors remain a later
+component; legacy reply and recovery cannot launch them for a stored native ID.
 Physical power-loss durability, real lane sandbox visibility and atomic
 external repository claims are outside these offline proofs.
+
+## Automatic native attempt ends (local, unpublished)
+
+Every confirmed native process end saves an immutable observation under its
+allocated full run ID. The observation retains the lane, process identity,
+start/end times, typed outcome and the report seen at that end. A last attempt
+becomes ended and remains in Open until explicit judge review. Operational
+Cancel or timeout records the actual cancelled or timed-out outcome; neither
+verifies nor cancels the goal's bookkeeping. Unknown numeric exit stays unknown.
+An immediate exit can be recorded from the saved start identity before running
+publication. It never permits a second child or returns the goal to approved.
+
+The run's private metadata retains the first end observation before native
+journal delivery. The journal uses a permanent `attempt-end-<full-run-id>`
+receipt; the safe audit copy identifies `attempt_ended`. A legacy signal error
+does not suppress that delivery. Writable startup, supervision and maintenance
+repair already-ended metadata as well as newly observed ends. Retry confirms
+prior uncertain syncs and preserves the same end, time and receipt. Read-only
+status, journal replay, list, report and tail never perform this repair.
+
+Audit views explain an end or available report as successful bookkeeping and
+state that judge review is still required. They do not label either as a refusal
+or display only the internal result code.
+
+A settled last end can release its canonical execution resources. Held owner
+messages, pending recovery, linked successors or unresolved process/publication
+identity retain the reservation and block judge verification. Required pending
+audit delivery blocks new native admission even after an execution end. A
+surviving PID, failed identity inspection, report or terminal event alone does
+not prove process death. Linked launch/transfer remains assigned to the next
+component; this observer creates no successor or recovery child.
+
+Report observation reads at most 65536 complete bytes from a current regular
+file. It checks the same inode, size and modification time before and after
+reading and against the final pathname. It retains only the full SHA-256,
+byte length and modification time, bound to the attempt. Stale, linked,
+oversized, unavailable or changing files supply no report evidence. A newer
+attempt prevents an older observer from attaching its report. One later
+current report may add a separate `report_available` observation and receipt;
+it neither repeats the end nor changes its fixed outcome or verifies work.
+Reports that replace already-observed evidence do not silently replace its digest.
+
+Candidate saves and independent journal replay apply the same exact end/report
+transition predicate. Approval, grant, scope, seal, decisions and unrelated notes
+cannot change with an observation. End and report history is append-only and
+bounded by the existing eight dispatch receipts and record/journal limits.
+Capacity or storage refusal keeps the run observation available for repair
+and holds delivery; no history is discarded. Explicit owner maintenance is
+needed when existing storage bounds prevent further publication. Digests and
+timestamps identify observed bytes, not the author or an authenticated reviewer.

@@ -7,6 +7,11 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Internal native goals now record when their agent ends, even without a report
+  or a separate tracking script. Ended work stays open until the judge reviews
+  it. Saved ends and report observations can be repaired after restart; uncertain
+  delivery keeps new work held. This local component adds no public controls.
+
 - Internal native dispatch now starts the saved approved brief by goal ID.
   A repeated request keeps its original run. If start is uncertain, the goal
   stays held for review rather than starting another child. Public goal

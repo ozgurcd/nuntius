@@ -137,6 +137,16 @@ func parseAudit(b []byte, since time.Time) []AuditEntry {
 		if isNative {
 			entry.EventID, entry.Source = native.EventID, native.Source
 			entry.Sequence, entry.Revision = native.Sequence, native.Revision
+			// These observations are successful bookkeeping, not refused judge
+			// actions. Keep the wire result intact in Raw and explain it plainly.
+			switch native.Result {
+			case "attempt_ended":
+				entry.Reason = "The agent ended; the goal stays open until judge review."
+				v.Result = "updated"
+			case "report_available":
+				entry.Reason = "A current report is available for the ended attempt; judge review is still required."
+				v.Result = "updated"
+			}
 		}
 		switch v.Result {
 		case "accepted", "pass", "started", "ended", "ok", "frozen", "unfrozen", "updated", "":
@@ -153,6 +163,14 @@ func parseAudit(b []byte, since time.Time) []AuditEntry {
 			entry.Digest = v.SHA256[:12]
 		}
 		entry.Summary = auditSummary(entry)
+		if isNative {
+			switch native.Result {
+			case "attempt_ended":
+				entry.Summary = "Recorded agent end for " + entry.GoalID
+			case "report_available":
+				entry.Summary = "Current report available for " + entry.GoalID
+			}
+		}
 		out = append(out, entry)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })

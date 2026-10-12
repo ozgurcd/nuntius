@@ -16,39 +16,41 @@ import (
 )
 
 type Run struct {
-	Kind                 string     `json:"kind,omitempty"`
-	Model                string     `json:"model,omitempty"`
-	Effort               string     `json:"effort,omitempty"`
-	ID                   string     `json:"run_id"`
-	Lane                 string     `json:"lane"`
-	GoalID               string     `json:"goal_id"`
-	SHA256               string     `json:"sha256"`
-	Started              time.Time  `json:"started"`
-	Ended                *time.Time `json:"ended,omitempty"`
-	Exit                 *int       `json:"exit,omitempty"`
-	State                string     `json:"state"`
-	SessionID            string     `json:"session_id,omitempty"`
-	PID                  int        `json:"pid"`
-	ProcessStart         string     `json:"process_start,omitempty"`
-	StopReason           string     `json:"stop_reason,omitempty"`
-	StopAt               *time.Time `json:"stop_at,omitempty"`
-	Resumed              bool       `json:"resumed"`
-	ParentRunID          string     `json:"parent_run_id,omitempty"`
-	ContinueRunID        string     `json:"continue_run_id,omitempty"`
-	StuckSignalled       bool       `json:"stuck_signalled,omitempty"`
-	Brief                string     `json:"brief,omitempty"`
-	ResumeCount          int        `json:"resume_count,omitempty"`
-	RecoveryRun          bool       `json:"recovery_run,omitempty"`
-	Integrity            string     `json:"integrity,omitempty"`
-	InterruptedSignalled bool       `json:"interrupted_signalled,omitempty"`
-	ResumedSignalled     bool       `json:"resumed_signalled,omitempty"`
-	WaitingToResume      bool       `json:"waiting_to_resume,omitempty"`
-	ResumeBlockedReason  string     `json:"resume_blocked_reason,omitempty"`
-	LaunchdLabel         string     `json:"launchd_label,omitempty"`
-	LaunchFallback       bool       `json:"launch_fallback,omitempty"`
-	LaunchdCleaned       bool       `json:"launchd_cleaned,omitempty"`
+	Kind                 string          `json:"kind,omitempty"`
+	Model                string          `json:"model,omitempty"`
+	Effort               string          `json:"effort,omitempty"`
+	ID                   string          `json:"run_id"`
+	Lane                 string          `json:"lane"`
+	GoalID               string          `json:"goal_id"`
+	SHA256               string          `json:"sha256"`
+	Started              time.Time       `json:"started"`
+	Ended                *time.Time      `json:"ended,omitempty"`
+	Exit                 *int            `json:"exit,omitempty"`
+	State                string          `json:"state"`
+	SessionID            string          `json:"session_id,omitempty"`
+	PID                  int             `json:"pid"`
+	ProcessStart         string          `json:"process_start,omitempty"`
+	StopReason           string          `json:"stop_reason,omitempty"`
+	StopAt               *time.Time      `json:"stop_at,omitempty"`
+	Resumed              bool            `json:"resumed"`
+	ParentRunID          string          `json:"parent_run_id,omitempty"`
+	ContinueRunID        string          `json:"continue_run_id,omitempty"`
+	StuckSignalled       bool            `json:"stuck_signalled,omitempty"`
+	Brief                string          `json:"brief,omitempty"`
+	ResumeCount          int             `json:"resume_count,omitempty"`
+	RecoveryRun          bool            `json:"recovery_run,omitempty"`
+	Integrity            string          `json:"integrity,omitempty"`
+	InterruptedSignalled bool            `json:"interrupted_signalled,omitempty"`
+	ResumedSignalled     bool            `json:"resumed_signalled,omitempty"`
+	WaitingToResume      bool            `json:"waiting_to_resume,omitempty"`
+	ResumeBlockedReason  string          `json:"resume_blocked_reason,omitempty"`
+	LaunchdLabel         string          `json:"launchd_label,omitempty"`
+	LaunchFallback       bool            `json:"launch_fallback,omitempty"`
+	LaunchdCleaned       bool            `json:"launchd_cleaned,omitempty"`
+	NativeEnd            *goalAttemptEnd `json:"native_end,omitempty"`
 }
 type Status struct {
+	NativeAttention     string          `json:"native_attention,omitempty"`
 	LaneControlVersion  int             `json:"lane_control_version"`
 	LaneControl         laneControlView `json:"lane_control"`
 	Kind                string          `json:"kind,omitempty"`
@@ -545,7 +547,10 @@ func (m *Manager) follow(r Run, lock, supervisor *os.File, a *activeRun, grace t
 				}
 				if e == nil {
 					if !sameProcess(r) {
-						finished = true
+						native, nativeErr := m.nativeGoalLocked(r.GoalID)
+						// A failed inspector or surviving unidentified PID is not
+						// an actual native end and must retain the reservation.
+						finished = goalAttemptDefinitelyGone(r) || nativeErr == nil && !native
 					}
 					if sameProcess(r) {
 						if r.StopAt != nil {
@@ -590,7 +595,9 @@ func (m *Manager) follow(r Run, lock, supervisor *os.File, a *activeRun, grace t
 		r = *current
 	}
 	now := time.Now().UTC()
-	r.Ended = &now
+	if r.Ended == nil {
+		r.Ended = &now
+	}
 	r.State = "ended"
 	if r.StopReason == "timed_out" {
 		r.State = "timed_out"
@@ -693,6 +700,12 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 	if e = m.reload(); e != nil {
 		return nil, e
 	}
+	nativeAttention := ""
+	if !m.readOnly && m.reconcileGoalAttemptsLocked(goalCommitIO{}) != nil {
+		// Native authority stays fail-closed in admission. Repair failure must
+		// not disable report access or independent, identity-checked controls.
+		nativeAttention = "Native goal bookkeeping needs repair; reports and independent safety controls remain available."
+	}
 	frozen, e := m.freezeState()
 	if e != nil {
 		return nil, e
@@ -751,7 +764,7 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 	out := make([]Status, 0, len(m.config.Lanes))
 	for _, l := range m.config.Lanes {
 		model, effort := effectiveIdentity(l)
-		s := Status{Lane: l.Name, Kind: l.Kind, Model: model, Effort: effort, State: "idle", Freeze: frozen, LaneControlVersion: 1}
+		s := Status{Lane: l.Name, Kind: l.Kind, Model: model, Effort: effort, State: "idle", Freeze: frozen, LaneControlVersion: 1, NativeAttention: nativeAttention}
 		for _, control := range controls.Lanes {
 			if control.Name == l.Name {
 				s.LaneControl = control

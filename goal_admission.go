@@ -274,7 +274,7 @@ func goalAdmissionReservations(p *goalProjection, runs []Run, root *os.File, env
 			add(id, goalAdmissionScope{Writes: s.Writes, Resources: s.Resources})
 		}
 		for _, d := range data.Dispatches {
-			if d.Phase == "failed" {
+			if d.Phase == "failed" || goalAttemptReleased(data, d.RunID) {
 				continue
 			}
 			s, err := decodeNativeGoalSpec([]byte(d.Spec))

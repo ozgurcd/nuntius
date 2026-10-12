@@ -127,7 +127,7 @@ func loadRun(dir, id string) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(b) > 131072 || strictJSON(b, &r) != nil || r.ID != id || !namePattern.MatchString(r.Lane) || !goalPattern.MatchString(r.GoalID) || r.Started.IsZero() || (r.State != "running" && r.State != "ended" && r.State != "timed_out" && r.State != "interrupted") {
+	if len(b) > 131072 || strictJSON(b, &r) != nil || !validGoalRunEndJSON(b) || r.ID != id || !namePattern.MatchString(r.Lane) || !goalPattern.MatchString(r.GoalID) || r.Started.IsZero() || (r.State != "running" && r.State != "ended" && r.State != "timed_out" && r.State != "interrupted") {
 		return nil, nil
 	}
 	if r.ResumeCount < 0 || r.ResumeCount > 2 || len(r.Brief) > 12000 || (r.ParentRunID != "" && !runPattern.MatchString(r.ParentRunID)) || (r.ContinueRunID != "" && !runPattern.MatchString(r.ContinueRunID)) {

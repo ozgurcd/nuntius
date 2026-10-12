@@ -284,3 +284,8 @@ shared standards or wrapper again, select a guessed owner root, alter lane
 argv/profile settings, or accept a free-text replacement. Body or standards
 changes require explicit resealing and fresh approval. There is no new native
 configuration switch or public adapter in this local component.
+
+Native dispatch ends are now recorded automatically and repaired by writable
+startup/maintenance after failed journal or audit delivery. No new profile,
+poll setting or automatic grant is required. Ended work stays open for judge
+review, and native linked continuation launches remain unavailable.
