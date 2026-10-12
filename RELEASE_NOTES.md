@@ -7,6 +7,11 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Native admission now explains whether reviewed work is ready and whether a
+  lane can start it. Pauses, missing review, unavailable claims and overlapping
+  work remain visible reasons to wait. This internal check starts no agent and
+  adds no dashboard, CLI or MCP action.
+
 - Oversized native briefs can now use a short pointer to the complete reviewed
   file in an explicitly selected workspace. Nuntius keeps the full text and
   shared rules once, records their digests and sizes, and preserves the file for

@@ -194,8 +194,8 @@ coverage operation described below records closure separately.
 Creation accepts no approval, actor, state, outcome, run, revision, pause,
 brief path, report or closure evidence. Approval must be recorded separately
 against the exact immutable brief and authority. A decoded path proves syntax
-only. Future admission must resolve known workspace roots, reject unknown scope,
-and check resource overlap and claims. No filesystem is read during decoding.
+only. Internal admission resolves known workspace roots, rejects unknown scope,
+and checks resource overlap and claims. No filesystem is read during decoding.
 Lane-control, goal and projection revisions remain separate. Lane pause is
 never a goal state; it remains under the existing lane-control authority.
 
@@ -374,8 +374,8 @@ intent. A mirror failure returns unavailable even if a receipt rename became
 visible. A visible receipt alone does not prove a previously failed sync.
 The final locked native admission predicate refuses pending delivery and
 reconfirms the journal, audit, intent, receipt and directory sync before success.
-Later native launch steps must combine this predicate with the existing lane
-admission guard; this component starts no work.
+Internal admission combines this predicate with the existing locked lane guard.
+Native launch remains a later step; this component starts no work.
 
 A receipt alone cannot show that earlier delivery rows still exist. Status and
 admission inspect the complete audit file for every acknowledged event ID and
@@ -521,8 +521,9 @@ Approval needs a validated compiled seal for the exact stored spec, revision,
 authority and current source observation. The internal compiler now supplies
 this predicate; an opaque stored seal never grants approval. See
 [configuration.md](configuration.md#native-brief-seals-local-unpublished) for
-assembly, source review, size measurements and refresh rules. Delivery and
-native dispatch remain later components; approval starts no work.
+assembly, source review, size measurements and refresh rules. Brief delivery
+is prepared separately; native dispatch remains a later component. Approval
+starts no work.
 An owner hold remains in force. A judge reference or adapter source does not
 clear it. Approval grants no automatic batch and starts no work.
 
@@ -615,3 +616,62 @@ Capacity or unsafe-history failures refuse the whole operation; no subset
 closes. A torn final frame exposes none of its changes. A complete frame with
 an unconfirmed sync requires the existing receipt lookup and confirming retry.
 No lane pause, process control, public goal adapter or scheduler is added.
+
+## Native goal admission (local, unpublished)
+
+Admission is an internal check. It starts no work, takes no repository claim,
+and saves no reservation, prompt, run or goal event. It adds no dashboard, CLI
+or MCP operation. A later launcher must repeat the locked check and keep the
+same lock through reservation; an earlier eligible snapshot is not permission
+to launch.
+
+Ready means the goal is approved, every prerequisite is verified, the approved
+brief seal still matches its execution scope, and no owner or coverage hold
+remains. An opaque seal or initial bookkeeping without an approval decision
+cannot make a goal Ready. Notes, title and ordering changes may retain approval.
+The check reads the original approved spec and seal and uses the same strict
+seal predicate as decision saving and history replay. A scope change revokes
+readiness even when it retains the same seal. Escaped exact JSON keys are
+accepted; case aliases, duplicate decoded keys and one-line references with
+Unicode line or paragraph separators are refused.
+
+Startable adds current source review, a configured allowed engine with an
+explicit trusted capability for the work kind, and an eligible lane. Required
+lane bindings never fall back. Pool removal or size zero takes effect on the
+next locked configuration reload. Pause, draining, owner freeze, retained
+messages, recovery work, running work and unavailable lifetime locks hold the
+lane. A paused refusal keeps the existing primary lane_paused result and all
+safe blockers. Each blocker also has a plain explanation. Resume starts no
+work and never consumes a held message.
+
+The manager mutex precedes the shared control lock. Inside that lock, admission
+reloads configuration and reads the complete goal history and current controls.
+It refuses incomplete journal tails, pending or damaged audit delivery, and
+uncertain store durability. It does not repair history, resume intent or pause.
+
+Trusted adapters supply known repository roots, lane capabilities, current
+source observations and complete repository claim observations. Goal fields
+cannot supply these facts. Write paths resolve through existing filesystem
+ancestors to canonical paths inside their named repository. Whole-repository,
+ancestor and descendant writes conflict; similarly named siblings do not.
+Repository aliases cannot hide overlap and a link escaping the root refuses.
+Resource names, including mint, are exclusive across reserved work.
+
+Running native records and unsettled attempts retain reservations. An unsettled
+attempt outside running holds new admission when its original scope is unknown.
+Legacy running, held-message and recovery work needs trusted scope keyed by the
+full run identity; a matching goal ID alone proves nothing. Unknown scope holds
+new work rather than implying an empty reservation. A settled legacy run does
+not reserve scope unless a message or recovery hold remains.
+
+Claim observations must cover each required canonical repository exactly once,
+be no more than thirty seconds old, and have no holder. Missing, duplicate,
+future-dated or stale observations hold new work. This is a conservative check,
+not an atomic transaction with Achta. The coding agent's repository claim is
+still the final external guard; admission never force-releases another writer.
+
+Goals sort by ascending order and then ASCII ID. Selection skips a blocked goal
+and considers the next eligible one. Preferred lane wins when eligible, followed
+by the preferred engine and ASCII lane name among allowed capable lanes. Ready
+and Startable describe availability, not approval for automatic execution. No
+batch grant or scheduler is enabled by this component.

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add internal native goal admission with shared locked Ready/Startable checks,
+  current lane and source observations, canonical write/resource reservations,
+  fresh complete claim checks, and deterministic eligible selection. Required
+  lane bindings never fall back; refusal reasons remain visible in plain words.
+  This component adds no reservation, launch, public control or scheduler.
+
 - Prepare native brief delivery with exact wrapper-inclusive byte/code-point
   limits and immutable private workspace artifacts for oversized prompts. Keep
   full/pointer digests and sizes, preserve resume artifacts, and use one safety
