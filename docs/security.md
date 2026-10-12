@@ -13,6 +13,16 @@ Private delivery intent and receipt files remain separate from lane-control
 state. Pending or uncertain required audit durability blocks the internal native
 admission predicate; it does not prevent independent pause, Cancel or report
 access. No public native operation or launch path is enabled by this component.
+Receipts do not replace delivery evidence. Bounded inspection checks every
+acknowledged event against the journal and strict safe row schema; missing or
+damaged rows hold native work. Reconciliation appends only missing required
+events and preserves raw and legacy history. Oversized or incomplete files
+refuse readiness with a plain explanation instead of hiding unchecked data.
+Native envelope markers are recognized even with an invalid action. A malformed
+native envelope is rejected before public entry or raw-text construction, so an
+unexpected private body cannot enter the audit view. Genuine legacy rows without
+native markers stay readable. This is not authentication against hostile
+same-user file edits.
 See [the delivery protocol](queue-format.md#native-audit-mirror-local-unpublished).
 
 ## Lane controls through judge MCP

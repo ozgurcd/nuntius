@@ -42,6 +42,14 @@ func parseAudit(b []byte, since time.Time) []AuditEntry {
 		reads[tool.Name], _ = tool.Annotations["readOnlyHint"].(bool)
 	}
 	for _, line := range bytes.Split(b, []byte("\n")) {
+		if len(line) > 16384 {
+			continue
+		}
+		var native nativeAuditRow
+		isNative := hasNativeAuditEnvelope(line)
+		if isNative && (decodeLaneControlObject(line, &native) != nil || !validNativeAuditRow(native)) {
+			continue
+		}
 		var v struct {
 			Time   time.Time `json:"time"`
 			Tool   string    `json:"tool"`
@@ -51,19 +59,18 @@ func parseAudit(b []byte, since time.Time) []AuditEntry {
 			Result string    `json:"result"`
 			Reason string    `json:"reason"`
 		}
-		if len(line) > 16384 || json.Unmarshal(line, &v) != nil || v.Time.IsZero() || v.Time.Before(since) {
+		if json.Unmarshal(line, &v) != nil || v.Time.IsZero() || v.Time.Before(since) {
 			continue
 		}
-		var native nativeAuditRow
-		if v.Tool == nativeAuditTool {
-			if decodeLaneControlObject(line, &native) != nil || !validNativeAuditRow(native) || seenNative[native.EventID] {
+		if isNative {
+			if seenNative[native.EventID] {
 				continue
 			}
 			seenNative[native.EventID] = true
 		}
 		entry := AuditEntry{Time: v.Time, Action: cell(bounded(Redact(v.Tool), 128)), Lane: cell(bounded(Redact(v.Lane), 128)), GoalID: cell(bounded(Redact(v.GoalID), 128)), Result: "ok", Reason: cell(bounded(Redact(v.Reason), 512)), Raw: bounded(Redact(string(line)), 16384)}
 		entry.ReadOnly = reads[entry.Action]
-		if v.Tool == nativeAuditTool {
+		if isNative {
 			entry.EventID, entry.Source = native.EventID, native.Source
 			entry.Sequence, entry.Revision = native.Sequence, native.Revision
 		}

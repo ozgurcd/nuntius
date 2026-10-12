@@ -7,6 +7,12 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Native audit checks now detect missing or damaged delivered events. Native
+  work stays held until safe delivery is restored; retry adds only missing
+  events and preserves existing history. Files that cannot be checked safely
+  explain why. Malformed native rows never expose an unexpected private body
+  in the audit view. Genuine older audit rows remain readable.
+
 - Native records now have internal revision checks and retained notes. Creating
   a record leaves it drafted. Permanent results accept notes and correction
   evidence without changing the result. Oversized lists explain the failure

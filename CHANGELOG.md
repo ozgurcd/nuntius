@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Check acknowledged native audit events against the journal and intact safe
+  rows before reporting healthy delivery. Restore only missing required rows,
+  preserving raw history. Explain bounded-inspection refusals. Reject malformed
+  native envelopes before public or raw presentation, even with a missing or
+  invalid action; genuine legacy rows stay readable.
+
 - Add internal native goal record operations: drafted creation, typed revision
   checks, append-only notes, permanent terminal results, and complete bounded
   open lists with paginated terminal results. Scope or seal changes clear

@@ -1,11 +1,14 @@
 package nuntius
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -17,7 +20,14 @@ const nativeAuditTool = "native_goal_spec"
 const nativeAuditIntentName = "goal-audit-intent.json"
 const nativeAuditReceiptName = "goal-audit-receipt.json"
 
+// Readiness examines the full delivery copy, with a fixed I/O and row budget.
+// It refuses larger histories rather than certifying an unchecked suffix.
+const nativeAuditLogMaxBytes = 64 << 20
+const nativeAuditLogMaxRowBytes = 16384
+
 var errNativeAudit = errors.New("native audit is pending or unavailable; preserve the history and retry audit reconciliation before starting native work")
+var errNativeAuditMissing = errors.New("required native audit rows are missing or damaged; native work remains held; preserve the history and retry audit reconciliation")
+var errNativeAuditLog = errors.New("native audit history cannot be checked safely: it is unreadable, incomplete or exceeds the inspection limit; preserve it for review before starting native work")
 
 // These are mirror delivery records, never goal or lane-control authority.
 type nativeAuditReceipt struct {
@@ -84,8 +94,16 @@ func (m *Manager) mirrorNativeAudit(source string, fault goalCommitIO) (nativeAu
 		return nativeAuditUnavailable(), errNativeAudit
 	}
 	defer lock.Close()
-	state, rows, receipt, intent, err := readNativeAudit(root)
+	state, rows, receipt, intent, err := readNativeAuditRecords(root)
 	if err != nil {
+		return state, err
+	}
+	// Receipts are cursors, not proof that earlier delivery bytes still exist.
+	// Inspect once, then repair only absent acknowledged events. Keep the
+	// latest intent/receipt intact while restoring earlier rows.
+	delivered, err := observeNativeAuditLog(root, rows[:receipt.Sequence], intent, false)
+	if err != nil {
+		state.Available, state.Explanation = false, err.Error()
 		return state, err
 	}
 	fail := func() (nativeAuditState, error) {
@@ -103,6 +121,19 @@ func (m *Manager) mirrorNativeAudit(source string, fault goalCommitIO) (nativeAu
 		e = syncGoalJournal(root, journal, fault)
 		journal.Close()
 		if e != nil {
+			return fail()
+		}
+	}
+	for i, present := range delivered {
+		if present {
+			continue
+		}
+		row := rows[i]
+		row.Time, row.Source = time.Now().UTC(), source
+		if intent != nil && intent.Sequence == row.Sequence {
+			row = *intent
+		}
+		if appendNativeAudit(root, row, fault) != nil {
 			return fail()
 		}
 	}
@@ -139,14 +170,14 @@ func (m *Manager) mirrorNativeAudit(source string, fault goalCommitIO) (nativeAu
 // locks. It never acquires them recursively, starts work or reconciles A's
 // independent lane intent. Later launch steps combine this with A's guard.
 func requireNativeAuditLocked(root *os.File, fault goalCommitIO) error {
-	state, _, _, _, err := readNativeAudit(root)
+	state, rows, _, intent, err := readNativeAudit(root)
 	if err != nil || state.Pending != 0 {
 		return errNativeAudit
 	}
 	if state.Sequence == 0 {
 		return nil
 	}
-	if fault.check("native_confirm.audit.jsonl") != nil || checkNativeAuditLog(root, true) != nil {
+	if fault.check("native_confirm.audit.jsonl") != nil || checkNativeAuditLog(root, rows, intent, true) != nil {
 		return errNativeAudit
 	}
 	// A visible receipt after a failed directory sync is still uncertain.
@@ -182,6 +213,32 @@ func nativeAuditUnavailable() nativeAuditState {
 // Read only. The journal validates every complete frame and private reference
 // before any delivery record can be used. Uncommitted tails produce no row.
 func readNativeAudit(root *os.File) (nativeAuditState, []nativeAuditRow, nativeAuditReceipt, *nativeAuditRow, error) {
+	state, rows, receipt, intent, err := readNativeAuditRecords(root)
+	if err != nil || receipt.Sequence == 0 {
+		return state, rows, receipt, intent, err
+	}
+	delivered, err := observeNativeAuditLog(root, rows[:receipt.Sequence], intent, false)
+	if err == nil {
+		state.Mirrored = 0
+		for _, present := range delivered {
+			if present {
+				state.Mirrored++
+			}
+		}
+		state.Pending = state.Sequence - state.Mirrored
+		if state.Mirrored != receipt.Sequence {
+			err = errNativeAuditMissing
+		}
+	}
+	if err != nil {
+		state.Available, state.Explanation = false, err.Error()
+	}
+	return state, rows, receipt, intent, err
+}
+
+// Journal and private delivery metadata only. Reconciliation uses this even
+// when delivered rows are absent; observation/admission also inspect the log.
+func readNativeAuditRecords(root *os.File) (nativeAuditState, []nativeAuditRow, nativeAuditReceipt, *nativeAuditRow, error) {
 	bad := func() (nativeAuditState, []nativeAuditRow, nativeAuditReceipt, *nativeAuditRow, error) {
 		return nativeAuditUnavailable(), nil, nativeAuditReceipt{}, nil, errNativeAudit
 	}
@@ -233,9 +290,6 @@ func readNativeAudit(root *os.File) (nativeAuditState, []nativeAuditRow, nativeA
 	if receipt.Sequence > 0 && intent == nil {
 		return bad()
 	}
-	if receipt.Sequence > 0 && checkNativeAuditLog(root, false) != nil {
-		return bad()
-	}
 	state := nativeAuditState{Sequence: p.sequence, Mirrored: receipt.Sequence, Pending: p.sequence - receipt.Sequence, Available: p.sequence == receipt.Sequence, Explanation: "Native audit delivery is up to date. No native work was started."}
 	if state.Pending > 0 {
 		state.Explanation = errNativeAudit.Error()
@@ -243,29 +297,121 @@ func readNativeAudit(root *os.File) (nativeAuditState, []nativeAuditRow, nativeA
 	return state, rows, receipt, intent, nil
 }
 
-func checkNativeAuditLog(root *os.File, confirm bool) error {
-	fd, err := unix.Openat(int(root.Fd()), "audit.jsonl", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+func checkNativeAuditLog(root *os.File, rows []nativeAuditRow, intent *nativeAuditRow, confirm bool) error {
+	delivered, err := observeNativeAuditLog(root, rows, intent, confirm)
 	if err != nil {
-		return errNativeAudit
+		return err
+	}
+	for _, present := range delivered {
+		if !present {
+			return errNativeAuditMissing
+		}
+	}
+	return nil
+}
+
+func observeNativeAuditLog(root *os.File, rows []nativeAuditRow, intent *nativeAuditRow, confirm bool) ([]bool, error) {
+	delivered := make([]bool, len(rows))
+	fd, err := unix.Openat(int(root.Fd()), "audit.jsonl", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return delivered, nil
+	}
+	if err != nil {
+		return nil, errNativeAuditLog
 	}
 	f := os.NewFile(uintptr(fd), "native-audit-observation")
 	defer f.Close()
 	if checkLaneControlFile(fd) != nil || unix.Flock(fd, unix.LOCK_SH|unix.LOCK_NB) != nil {
-		return errNativeAudit
+		return nil, errNativeAuditLog
 	}
 	defer unix.Flock(fd, unix.LOCK_UN)
 	st, err := f.Stat()
-	if err != nil || st.Size() == 0 {
-		return errNativeAudit
+	if err != nil || st.Size() > nativeAuditLogMaxBytes {
+		return nil, errNativeAuditLog
 	}
-	var last [1]byte
-	if n, err := f.ReadAt(last[:], st.Size()-1); err != nil || n != 1 || last[0] != '\n' {
-		return errNativeAudit
+	if st.Size() > 0 {
+		var last [1]byte
+		if n, err := f.ReadAt(last[:], st.Size()-1); err != nil || n != 1 || last[0] != '\n' {
+			return nil, errNativeAuditLog
+		}
+	}
+	byID := make(map[string]int, len(rows))
+	for i, row := range rows {
+		byID[row.EventID] = i
+	}
+	scan := bufio.NewScanner(io.LimitReader(f, nativeAuditLogMaxBytes+1))
+	scan.Buffer(make([]byte, 4096), nativeAuditLogMaxRowBytes+1)
+	// Keep CR bytes in genuine legacy CRLF rows for exact byte accounting.
+	scan.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			return i + 1, data[:i], nil
+		}
+		if atEOF && len(data) > 0 {
+			return 0, nil, errNativeAuditLog
+		}
+		return 0, nil, nil
+	})
+	var read int64
+	for scan.Scan() {
+		line := scan.Bytes()
+		read += int64(len(line)) + 1
+		if read > nativeAuditLogMaxBytes {
+			return nil, errNativeAuditLog
+		}
+		var row nativeAuditRow
+		if decodeLaneControlObject(line, &row) != nil || !validNativeAuditRow(row) {
+			continue // Keep malformed and genuine legacy history untouched.
+		}
+		i, required := byID[row.EventID]
+		if !required {
+			continue
+		}
+		want := rows[i]
+		want.Time, want.Source = row.Time, row.Source
+		if intent != nil && intent.Sequence == row.Sequence {
+			want.Time, want.Source = intent.Time, intent.Source
+		}
+		if row == want {
+			delivered[i] = true
+		}
+	}
+	if scan.Err() != nil || read != st.Size() {
+		return nil, errNativeAuditLog
 	}
 	if confirm && f.Sync() != nil {
-		return errNativeAudit
+		return nil, errNativeAuditLog
 	}
-	return nil
+	return delivered, nil
+}
+
+// Recognition precedes the closed decoder and public/Raw construction. Native
+// markers remain native even when their values or action are invalid. Inspect
+// decoded top-level keys so escaping and duplicate action fields cannot hide it.
+func hasNativeAuditEnvelope(line []byte) bool {
+	d := json.NewDecoder(bytes.NewReader(line))
+	if token, err := d.Token(); err != nil || token != json.Delim('{') {
+		return false
+	}
+	for d.More() {
+		key, err := d.Token()
+		if err != nil {
+			return false
+		}
+		if key == "native_audit_version" || key == "event_id" || key == "goal_revision" {
+			return true
+		}
+		var value json.RawMessage
+		if d.Decode(&value) != nil {
+			return false
+		}
+		if key == "tool" {
+			var tool string
+			if json.Unmarshal(value, &tool) == nil && tool == nativeAuditTool {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func validNativeAuditSource(source string) bool {

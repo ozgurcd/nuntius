@@ -375,6 +375,16 @@ reconfirms the journal, audit, intent, receipt and directory sync before success
 Later native launch steps must combine this predicate with the existing lane
 admission guard; this component starts no work.
 
+A receipt alone cannot show that earlier delivery rows still exist. Status and
+admission inspect the complete audit file for every acknowledged event ID and
+its strict safe row, matched against the committed journal. Missing or damaged
+required rows make delivery unavailable, with a plain reason. Reconciliation
+appends only missing required events and leaves all existing bytes, including
+legacy and damaged rows, intact. It confirms delivery again before success.
+Inspection is bounded to 64 MiB per pass and 16 KiB per line. Larger files,
+oversized lines, unsafe files or incomplete final lines refuse native readiness;
+they are preserved for review, never trimmed to make a check pass.
+
 The adapter supplies `cli`, `web`, `mcp` or `native` as the mirror source.
 It records the adapter that first prepared delivery, not an authenticated
 owner identity or the original save time. Caller JSON, actor fields and spec
@@ -384,10 +394,22 @@ and result, event ID, sequence, goal ID, goal revision and source. It contains
 no brief body, report, session, credential, operation ID, blob reference or
 private path. Generic outcome auditing cannot emit this reserved native action.
 
+If an older acknowledged row is lost after its intent was superseded, its
+restored copy records the retry adapter and delivery time. The latest retained
+intent still preserves its original adapter and time. This checks safe delivery
+and journal identity; it does not authenticate hostile edits by the same user.
+
 A crash after append and before receipt can deliver the same row again.
 This is at-least-once delivery. Readers deduplicate valid native rows by event
 ID and show their identity, source, sequence and revision with a plain summary.
 External consumers must do the same; raw audit history is never rewritten.
+
+Readers recognize native rows from the reserved action or top-level
+`native_audit_version`, `event_id` or `goal_revision` fields, even when the
+action is null, empty or different. The complete closed schema must pass before
+any public entry or raw text is built. Extra body fields, duplicates, nulls and
+coerced values are rejected. Genuine legacy rows without native markers remain
+readable, including unknown actions and repeated legacy rows.
 Older audit rows retain their existing classification and presentation.
 An unfinished audit line blocks delivery for review; the mirror does not delete
 it or pretend the event was delivered. Offline crash tests certify process
