@@ -174,7 +174,20 @@ func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.
 	noMenubar := wf.Bool("no-menubar", false, "skip menu bar helper")
 	job := wf.String("job", "", "internal background job")
 	ensure := wf.Bool("ensure", false, "internal owner recovery")
-	if wf.Parse(args) != nil || len(wf.Args()) != 0 || (!*tnMode && (*optional || *keep)) || (*notify != "" && !*tnMode && len(hosts) == 0) || (*replace && action != "start") || (*job != "" && action != "__background") || (*ensure && (action != "__background" || !*tnMode || *optional || *notify != "" || *keep)) {
+	if wf.Parse(args) != nil {
+		fmt.Fprintln(errOut, "invalid web flags")
+		return 2
+	}
+	explicitNetwork := false
+	wf.Visit(func(f *flag.Flag) {
+		if f.Name == "tailnet" || f.Name == "allow-host" || f.Name == "tailnet-optional" || f.Name == "tailnet-keep" {
+			explicitNetwork = true
+		}
+	})
+	if !explicitNetwork && action != "__background" {
+		*tnMode = config.PhoneAccess
+	}
+	if len(wf.Args()) != 0 || (!*tnMode && (*optional || *keep)) || (*notify != "" && !*tnMode && len(hosts) == 0) || (*replace && action != "start") || (*job != "" && action != "__background") || (*ensure && (action != "__background" || !*tnMode || *optional || *notify != "" || *keep)) {
 		fmt.Fprintln(errOut, "invalid web flags")
 		return 2
 	}
@@ -196,6 +209,10 @@ func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.
 		defer guard.Close()
 		if state := m.webDashboard(); state != nil {
 			if !*replace {
+				if *tnMode && state.Host == "" {
+					fmt.Fprintln(errOut, "phone_restart_required: Phone access is enabled for the next start. Restart the dashboard locally.")
+					return 1
+				}
 				if !*noMenubar {
 					m.startMenubar()
 				}
@@ -260,15 +277,11 @@ func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.
 		out = io.Discard
 	}
 	w.notify = config.NotifyIMessage
-	if !config.imessageEnabled() {
-		w.notify = ""
-	}
 	if *notify != "" {
 		w.notify = *notify
+		w.notifyOverride = true
 	}
-	if *ensure {
-		w.notify = ""
-	} // Parent sends only after authenticated verification.
+	w.suppressNotify = *ensure // Retain target; parent sends only after authenticated verification.
 	if *tnMode {
 		exe, e := findTailscale()
 		host := ""
@@ -285,6 +298,7 @@ func (m *Manager) webCommand(ctx context.Context, args []string, out, errOut io.
 		}
 		if e != nil {
 			fmt.Fprintln(errOut, "warning: "+e.Error()+"; the dashboard is loopback-only")
+			w.phoneFallback = phoneStartupReason(webStartupCode(e.Error()))
 			w.allowHost = ""
 		} else {
 			w.allowHost = host

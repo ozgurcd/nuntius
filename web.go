@@ -37,6 +37,12 @@ type Web struct {
 	notify         string
 	background     bool
 	job            string
+	suppressNotify bool
+	notifyOverride bool
+	phoneMu        sync.RWMutex
+	phoneReady     bool
+	phoneFallback  string
+	phoneCheck     func(context.Context) string // nil uses read-only runtime verification.
 }
 
 // TIOCGWINSZ is shared by Darwin and Linux. Unknown width does not suppress QR.
@@ -490,12 +496,6 @@ func (w *Web) Run(ctx context.Context, out, errOut io.Writer) error {
 	}
 	defer listener.Close()
 	w.address = listener.Addr().String()
-	closeMenubar, trayErr := w.serveMenubar()
-	if trayErr != nil {
-		fmt.Fprintln(errOut, "warning: menu bar API unavailable")
-	} else {
-		defer closeMenubar()
-	}
 	_, port, _ := net.SplitHostPort(w.address)
 	serve := "none"
 	if w.tailnet != nil {
@@ -507,6 +507,7 @@ func (w *Web) Run(ctx context.Context, out, errOut io.Writer) error {
 				return e
 			}
 			fmt.Fprintln(errOut, "warning: "+e.Error()+"; the dashboard is loopback-only")
+			w.phoneFallback = phoneStartupReason(webStartupCode(e.Error()))
 			w.allowHost, w.tailnet = "", nil
 		} else {
 			serve = state
@@ -545,11 +546,20 @@ func (w *Web) Run(ctx context.Context, out, errOut io.Writer) error {
 	server := &http.Server{Handler: w, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
+	closeMenubar, trayErr := w.serveMenubar()
+	if trayErr != nil {
+		fmt.Fprintln(errOut, "warning: menu bar API unavailable")
+	} else {
+		defer closeMenubar()
+	}
 	message, host := "off", "off"
 	if w.allowHost != "" {
 		host = w.allowHost
 	}
-	if w.notify != "" && w.allowHost != "" {
+	w.manager.mu.Lock()
+	notifyEnabled := w.manager.config.imessageEnabled()
+	w.manager.mu.Unlock()
+	if !w.suppressNotify && w.notify != "" && w.allowHost != "" && (w.notifyOverride || notifyEnabled) {
 		message = "sent"
 		if e := sendIMessage(ctx, w.notify, "nuntius dashboard ("+machineName(w.allowHost)+"): https://"+w.allowHost+"/?token="+w.token); e != nil {
 			message = "failed"
@@ -573,6 +583,10 @@ func (w *Web) Run(ctx context.Context, out, errOut io.Writer) error {
 	if e = w.manager.saveWebState(state); e != nil {
 		return e
 	}
+	w.phoneMu.Lock()
+	w.phoneReady = true
+	w.phoneMu.Unlock()
+	defer func() { w.phoneMu.Lock(); w.phoneReady = false; w.phoneMu.Unlock() }()
 	fmt.Fprintf(out, "summary: tailnet=%s serve=%s imessage=%s\n", host, serve, message)
 	select {
 	case <-ctx.Done():

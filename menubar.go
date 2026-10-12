@@ -91,12 +91,12 @@ func (w *Web) menubarHandler() http.Handler {
 		out.Header().Set("Cache-Control", "no-store")
 		if r.URL.Path == "/status" {
 			if r.Method != "GET" {
-				out.WriteHeader(405)
+				phoneRefusal(out, 405, "method_refused")
 				return
 			}
 			lanes, err := w.manager.Status()
 			if err != nil {
-				out.WriteHeader(503)
+				phoneRefusal(out, 503, "configuration_unavailable")
 				return
 			}
 			rows := make([]map[string]any, 0, len(lanes))
@@ -113,45 +113,51 @@ func (w *Web) menubarHandler() http.Handler {
 				}
 				rows = append(rows, map[string]any{"lane": cell(s.Lane), "goal_id": cell(s.GoalID), "state": state, "elapsed_seconds": s.ElapsedSeconds, "question": question, "failed": s.Badge == "red" || s.State == "ended_no_report"})
 			}
-			_ = json.NewEncoder(out).Encode(map[string]any{"lanes": rows})
+			actions, _ := w.phoneCapabilities(r.Context())
+			_ = json.NewEncoder(out).Encode(map[string]any{"lanes": rows, "actions": actions})
 			return
 		}
 		if r.URL.Path != "/open" && r.URL.Path != "/qr" && r.URL.Path != "/phone" && r.URL.Path != "/settings" {
-			out.WriteHeader(404)
+			phoneRefusal(out, 404, "action_unknown")
 			return
 		}
 		if r.Method != "POST" {
-			out.WriteHeader(405)
+			phoneRefusal(out, 405, "method_refused")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 95*time.Second)
 		defer cancel()
 		var err error
+		var target string
+		if r.URL.Path == "/qr" || r.URL.Path == "/phone" {
+			actions, selected := w.phoneCapabilities(ctx)
+			a := actions[strings.TrimPrefix(r.URL.Path, "/")]
+			if !a.Enabled {
+				status := 409
+				if a.Code == "configuration_unavailable" || a.Code == "readiness_unavailable" {
+					status = 503
+				}
+				phoneRefusal(out, status, a.Code)
+				return
+			}
+			target = selected
+		}
 		if r.URL.Path == "/settings" {
 			// NewWeb validates the loopback address; never copy a grant into this URL.
 			err = menubarOpenFile(ctx, "http://"+w.address+"/#settings")
 		} else if r.URL.Path == "/phone" {
-			if _, err := w.manager.Status(); err != nil {
-				out.WriteHeader(503)
-				return
-			}
-			w.manager.mu.Lock()
-			enabled := w.manager.config.NotifyIMessageEnabled == nil || *w.manager.config.NotifyIMessageEnabled
-			w.manager.mu.Unlock()
-			if !enabled {
-				out.WriteHeader(409)
-				return
-			}
-			if w.notify == "" || w.allowHost == "" {
-				out.WriteHeader(409)
-				return
-			}
-			err = menubarSend(ctx, w.notify, "nuntius dashboard: https://"+w.allowHost+"/?token="+w.token)
+			err = menubarSend(ctx, target, "nuntius dashboard: https://"+w.allowHost+"/?token="+w.token)
 		} else {
 			err = w.menubarPresentation(ctx, r.URL.Path == "/qr")
 		}
 		if err != nil {
-			out.WriteHeader(503)
+			code := "presentation_unavailable"
+			if r.URL.Path == "/phone" {
+				code = "messages_failed"
+			} else if err.Error() == "cannot open presentation" {
+				code = "presentation_open_failed"
+			}
+			phoneRefusal(out, 503, code)
 			return
 		}
 		out.WriteHeader(200)

@@ -150,8 +150,28 @@ The optional notify_imessage_enabled boolean records this choice; omitted means
 enabled when a recipient exists. Enabling with no recipient is refused.
 `set --json` exposes display settings without recipient or template arguments.
 The dashboard Settings page uses the same Manager policy and private writer as
-these CLI setters. It can change existing pool sizes and this boolean only.
+these CLI setters. It can change existing pool sizes, this boolean and the
+saved phone-access choice.
 Templates, recipients, paths and execution options remain local-only.
+
+## Phone access
+
+`phone_access` is an optional JSON boolean. Omitted or false keeps normal
+dashboard startup local. True requests strict Tailscale startup, including
+when you choose Start dashboard in the menu bar. Save it in signed-in Settings
+or use `nuntius set phone-access on` or `off`. Stop and start the dashboard
+locally to apply it; saving never restarts a service or sends a link.
+The menu shows the running dashboard's actual readiness separately from the
+saved next-start choice. If it is already running locally, the menu explains
+that a restart is needed. Explicit networking flags override the saved choice.
+Explicit judge recovery still requires verified Tailscale access.
+
+The recipient stays local-only. Menu sends read the latest configured handle,
+unless the dashboard started with an explicit recipient override. Recovery
+retains the private handle but suppresses the child's automatic send; the
+parent sends only after verification. Changing phone access does not enable
+iMessage or edit a recipient. A Settings batch still changes at most four
+fields; save a larger set in separate batches.
 
 Lane holds are operational controls, not configuration settings. `lane pause`,
 `lane resume`, `lane list` and held-message commands leave the selected lane

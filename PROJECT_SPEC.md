@@ -506,7 +506,14 @@ panel; live tails wrap long paths. Verification is offline DOM/CSS at 390px,
 not a browser rendering claim.
 
 set --json exposes pool sizes, notify_imessage on/off (not its recipient),
-tailnet default off, reports_dir, max_runtime, auto_resume and lane model/effort.
+saved phone-access default (off unless enabled), reports_dir, max_runtime,
+auto_resume and lane model/effort. set phone-access on|off changes the opt-in
+Tailscale policy for the next normal or menu-bar dashboard start. Signed-in
+Settings can save it without restarting or sending. Explicit network flags
+override it; ensure retains its existing strict recovery contract. Menu phone
+actions recheck authenticated readiness and exact Serve state before acting,
+and show independent, fixed reasons when unavailable. Recovery retains the
+private recipient while suppressing the child's automatic send.
 set notify-imessage on|off atomically preserves the recipient and all templates;
 on needs an existing recipient. notify_imessage_enabled defaults to enabled
 when a recipient exists. Explicit off suppresses phone sends and configured
@@ -514,4 +521,6 @@ startup sends; explicit --notify-imessage still selects a startup recipient.
 The helper Settings submenu reads this snapshot through the CLI even while
 the dashboard is stopped. Changes queue a confirmation, then execute the same
 set or menubar --at-login CLI path. It reveals lanes.json in Finder on macOS.
-No model/effort, runtime, reports directory, recovery or tailnet edits are offered.
+No model/effort, runtime, reports directory or recovery edits are offered.
+The local-status submenu has no network editor; the signed-in dashboard owns
+the saved phone-access toggle.

@@ -7,6 +7,10 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Phone actions now explain what is missing in the menu. Save Phone access
+  through Tailscale in Settings, then stop and start locally. Recovery keeps
+  your private recipient, and sends only after it verifies the dashboard.
+
 - Native reservations keep an exact saved mapping from reviewed writes to
   their physical repository paths. Changed mappings refuse on save, restart
   replay and end/release. Genuine path aliases remain supported; a changed

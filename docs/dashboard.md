@@ -176,6 +176,9 @@ pool without deleting its template. Unconfigured pools cannot be enabled here.
 Legacy lanes require local `nuntius config convert` when idle. The iMessage
 switch changes only the enabled preference, never the private recipient.
 Enabling requires a recipient already configured on the Mac.
+The **Phone access through Tailscale** switch saves strict phone startup for
+the next local dashboard start. It defaults to off. Saving it does not start
+or restart the dashboard, change Serve or send a link.
 
 Current values, pending deltas and a review list precede **Save changes**.
 Save validates every field and busy/surviving agents before one atomic private
@@ -188,7 +191,7 @@ refresh immediately. Reload updates current values but keeps a
 draft for review. A stale revision cannot overwrite another tab or CLI change.
 
 Runtime, resume, desktop notification, paths, models/effort, lane identities,
-template execution options, helper login status and startup/network options
+template execution options, helper login status and advanced startup options
 are marked read-only or local-only. Raw arguments, continuation text and the
 iMessage recipient are never sent to the browser. Config/store paths and
 listener/host/notification overrides are chosen at startup. There is no file
@@ -196,8 +199,8 @@ opener, generic config editor, model discovery or restart control.
 The start-at-login toggle stays local in **Local status & login** in the menu.
 
 iMessage preference is used when notification settings are next loaded.
-An existing dashboard's captured delivery settings/CLI override may require a
-local restart; saving sends no link and performs no restart. Settings… opens
+Menu sends reload the configured recipient; an explicit startup override stays
+in effect until a local restart. Saving sends no link and performs no restart. Settings… opens
 the running local dashboard without a credential URL; a signed-out browser
 uses the existing sign-in flow. A stopped dashboard must be started locally.
 
@@ -300,6 +303,31 @@ Remember sign-in only on your own trusted browser profile. Anyone using that
 unlocked profile can open the bookmark. See [security notes](security.md).
 
 ### Phone access over Tailscale
+
+In signed-in Settings, turn on **Phone access through Tailscale**, then save.
+This saves the choice for the next local dashboard start. Saving does not
+restart the dashboard, configure Serve or send a link. Stop the dashboard
+locally, then choose **Start dashboard** in the menu bar. The menu and normal
+CLI startup use the same saved choice. The default is off. An explicit
+network flag keeps its command-line meaning, including `--tailnet=false`.
+Saved phone access starts strictly: a Tailscale failure stops startup and
+the menu explains how to fix it. It never silently selects loopback instead.
+
+**Show phone QR** and **Send phone link** show separate disabled reasons.
+QR does not need an iMessage recipient or enabled notifications. Sending does:
+set your own `notify_imessage` recipient in the local configuration and turn
+on iMessage notifications. Menu sends use the latest configured recipient;
+an explicit startup recipient override stays in effect until a local restart.
+Neither action repairs Serve or restarts a dashboard. Both recheck readiness
+before presenting or sending a link. A stopped Tailscale connection, Funnel,
+another Serve mapping or failed authenticated check prevents the action.
+An explicit `--tailnet-optional` fallback keeps its reason visible in the menu.
+
+Recovery keeps the configured recipient in private runtime state. Its child
+sends nothing automatically; the parent sends only after authenticated
+verification. After recovery, QR and an explicit menu send remain available
+when their prerequisites pass. QR presentation stays in an owner-only 0600
+file, and the opener receives only the filename. Menu text contains no link.
 
 Install and connect Tailscale on the Mac and iPhone with the same account.
 Enable MagicDNS and HTTPS certificates for the tailnet. See the official

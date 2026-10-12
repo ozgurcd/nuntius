@@ -1190,6 +1190,7 @@ function settingsDiff() {
   if (!settingsCurrent || !settingsDraft) return [];
   const changes = settingsKinds.filter(k => settingsDraft[k] !== String(settingsCurrent.pools[k].size)).map(k => [k, settingsDraft[k]]);
   if (settingsDraft.notify !== settingsCurrent.notify_imessage_enabled) changes.push(['notify', settingsDraft.notify]);
+  if (settingsDraft.phone !== !!settingsCurrent.phone_access) changes.push(['phone', settingsDraft.phone]);
   return changes;
 }
 function settingsBanner(text, error = false) {
@@ -1216,10 +1217,14 @@ function settingsUpdate() {
   setText(el('current-notify'), settingsCurrent ? 'Current: ' + on(settingsCurrent.notify_imessage_enabled) + ' · effective ' + on(settingsCurrent.notify_effective) : '');
   setText(el('pending-notify'), settingsCurrent && settingsDraft.notify !== settingsCurrent.notify_imessage_enabled ? 'Pending: ' + on(settingsCurrent.notify_imessage_enabled) + ' → ' + on(settingsDraft.notify) : '');
   settingsFieldError('notify', settingsErrors.notify || '');
+  el('setting-phone').disabled = !settingsCurrent || settingsSaving || settingsLoading || acting;
+  setText(el('current-phone'), settingsCurrent ? 'Saved for next local start: ' + on(settingsCurrent.phone_access) : '');
+  setText(el('pending-phone'), settingsCurrent && settingsDraft.phone !== !!settingsCurrent.phone_access ? 'Pending: ' + on(settingsCurrent.phone_access) + ' → ' + on(settingsDraft.phone) : '');
+  settingsFieldError('phone', settingsErrors.phone || '');
   el('settingsReview').replaceChildren();
   for (const [k,value] of pending) {
-    const li = node('li'), label = k === 'notify' ? 'iMessage' : k.charAt(0).toUpperCase() + k.slice(1) + ' pool';
-    li.append(node('strong','',label),node('span','',k === 'notify' ? on(settingsCurrent.notify_imessage_enabled) + ' → ' + on(value) : settingsCurrent.pools[k].size + ' → ' + (value || 'empty'))); el('settingsReview').append(li);
+    const li = node('li'), label = k === 'notify' ? 'iMessage' : k === 'phone' ? 'Phone access (next local start)' : k.charAt(0).toUpperCase() + k.slice(1) + ' pool';
+    li.append(node('strong','',label),node('span','',k === 'notify' || k === 'phone' ? on(k === 'notify' ? settingsCurrent.notify_imessage_enabled : settingsCurrent.phone_access) + ' → ' + on(value) : settingsCurrent.pools[k].size + ' → ' + (value || 'empty'))); el('settingsReview').append(li);
   }
   el('settingsReviewEmpty').hidden = !!pending.length; el('settingsPending').hidden = !pending.length;
   el('settingsSave').disabled = !token || !settingsConfirmed || settingsLoading || settingsSaving || acting || !pending.length || !valid;
@@ -1231,9 +1236,10 @@ function settingsUpdate() {
 function settingsResetDraft() {
   if (!settingsCurrent) return;
   settingsErrors = {};
-  settingsDraft = {notify:settingsCurrent.notify_imessage_enabled};
+  settingsDraft = {notify:settingsCurrent.notify_imessage_enabled, phone:!!settingsCurrent.phone_access};
   for (const k of settingsKinds) { settingsDraft[k] = String(settingsCurrent.pools[k].size); el('setting-' + k).value = settingsDraft[k]; }
   el('setting-notify').checked = settingsDraft.notify; settingsFieldError('notify',''); settingsUpdate();
+  el('setting-phone').checked = settingsDraft.phone; settingsFieldError('phone','');
 }
 function settingsReadonly(parent, label, value) {
   const field = node('div','field'), id = 'readonly-' + ++settingsReadonlyID;
@@ -1260,11 +1266,11 @@ function settingsReadOnlyView(c) {
   models.append(node('p','hint','Expanded lanes: ' + (c.lane_names.join(', ') || 'All pools disabled')));
   const machine = el('settingsMachine'); machine.replaceChildren();
   for (const [label,value] of [['Reports folder',c.reports_dir],['Oversight file',c.oversight_path || 'Default · beside reports folder'],['Start menu-bar helper at login',c.at_login],['Tailnet default',c.tailnet_default]]) settingsReadonly(machine,label,value);
-  const options = node('details'); options.append(node('summary','','Startup & connection options · local only'),node('p','','Config/store locations, loopback port, allowed host, tailnet options and notification overrides are chosen locally at startup. This page cannot change or restart services.'));
+  const options = node('details'); options.append(node('summary','','Advanced startup options · local only'),node('p','','Config/store locations, loopback port, allowed host and explicit network/notification overrides are chosen locally at startup. The saved phone-access toggle above applies at the next local start. This page cannot restart services.'));
   machine.append(options,node('p','hint','Queue file · '+(c.queue_file_mode||'default')+' · local only'),node('p','hint',c.local_only_reason));
 }
 function settingsFailure(code) {
-  return {locked:'Settings busy, retrying. Your draft is kept.',configuration_unavailable:'Settings configuration source is unavailable. Run nuntius config check locally, then reload current values. Your draft is kept.',invalid_configuration:'Settings configuration is invalid or unreadable. Run nuntius config check locally, then reload current values. Your draft is kept.',rate_limited:'Too many settings requests. Wait briefly, then reload current values. Your draft is kept.'}[code] || 'Settings unavailable. Your draft is kept. Reload current values before saving.';
+  return {too_many_changes:'Save at most four changed fields at once. Restore some draft values to their current values, then save the rest.',locked:'Settings busy, retrying. Your draft is kept.',configuration_unavailable:'Settings configuration source is unavailable. Run nuntius config check locally, then reload current values. Your draft is kept.',invalid_configuration:'Settings configuration is invalid or unreadable. Run nuntius config check locally, then reload current values. Your draft is kept.',rate_limited:'Too many settings requests. Wait briefly, then reload current values. Your draft is kept.'}[code] || 'Settings unavailable. Your draft is kept. Reload current values before saving.';
 }
 function settingsReadFailure(text) {
   settingsBanner(text + (settingsFetched ? ' Last updated ' + Math.floor((Date.now()-settingsFetched)/1000) + 's ago.' : ''), true);
@@ -1308,7 +1314,7 @@ async function saveSettings(event) {
   const invalid = settingsKinds.find(k => el('setting-' + k).getAttribute('aria-invalid') === 'true');
   if (invalid) { el('setting-' + invalid).focus(); return; }
   if (el('settingsSave').disabled) return;
-  const changes = {}; for (const [k,value] of settingsDiff()) { if (k==='notify') changes.notify_imessage_enabled=value; else { changes.pools ||= {}; changes.pools[k]=Number(value); } }
+  const changes = {}; for (const [k,value] of settingsDiff()) { if (k==='notify') changes.notify_imessage_enabled=value; else if (k==='phone') changes.phone_access=value; else { changes.pools ||= {}; changes.pools[k]=Number(value); } }
   const epoch = authEpoch; settingsSaving=true; settingsUpdate();
   try {
     const response = await fetch('/settings',{method:'POST',headers:{'X-Nuntius-Token':token,'Content-Type':'application/json'},body:JSON.stringify({schema_version:1,expected_revision:settingsCurrent.revision,changes})});
@@ -1320,7 +1326,7 @@ async function saveSettings(event) {
       const messages = {locked:'Nothing saved. Settings are busy. Reload current values and retry your draft.',configuration_unavailable:settingsFailure('configuration_unavailable'),invalid_configuration:settingsFailure('invalid_configuration'),busy_agent:'Nothing saved. A busy agent cannot be removed. Keep the pool large enough for running agents.',revision_conflict:'Nothing saved. Settings changed elsewhere. Reload current values and review your draft.',recipient_not_configured:'Configure an iMessage recipient locally before enabling notifications.',rate_limited:'Too many settings requests. Wait briefly, then reload current values.',committed_audit_failed:'Settings were committed, but audit completion failed. Check current values before trying again.'};
       const text = (messages[c.code] || (response.status>=500?'Could not confirm save. Check current values before trying again.':'Nothing saved. Check the highlighted fields and current configuration.')) + (c.code==='busy_agent' && /^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$/.test(c.lane || '') ? ' Busy agent: ' + c.lane + '.' : '');
       settingsBanner(text,true);
-      const field = c.field?.startsWith('pools.') ? c.field.slice(6) : c.field==='notify_imessage_enabled'?'notify':'';
+      const field = c.field?.startsWith('pools.') ? c.field.slice(6) : c.field==='notify_imessage_enabled'?'notify':c.field==='phone_access'?'phone':'';
       if ([...settingsKinds,'notify'].includes(field)) { settingsErrors[field]=text; settingsFieldError(field,text); el('setting-' + field).focus(); } else el('settingsBanner').focus();
       return;
     }
@@ -1336,12 +1342,14 @@ function clearSettings() {
   settingsErrors={};
   for (const k of settingsKinds) { el('setting-'+k).value=''; settingsFieldError(k,''); }
   el('setting-notify').checked=false; settingsFieldError('notify','');
+  el('setting-phone').checked=false; settingsFieldError('phone','');
   for (const id of ['settingsPreferences','settingsModels','settingsMachine']) el(id).replaceChildren();
   for (const id of ['settingsConnection','settingsRecipient']) setText(el(id),'');
   settingsBanner(''); settingsUpdate();
 }
 for (const k of settingsKinds) el('setting-' + k).addEventListener('input', () => { if (!settingsDraft || settingsSaving) return; settingsDraft[k]=el('setting-'+k).value; delete settingsErrors[k]; settingsBanner(''); settingsUpdate(); });
 el('setting-notify').addEventListener('change', () => { if (!settingsDraft || settingsSaving) return; settingsDraft.notify=el('setting-notify').checked; delete settingsErrors.notify; settingsBanner(''); settingsUpdate(); });
+el('setting-phone').addEventListener('change', () => { if (!settingsDraft || settingsSaving) return; settingsDraft.phone=el('setting-phone').checked; delete settingsErrors.phone; settingsBanner(''); settingsUpdate(); });
 el('settingsForm').addEventListener('submit',saveSettings);
 el('settingsCancel').addEventListener('click', () => { settingsResetDraft(); settingsBanner(''); });
 el('settingsReload').addEventListener('click', () => loadSettings(true));

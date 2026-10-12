@@ -91,6 +91,12 @@ func fakeTailscale() {
 
 // fakeOsascript records its argv as one JSON line and never opens Messages.
 func fakeOsascript() {
+	for _, arg := range os.Args[1:] {
+		if strings.Contains(arg, "?token=") || strings.Contains(arg, "X-Nuntius-Token") {
+			fmt.Fprintln(os.Stderr, "private material on transport argv")
+			os.Exit(3)
+		}
+	}
 	dir := os.Getenv("NUNTIUS_FAKE_TAILSCALE")
 	if dir == "" {
 		os.Exit(3)
@@ -174,6 +180,18 @@ func main() {
 		return
 	case "launchctl":
 		fakeLaunchctl()
+		return
+	case "open", "xdg-open":
+		if len(os.Args) != 2 || strings.Contains(os.Args[1], "?token=") {
+			os.Exit(3)
+		}
+		st, err := os.Lstat(os.Args[1])
+		if err != nil || !st.Mode().IsRegular() || st.Mode().Perm() != 0600 {
+			os.Exit(3)
+		}
+		if os.WriteFile(filepath.Join(os.Getenv("NUNTIUS_FAKE_TAILSCALE"), "open.ok"), []byte("private presentation opened"), 0600) != nil {
+			os.Exit(3)
+		}
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "run" {

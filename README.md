@@ -131,7 +131,7 @@ See [lane holds and reviewed messages](docs/dashboard.md#lane-holds-and-reviewed
 - **Freeze:** an emergency pause. It persists, interrupts verified running agents and prevents new dispatches, replies and recovery until you unfreeze. It is more than pausing a queue.
 - **Owner notes:** decisions and questions you leave for the coordinator, optionally addressed to a lane. Notes stay visible until acknowledged.
 - **Signals:** small local notifications that work ended, stalled, was interrupted or resumed. The coordinator can list and acknowledge them; they do not dispatch more work themselves.
-- **Menu bar:** the Relay icon shows a running count or attention dot. Open the dashboard, send the phone link, show its QR, or start/stop the dashboard. **Settings…** opens the running local dashboard's Settings tab without a sign-in credential in the URL. Sign in through the existing flow to edit pool sizes and iMessage preference; the other settings remain read-only. **Local status & login** keeps agent counts and the local start-at-login toggle. Start at login starts the helper only, never the dashboard.
+- **Menu bar:** the Relay icon shows a running count or attention dot. Open the dashboard, send the phone link, show its QR, or start/stop the dashboard. **Settings…** opens the running local dashboard's Settings tab without a sign-in credential in the URL. Sign in through the existing flow to edit pool sizes, iMessage preference and phone access for the next local start; the other settings remain read-only. **Local status & login** keeps agent counts and the local start-at-login toggle. Start at login starts the helper only, never the dashboard.
 
 Recorded runs keep their launch model and effort. Older runs without that record show the current template with `(configured)` in agents/status/dashboard; that label does not claim what the old agent actually used. `default` means nuntius has no explicit value, not that it read your agent settings.
 
@@ -170,6 +170,13 @@ nuntius web start --tailnet --notify-imessage you@icloud.com
 ```
 
 Use your own iMessage email or E.164 phone number. Nuntius finds the Mac's tailnet name, sets up or reuses Tailscale Serve, sends the private link and prints a QR. The background dashboard survives Terminal closure. `web stop` removes only the Serve mapping it created, unless you chose `--tailnet-keep`; it leaves agent runs alone.
+
+For menu-bar startup, save **Phone access through Tailscale** in signed-in
+Settings, then stop and start the dashboard locally. The default is off.
+The QR and send items show separate disabled reasons and fixes. QR needs no
+iMessage recipient; sending needs a locally configured recipient and enabled
+iMessage notifications. Saving never restarts or sends. Recovery preserves
+the private recipient and sends only after verification.
 
 For prerequisites, cleanup, manual setup and private-link storage, see [phone access](docs/dashboard.md#phone-access-over-tailscale).
 

@@ -52,6 +52,11 @@ func TestMenubarAPI(t *testing.T) {
 	sent := false
 	menubarSend = func(_ context.Context, _, _ string) error { sent = true; return nil }
 	w.allowHost, w.notify = "test.example.ts.net", "+12345678901"
+	w.phoneCheck = func(context.Context) string { return "" }
+	m.config.NotifyIMessage = w.notify
+	oldAvailable := phoneMessagesAvailable
+	phoneMessagesAvailable = func() bool { return true }
+	defer func() { phoneMessagesAvailable = oldAvailable }()
 	for _, action := range []string{"status", "open", "qr", "phone", "dispatch", "cancel"} {
 		r := httptest.NewRequest(http.MethodPost, "http://unix/"+action, nil)
 		if action == "status" {

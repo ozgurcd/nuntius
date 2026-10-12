@@ -595,6 +595,20 @@ func TestWebEnsureStateModesAndRequestGuards(t *testing.T) {
 
 func TestWebEnsureNativeBackground(t *testing.T) {
 	m, c, store := manager(t)
+	// Unix socket paths have a small platform limit; use a short isolated store.
+	_ = m.Close()
+	var err error
+	store, err = os.MkdirTemp(os.Getenv("TMPDIR"), "s")
+	if err != nil {
+		t.Fatal("short fixture store")
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(store) })
+	m, err = NewManager(c, store)
+	if err != nil {
+		t.Fatal("short fixture manager")
+	}
+	t.Cleanup(func() { _ = m.Close() })
+	c.NotifyIMessage = "synthetic@example.test"
 	cliFixture(t, c, store)
 	m.mu.Lock()
 	m.config.SourcePath = os.Getenv("NUNTIUS_CONFIG")
@@ -633,6 +647,34 @@ func TestWebEnsureNativeBackground(t *testing.T) {
 	var original webAccess
 	if readWebFile(filepath.Join(store, "web-access.json"), &original) != nil {
 		t.Fatal("private fixture access absent")
+	}
+	if original.Notify != c.NotifyIMessage {
+		t.Fatal("ensure discarded configured recipient")
+	}
+	if len(fakeCalls(t, dir, "osascript.log")) != 1 {
+		t.Fatal("ensure child sent before parent verification")
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(store, "menubar", "dashboard.sock"))
+	}}}
+	defer client.CloseIdleConnections()
+	for _, action := range []string{"qr", "phone"} {
+		response, err := client.Post("http://unix/"+action, "application/json", nil)
+		if err != nil {
+			t.Fatal("native phone action transport unavailable")
+		}
+		var actionState phoneAction
+		_ = json.NewDecoder(response.Body).Decode(&actionState)
+		response.Body.Close()
+		if response.StatusCode != 200 {
+			t.Fatalf("native %s action refused: %d %s", action, response.StatusCode, actionState.Code)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "open.ok")); err != nil {
+		t.Fatal("QR did not reach private fake opener")
+	}
+	if len(fakeCalls(t, dir, "osascript.log")) != 2 {
+		t.Fatal("explicit send missing or duplicated")
 	}
 	if r := ensureCall(t, m); r.Reason != "ready" || r.Operation != "none" {
 		t.Fatal("native idempotence")

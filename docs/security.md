@@ -99,8 +99,9 @@ message, path or parser input appears in these results.
 
 ## Dashboard Settings (v0.3.3)
 
-A valid dashboard grant now authorizes persistent pool-size and iMessage-enable
-changes. Anyone with that grant and network reachability, including a person
+A valid dashboard grant authorizes persistent pool-size, iMessage-enable and
+phone-access changes for the next local start. Saving phone access does not
+restart a service, change Serve or send a link. Anyone with that grant and network reachability, including a person
 using an unlocked remembered phone profile, can change future agent capacity
 and notification preference. Turning notifications off can hide future sign-in
 delivery. Pool increases permit later dispatch within existing templates; they
@@ -235,6 +236,16 @@ arguments. Grant creation can send one private link to the owner's enabled
 configured recipient through the fixed Messages script on stdin. No grant or
 recipient is added to process argv/environment. Notification failure does not
 stop healthy web; reused grants are not resent.
+
+The ensure child retains the private recipient and suppresses automatic
+startup sending. Only the parent sends after its authenticated verification.
+Later menu clicks recheck the current process identity, authenticated loopback
+readiness, Tailscale name and exact Serve readback without repair. Manual
+`--allow-host` keeps its existing external setup contract. Configured menu
+recipients reload at click time; explicit startup overrides remain private.
+Status and refusals use bounded fixed reason codes and plain remedies, never
+raw command output. QR remains a temporary owner-only 0600 page in a private
+directory; opener argv contains only its local filename.
 
 Recovery is on demand and bounded to two minutes. It changes no agent freeze,
 dispatch, cancellation or resume controls, and adds no watchdog, login item or

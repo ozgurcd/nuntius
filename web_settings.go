@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -20,8 +21,9 @@ import (
 )
 
 type settingsChanges struct {
-	Pools  map[string]int `json:"pools,omitempty"`
-	Notify *bool          `json:"notify_imessage_enabled,omitempty"`
+	PhoneAccess *bool          `json:"phone_access,omitempty"`
+	Pools       map[string]int `json:"pools,omitempty"`
+	Notify      *bool          `json:"notify_imessage_enabled,omitempty"`
 }
 type settingsRequest struct {
 	Version  int             `json:"schema_version"`
@@ -173,7 +175,7 @@ func (m *Manager) reconcileSettings(path string) error {
 	return syncDir(m.store)
 }
 func validSettingsField(f settingsField) bool {
-	if f.Field == "notify_imessage_enabled" {
+	if f.Field == "notify_imessage_enabled" || f.Field == "phone_access" {
 		return (f.Before == "on" || f.Before == "off") && (f.After == "on" || f.After == "off")
 	}
 	if f.Field != "pools.claude" && f.Field != "pools.codex" && f.Field != "pools.opencode" {
@@ -225,6 +227,22 @@ func (m *Manager) settingsCandidate(c Config, change settingsChanges, remote boo
 			fields = append(fields, settingsField{"notify_imessage_enabled", on(before), on(*change.Notify)})
 		}
 		next.NotifyIMessageEnabled = change.Notify
+	}
+	if change.PhoneAccess != nil {
+		if c.PhoneAccess != *change.PhoneAccess {
+			before, after := "off", "off"
+			if c.PhoneAccess {
+				before = "on"
+			}
+			if *change.PhoneAccess {
+				after = "on"
+			}
+			fields = append(fields, settingsField{"phone_access", before, after})
+		}
+		next.PhoneAccess = *change.PhoneAccess
+	}
+	if len(fields) > 4 {
+		return next, nil, settingsError("too_many_changes", "", 422)
 	}
 	if len(fields) == 0 && remote {
 		return next, nil, settingsError("no_changes", "", 422)
@@ -344,7 +362,7 @@ func settingsJSON(b []byte, v any) error {
 				// encoding/json also matches struct keys case-insensitively.
 				// Accept only the exact envelope/change schema, so aliases cannot
 				// silently replace a separately submitted change.
-				if (path == "" && k != "schema_version" && k != "expected_revision" && k != "changes") || (path == "changes" && k != "pools" && k != "notify_imessage_enabled") {
+				if (path == "" && k != "schema_version" && k != "expected_revision" && k != "changes") || (path == "changes" && k != "pools" && k != "notify_imessage_enabled" && k != "phone_access") {
 					return errors.New("unknown key")
 				}
 				seen[k] = true
@@ -439,7 +457,7 @@ func (w *Web) settings(out http.ResponseWriter, r *http.Request) {
 		_ = http.NewResponseController(out).SetReadDeadline(time.Now().Add(5 * time.Second))
 		defer http.NewResponseController(out).SetReadDeadline(time.Time{})
 		b, err := io.ReadAll(http.MaxBytesReader(out, r.Body, 8192))
-		if err != nil || settingsJSON(b, &request) != nil || request.Version != 1 || request.Revision == "" || (len(request.Changes.Pools) == 0 && request.Changes.Notify == nil) || len(request.Changes.Pools) > 3 {
+		if err != nil || settingsJSON(b, &request) != nil || request.Version != 1 || request.Revision == "" || (len(request.Changes.Pools) == 0 && request.Changes.Notify == nil && request.Changes.PhoneAccess == nil) || len(request.Changes.Pools) > 3 {
 			fail(settingsError("invalid_request", "", 400))
 			return
 		}
@@ -584,5 +602,5 @@ func settingsView(c Config, revision string) map[string]any {
 	if c.Pools == nil {
 		format = "legacy"
 	}
-	return map[string]any{"schema_version": 1, "revision": revision, "format": format, "pools": pools, "queue_file_mode": queueMode, "notify_imessage_enabled": c.NotifyIMessageEnabled == nil || *c.NotifyIMessageEnabled, "notify_effective": c.imessageEnabled(), "recipient_configured": c.NotifyIMessage != "", "max_runtime": c.MaxRuntime, "auto_resume": c.AutoResume == nil || *c.AutoResume, "notifications": c.Notifications == nil || *c.Notifications, "reports_dir": cell(bounded(Redact(c.ReportsDir), 1024)), "oversight_path": cell(bounded(Redact(c.OversightPath), 1024)), "lanes": lanes, "lane_names": names, "at_login": "Unavailable · check locally", "tailnet_default": "Off · launch option", "local_only_reason": "Edit on the Mac; run nuntius config check"}
+	return map[string]any{"schema_version": 1, "revision": revision, "format": format, "pools": pools, "queue_file_mode": queueMode, "phone_access": c.PhoneAccess, "notify_imessage_enabled": c.NotifyIMessageEnabled == nil || *c.NotifyIMessageEnabled, "notify_effective": c.imessageEnabled(), "recipient_configured": c.NotifyIMessage != "", "max_runtime": c.MaxRuntime, "auto_resume": c.AutoResume == nil || *c.AutoResume, "notifications": c.Notifications == nil || *c.Notifications, "reports_dir": cell(bounded(Redact(c.ReportsDir), 1024)), "oversight_path": cell(bounded(Redact(c.OversightPath), 1024)), "lanes": lanes, "lane_names": names, "at_login": "Unavailable · check locally", "tailnet_default": fmt.Sprintf("%t · next local start", c.PhoneAccess), "local_only_reason": "Edit on the Mac; run nuntius config check"}
 }

@@ -39,6 +39,7 @@ type Config struct {
 	// that web --tailnet sends the sign-in link to; --notify-imessage overrides it.
 	NotifyIMessage        string `json:"notify_imessage,omitempty"`
 	NotifyIMessageEnabled *bool  `json:"notify_imessage_enabled,omitempty"`
+	PhoneAccess           bool   `json:"phone_access,omitempty"`
 }
 
 func (c Config) imessageEnabled() bool {
@@ -74,6 +75,19 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if e = strictJSON(b, &c); e != nil {
 		return c, e
+	}
+	// encoding/json accepts null for bool; this opt-in must be explicit.
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(b, &fields) != nil {
+		return c, errors.New("invalid configuration")
+	}
+	for key, value := range fields {
+		if strings.EqualFold(key, "phone_access") {
+			value = bytes.TrimSpace(value)
+			if key != "phone_access" || (!bytes.Equal(value, []byte("true")) && !bytes.Equal(value, []byte("false"))) {
+				return c, errors.New("phone_access must be a JSON boolean")
+			}
+		}
 	}
 	if c.Pools != nil && len(c.Lanes) > 0 {
 		return c, errors.New("use pools or lanes, not both")

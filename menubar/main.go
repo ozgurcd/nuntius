@@ -26,31 +26,51 @@ import (
 //go:embed assets/*
 var assets embed.FS
 
-type socketClient struct{ http *http.Client }
+type socketClient struct {
+	http    *http.Client
+	actions map[string]ActionState
+}
 
 func (s *socketClient) Status() ([]Lane, error) {
+	s.actions = nil
 	r, err := s.http.Get("http://unix/status")
 	if err != nil {
 		return nil, errors.New("dashboard unavailable")
 	}
 	defer r.Body.Close()
 	if r.StatusCode != 200 {
-		return nil, errors.New("dashboard unavailable")
+		var state ActionState
+		if decodeControl(r.Body, &state) != nil {
+			return nil, actionFailure{""}
+		}
+		return nil, actionFailure{safeAction(state).Code}
 	}
 	var state struct {
-		Lanes []Lane `json:"lanes"`
+		Lanes   []Lane                 `json:"lanes"`
+		Actions map[string]ActionState `json:"actions"`
 	}
-	err = json.NewDecoder(io.LimitReader(r.Body, 32768)).Decode(&state)
+	err = decodeControl(r.Body, &state)
+	if err == nil {
+		s.actions = map[string]ActionState{}
+		for _, key := range []string{"qr", "phone"} {
+			s.actions[key] = safeAction(state.Actions[key])
+		}
+	}
 	return state.Lanes, err
 }
+func (s *socketClient) PhoneActions() map[string]ActionState { return s.actions }
 func (s *socketClient) Action(a string) error {
 	r, err := s.http.Post("http://unix/"+a, "application/json", nil)
 	if err != nil {
-		return errors.New("action unavailable")
+		return actionFailure{""}
 	}
 	defer r.Body.Close()
 	if r.StatusCode != 200 {
-		return errors.New("action unavailable")
+		var state ActionState
+		if decodeControl(r.Body, &state) != nil {
+			return actionFailure{""}
+		}
+		return actionFailure{safeAction(state).Code}
 	}
 	return nil
 }
@@ -109,7 +129,7 @@ func (t *nativeTray) Update(title, tip string, rows []string, online bool) {
 	for i := len(rows); i < len(t.rows); i++ {
 		t.rows[i].Hide()
 	}
-	for _, a := range []string{"open", "phone", "qr", "stop"} {
+	for _, a := range []string{"open", "stop"} {
 		if online {
 			t.actions[a].Enable()
 		} else {
@@ -120,6 +140,22 @@ func (t *nativeTray) Update(title, tip string, rows []string, online bool) {
 		t.actions["start"].Disable()
 	} else {
 		t.actions["start"].Enable()
+	}
+}
+
+func (t *nativeTray) PhoneActions(actions map[string]ActionState) {
+	for key, title := range map[string]string{"phone": "Send phone link", "qr": "Show phone QR"} {
+		item := t.actions[key]
+		a := safeAction(actions[key])
+		if a.Enabled {
+			item.SetTitle(title)
+			item.SetTooltip(title)
+			item.Enable()
+		} else {
+			item.Disable()
+			item.SetTitle(title + " · " + a.Reason)
+			item.SetTooltip(a.Reason)
+		}
 	}
 }
 func privateDirectory(path string) error {
@@ -208,15 +244,19 @@ func main() {
 		}
 		actions := []struct{ key, title string }{{"settings", "Settings…"}, {"open", "Open dashboard"}, {"phone", "Send phone link"}, {"qr", "Show phone QR"}, {"start", "Start dashboard"}, {"stop", "Stop dashboard"}, {"quit", "Quit menu bar"}}
 		controller = &Controller{tray: tray, client: client, quit: cancel, run: func(a string) error {
-			args := []string{"--config", *config, "--store", *store, "web", a}
-			if a == "start" {
-				args = append(args, "--no-menubar")
-			}
+			args := localWebArgs(*config, *store, a)
 			// Stopping the dashboard also requests helper quit. Let its CLI
 			// finish stopping the server after the helper context is cancelled.
 			runCtx, done := context.WithTimeout(context.Background(), 30*time.Second)
 			defer done()
-			return exec.CommandContext(runCtx, *binary, args...).Run()
+			cmd := exec.CommandContext(runCtx, *binary, args...)
+			var diagnostic startupDiagnostic
+			cmd.Stdout = io.Discard
+			cmd.Stderr = &diagnostic
+			if err := cmd.Run(); err != nil {
+				return startFailure(diagnostic.String())
+			}
+			return nil
 		}}
 		controller.apply = func(args []string) error {
 			runCtx, done := context.WithTimeout(context.Background(), 30*time.Second)

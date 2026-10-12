@@ -1,5 +1,13 @@
 ## Lane holds and held messages
 
+Phone startup uses the saved `phone_access` boolean when no network flag is
+supplied. Use `nuntius set phone-access on|off`, or save the signed-in Settings
+toggle, then stop and start locally. Explicit `--tailnet`, `--tailnet=false`
+and manual `--allow-host` keep their existing meanings. Only an explicit
+`--tailnet-optional` permits a loopback fallback, whose reason stays in the
+menu. Saving a setting never starts a service or sends a link. Menu startup
+uses this same CLI policy and never adds a sign-in link to argv.
+
 ```sh
 nuntius lane pause codex-1
 nuntius lane pause claude-1 --after-current

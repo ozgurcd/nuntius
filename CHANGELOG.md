@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Save opt-in phone access for normal and menu-bar startup. Preserve the
+  private recipient through verified recovery without a premature send.
+  Recheck phone readiness on clicks and show separate fixed QR/iMessage
+  refusal reasons in disabled menu items; keep private links off argv.
+
 - Bind each native reservation's canonical write to immutable, ordered
   repository-root and ancestor evidence. Refuse substituted paths on save,
   replay and end/release; preserve genuine aliases and historical scope when
