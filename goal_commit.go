@@ -18,6 +18,8 @@ type goalCommitRequest struct {
 	ExpectedRevision uint64
 	Spec             []byte
 	Seal             []byte
+	Record           []byte
+	MutationSHA256   string
 }
 
 type goalCommitResult struct {
@@ -30,8 +32,9 @@ type goalCommitResult struct {
 type goalCommitIO struct{ checkpoint func(string) error }
 
 type goalOperationReceipt struct {
-	input  string
-	result goalCommitResult
+	input    string
+	result   goalCommitResult
+	mutation string
 }
 
 func (fault goalCommitIO) check(stage string) error {
@@ -82,6 +85,7 @@ func (m *Manager) commitGoal(req goalCommitRequest, fault goalCommitIO) (goalCom
 	// Own bytes before validation; no caller-owned slice enters the projection.
 	req.Spec = bytes.Clone(req.Spec)
 	req.Seal = bytes.Clone(req.Seal)
+	req.Record = bytes.Clone(req.Record)
 	spec, err := decodeNativeGoalSpec(req.Spec)
 	if err != nil || !validGoalOperationID(req.OperationID) || req.ExpectedRevision >= goalJournalMaxEvents || len(req.Seal) > goalSealMaxBytes {
 		return goalCommitResult{}, nil, errGoalCommit
@@ -92,6 +96,14 @@ func (m *Manager) commitGoal(req goalCommitRequest, fault goalCommitIO) (goalCom
 		sealRef = goalBlobName("goal-seal-", req.Seal)
 	}
 	input := goalInputFingerprint(spec.ID, req.ExpectedRevision, specRef, sealRef)
+	if req.Record != nil {
+		if _, err := decodeGoalRecord(req.Record); err != nil || !validGoalDigest(req.MutationSHA256) {
+			return goalCommitResult{}, nil, errGoalRecord
+		}
+		input = goalRecordFingerprint(input, goalBlobName("goal-record-", req.Record), req.MutationSHA256)
+	} else if req.MutationSHA256 != "" {
+		return goalCommitResult{}, nil, errGoalRecord
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.readOnly || m.closed {
@@ -134,22 +146,16 @@ func commitGoalLocked(root *os.File, req goalCommitRequest, id, specRef, sealRef
 		if receipt.input != input {
 			return goalCommitResult{}, nil, errGoalOperation
 		}
-		// A repeat confirms outstanding sync uncertainty without appending again.
-		journal, err := openGoalJournal(root, false)
-		if err != nil {
-			return receipt.result, nil, errGoalUnconfirmed
-		}
-		defer journal.Close()
-		if syncGoalJournal(root, journal, fault) != nil || fault.check("publication") != nil {
-			return receipt.result, nil, errGoalUnconfirmed
-		}
-		return receipt.result, p, nil
+		return confirmGoalOperation(root, p, receipt, fault)
 	}
 	if p.records[id].revision != req.ExpectedRevision {
 		return goalCommitResult{}, nil, errGoalConflict
 	}
 	if p.sequence >= goalJournalMaxEvents || (p.records[id].revision == 0 && len(p.records) >= goalJournalMaxGoals) {
 		return goalCommitResult{}, nil, errGoalCommit
+	}
+	if !goalRecordHistoryValid(p.records[id], goalReplayRecord{revision: req.ExpectedRevision + 1, spec: string(req.Spec), sealRef: sealRef, record: string(req.Record)}) {
+		return goalCommitResult{}, nil, errGoalRecord
 	}
 	if stageGoalBlob(root, specRef, req.Spec, fault) != nil {
 		return goalCommitResult{}, nil, errGoalCommit
@@ -161,6 +167,13 @@ func commitGoalLocked(root *os.File, req goalCommitRequest, id, specRef, sealRef
 		return goalCommitResult{}, nil, errGoalCommit
 	}
 	e := goalJournalEvent{Kind: "goal.spec", GoalID: id, Revision: req.ExpectedRevision + 1, SpecRef: specRef, SealRef: sealRef, OperationID: req.OperationID, InputSHA256: input}
+	if req.Record != nil {
+		e.RecordRef = goalBlobName("goal-record-", req.Record)
+		e.MutationSHA256 = req.MutationSHA256
+		if stageGoalBlob(root, e.RecordRef, req.Record, fault) != nil || root.Sync() != nil {
+			return goalCommitResult{}, nil, errGoalCommit
+		}
+	}
 	payload, err := json.Marshal(e)
 	if err != nil || len(payload) > goalJournalMaxFrameBytes {
 		return goalCommitResult{}, nil, errGoalCommit
@@ -205,6 +218,19 @@ func commitGoalLocked(root *os.File, req goalCommitRequest, id, specRef, sealRef
 		return result, nil, errGoalUnconfirmed
 	}
 	return result, next, nil
+}
+
+// Both storage and typed-record retries confirm durability through this seam.
+func confirmGoalOperation(root *os.File, p *goalProjection, receipt goalOperationReceipt, fault goalCommitIO) (goalCommitResult, *goalProjection, error) {
+	journal, err := openGoalJournal(root, false)
+	if err != nil {
+		return receipt.result, nil, errGoalUnconfirmed
+	}
+	defer journal.Close()
+	if syncGoalJournal(root, journal, fault) != nil || fault.check("publication") != nil {
+		return receipt.result, nil, errGoalUnconfirmed
+	}
+	return receipt.result, p, nil
 }
 
 func encodeGoalFrame(sequence uint64, payload []byte) []byte {

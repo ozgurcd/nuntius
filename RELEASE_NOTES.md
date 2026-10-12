@@ -7,6 +7,11 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Native records now have internal revision checks and retained notes. Creating
+  a record leaves it drafted. Permanent results accept notes and correction
+  evidence without changing the result. Oversized lists explain the failure
+  instead of hiding records. Native controls and launches remain unavailable.
+
 - Native audit delivery now has an internal replayable record. Safe rows show
   which event and adapter they describe; repeated delivery appears once to audit
   readers. Pending delivery keeps native work held. Native goal controls and

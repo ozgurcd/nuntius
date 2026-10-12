@@ -287,8 +287,10 @@ asks the owner to preserve and review it; it echoes no private input or path.
 
 The resulting internal projection owns immutable spec bytes and seal references.
 Each metadata read returns detached arrays and holds; repeated replay of the
-same files gives the same projection. It provides no goal approval, lifecycle
-transition, readiness calculation, current attempt or lane-control revision.
+same files gives the same projection. Spec-only historical records read as
+drafted. Record snapshots described below retain state and notes, but replay
+itself provides no approval operation, lifecycle transition, readiness
+calculation, current attempt or lane-control revision.
 The internal commit component below saves changes before any native writer
 can be exposed.
 
@@ -390,3 +392,69 @@ Older audit rows retain their existing classification and presentation.
 An unfinished audit line blocks delivery for review; the mirror does not delete
 it or pretend the event was delivered. Offline crash tests certify process
 restart and reaping, not power-loss durability or hostile same-user edits.
+
+## Native goal records (local, unpublished)
+
+Internal manager operations create a drafted goal, replace its typed spec with
+an expected-revision check, or append a note. These operations share the
+existing manager then control-lock serialization and the same journal writer.
+They introduce no command, MCP tool, HTTP route, approval operation, scheduler
+or process launch. Portable Queue, configuration, reports, tails, Cancel and
+lane holds do not load this journal as part of their existing operations.
+
+Creation requires a new ID, revision zero and no seal. It grants no approval
+or batch binding. Updates require the current revision and keep the ID fixed.
+A changed execution scope or seal, including seal removal, returns the record
+to drafted and clears approval and batch binding. Execution scope includes
+every spec field except title and presentation order. Changing only those
+presentation fields retains the original binding; it does not approve the
+new revision. Running and ended records refuse spec edits until their separate
+lifecycle review rules are available. Verified and cancelled results are
+permanent: preserve their spec, seal, state, outcome and bindings. A correction
+adds evidence in a note or uses a new goal ID; it does not rewrite the result.
+
+Notes remain in append order through edits and restarts. Each note has one
+nonblank line of at most 1,024 UTF-8 bytes and an optional one-line evidence
+reference of at most 128 bytes. Each goal retains at most 32 notes, with no
+eviction. Encoded record metadata is limited to 65,536 bytes, including JSON
+escaping. A full history explains that capacity needs review. It never removes
+an earlier note to make room. Read DTOs redact note text and evidence and
+return detached values; private seals and batch identities are never returned.
+
+A version-1 journal event may now include paired `record_ref` and
+`mutation_sha256` fields with its operation receipt. The reference is
+`goal-record-` followed by the lowercase SHA-256 of the exact private metadata
+bytes. It uses the same immutable staging, mode-0600, no-follow, single-link
+and sync rules as spec blobs, and counts toward the cumulative replay budget.
+Metadata is a closed object containing version 1, typed state, notes, and
+optional outcome, approval revision and batch binding. Unknown, duplicate,
+null, wrong-type, malformed or oversized fields fail replay. Historical
+spec-only frames remain readable. Once record metadata exists, a spec-only
+frame cannot erase it. Replay independently refuses lost notes and rewritten
+permanent results, even if a frame's checksums are valid.
+
+The storage fingerprint also binds the record reference and mutation digest.
+The mutation digest binds canonical typed request JSON: operation kind,
+operation ID, goal identity, expected revision and supplied spec/seal or note.
+A repeated operation returns its original result even after later edits or
+notes. Different input or a different operation kind refuses. Restart lookup
+remains read-only and does not certify a previously failed sync; a matching
+mutation retry confirms the existing event without appending another one.
+
+Listings include every open record: drafted, approved, running, ended and
+parked. Their open total is the length of that complete list. Verified and
+cancelled records form a separate terminal total and page. IDs sort in ASCII
+order. Terminal offsets are zero-based, and page size is 1–100. Each response
+has one journal sequence for all rows, an explicit journal-presence flag and
+an incomplete-final-append flag. If the sequence changes between pages, start
+again rather than combine pages from different snapshots. Reads never repair
+an incomplete tail or schedule work.
+
+The entire encoded listing, including complete open rows, selected terminal
+rows and totals, must fit 1,048,576 bytes. The exact boundary is accepted;
+overflow returns a plain error and no partial list. Nothing is evicted from
+the journal. An absent journal in a valid private directory is an empty list
+with presence false. A missing directory has a separate missing-store error.
+Unsafe roots, corrupt history and invalid references fail closed; they never
+look like an empty queue. These component reads do not certify later native
+approval, dependency, launch, lifecycle or public-adapter behavior.

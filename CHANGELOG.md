@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add internal native goal record operations: drafted creation, typed revision
+  checks, append-only notes, permanent terminal results, and complete bounded
+  open lists with paginated terminal results. Scope or seal changes clear
+  approval and batch binding. Overflow refuses without dropping history.
+  This component exposes no public controls and starts no work.
+
 - Add an internal native journal audit mirror with durable delivery intent,
   event IDs, pending state and fail-closed admission checks. Crash replay may
   repeat safe rows; audit readers deduplicate their IDs and show plain summaries.
@@ -24,7 +30,8 @@
 
 - Add the internal native goal schema and strict decoder, with explicit work
   scope, engine/work-class separation, holds and bounded safe metadata. Creation
-  grants no approval. No native storage, launch or public operation is enabled.
+  grants no approval. The schema component alone adds no storage; no native
+  launch or public operation is enabled.
 
 - Add identity-bound held-message review, explicit Send and Discard, durable
   receipt explanations and retained removed-lane Resume. Resume never replays

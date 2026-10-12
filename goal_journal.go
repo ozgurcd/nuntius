@@ -29,19 +29,22 @@ const (
 var errGoalReplay = errors.New("native goal history is unavailable or invalid; preserve the files and review the journal and private references before using native goals")
 
 type goalJournalEvent struct {
-	Kind        string `json:"kind"`
-	GoalID      string `json:"goal_id"`
-	Revision    uint64 `json:"revision"`
-	SpecRef     string `json:"spec_ref"`
-	SealRef     string `json:"seal_ref,omitempty"`
-	OperationID string `json:"operation_id,omitempty"`
-	InputSHA256 string `json:"input_sha256,omitempty"`
+	Kind           string `json:"kind"`
+	GoalID         string `json:"goal_id"`
+	Revision       uint64 `json:"revision"`
+	SpecRef        string `json:"spec_ref"`
+	SealRef        string `json:"seal_ref,omitempty"`
+	OperationID    string `json:"operation_id,omitempty"`
+	InputSHA256    string `json:"input_sha256,omitempty"`
+	RecordRef      string `json:"record_ref,omitempty"`
+	MutationSHA256 string `json:"mutation_sha256,omitempty"`
 }
 
 type goalReplayRecord struct {
 	revision uint64
 	spec     string
 	sealRef  string
+	record   string
 }
 
 // goalProjection owns immutable strings; reads decode fresh detached values.
@@ -115,13 +118,30 @@ func replayGoalJournalData(root *os.File, data []byte) (*goalProjection, error) 
 				return nil, errGoalReplay
 			}
 		}
-		if e.OperationID != "" {
-			if _, duplicate := p.operations[e.OperationID]; duplicate || e.InputSHA256 != goalInputFingerprint(e.GoalID, e.Revision-1, e.SpecRef, e.SealRef) {
+		var record []byte
+		input := goalInputFingerprint(e.GoalID, e.Revision-1, e.SpecRef, e.SealRef)
+		if e.RecordRef != "" {
+			record, err = readGoalBlob(root, e.RecordRef, "goal-record-", goalRecordMaxBytes, &blobBytes)
+			if err != nil {
 				return nil, errGoalReplay
 			}
-			p.operations[e.OperationID] = goalOperationReceipt{input: e.InputSHA256, result: goalCommitResult{OperationID: e.OperationID, GoalID: e.GoalID, Revision: e.Revision, Sequence: p.sequence + 1}}
+			metadata, err := decodeGoalRecord(record)
+			if err != nil || metadata.ApprovalRevision > e.Revision {
+				return nil, errGoalReplay
+			}
+			input = goalRecordFingerprint(input, e.RecordRef, e.MutationSHA256)
 		}
-		p.records[e.GoalID] = goalReplayRecord{revision: e.Revision, spec: string(spec), sealRef: e.SealRef}
+		nextRecord := goalReplayRecord{revision: e.Revision, spec: string(spec), sealRef: e.SealRef, record: string(record)}
+		if !goalRecordHistoryValid(old, nextRecord) {
+			return nil, errGoalReplay
+		}
+		if e.OperationID != "" {
+			if _, duplicate := p.operations[e.OperationID]; duplicate || e.InputSHA256 != input {
+				return nil, errGoalReplay
+			}
+			p.operations[e.OperationID] = goalOperationReceipt{input: e.InputSHA256, mutation: e.MutationSHA256, result: goalCommitResult{OperationID: e.OperationID, GoalID: e.GoalID, Revision: e.Revision, Sequence: p.sequence + 1}}
+		}
+		p.records[e.GoalID] = nextRecord
 		p.sequence++
 		p.committedBytes += int64(goalJournalHeaderBytes + size)
 		data = data[goalJournalHeaderBytes+size:]
@@ -167,7 +187,7 @@ func decodeGoalJournalEvent(b []byte) (goalJournalEvent, error) {
 		return goalJournalEvent{}, errGoalReplay
 	}
 	m, ok := raw.(map[string]any)
-	if !ok || !nativeClosedFields(m, []string{"kind", "goal_id", "revision", "spec_ref"}, []string{"seal_ref", "operation_id", "input_sha256"}) {
+	if !ok || !nativeClosedFields(m, []string{"kind", "goal_id", "revision", "spec_ref"}, []string{"seal_ref", "operation_id", "input_sha256", "record_ref", "mutation_sha256"}) {
 		return goalJournalEvent{}, errGoalReplay
 	}
 	rev, ok := m["revision"].(json.Number)
@@ -188,6 +208,11 @@ func decodeGoalJournalEvent(b []byte) (goalJournalEvent, error) {
 	_, operation := m["operation_id"]
 	_, fingerprint := m["input_sha256"]
 	if operation != fingerprint || (operation && (!validGoalOperationID(e.OperationID) || !validGoalBlobRef("goal-spec-"+e.InputSHA256, "goal-spec-"))) {
+		return goalJournalEvent{}, errGoalReplay
+	}
+	_, record := m["record_ref"]
+	_, mutation := m["mutation_sha256"]
+	if record != mutation || (record && (!operation || !validGoalBlobRef(e.RecordRef, "goal-record-") || !validGoalDigest(e.MutationSHA256))) {
 		return goalJournalEvent{}, errGoalReplay
 	}
 	return e, nil
