@@ -81,7 +81,7 @@ func (c *Controller) updatePhoneActions(actions map[string]ActionState) {
 	state := map[string]ActionState{}
 	for _, key := range []string{"phone", "qr"} {
 		a := safeAction(actions[key])
-		if a.Enabled {
+		if a.Enabled || a.Code != "" {
 			delete(c.phoneFailures, key)
 		} else if failure, ok := c.phoneFailures[key]; ok {
 			a = failure
@@ -107,6 +107,9 @@ func (c *Controller) Action(a string) {
 	}
 	switch a {
 	case "open", "phone", "qr", "settings":
+		if a == "phone" || a == "qr" {
+			delete(c.phoneFailures, a)
+		}
 		if err := c.client.Action(a); err != nil {
 			message := "Nuntius · action unavailable; check dashboard configuration"
 			if failure, ok := err.(actionFailure); ok {

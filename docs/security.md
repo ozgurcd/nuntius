@@ -244,7 +244,12 @@ readiness, Tailscale name and exact Serve readback without repair. Manual
 `--allow-host` keeps its existing external setup contract. Configured menu
 recipients reload at click time; explicit startup overrides remain private.
 Status and refusals use bounded fixed reason codes and plain remedies, never
-raw command output. QR remains a temporary owner-only 0600 page in a private
+raw command output. One shared strict decoder checks exact decoded JSON keys,
+unique occurrences, scalar types and the closed QR/phone action inventory.
+Case aliases, unknown actions, nulls, extra documents and line separators in
+text refuse the control response. Current known prerequisites replace old
+click failures, and a new attempt clears its prior failure before the call.
+QR remains a temporary owner-only 0600 page in a private
 directory; opener argv contains only its local filename.
 
 Recovery is on demand and bounded to two minutes. It changes no agent freeze,

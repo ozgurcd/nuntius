@@ -156,7 +156,9 @@ Templates, recipients, paths and execution options remain local-only.
 
 ## Phone access
 
-`phone_access` is an optional JSON boolean. Omitted or false keeps normal
+`phone_access` is an optional JSON boolean with one exact decoded key spelling.
+Duplicate occurrences, case aliases, null and coerced values are refused;
+one escaped canonical spelling is accepted. Omitted or false keeps normal
 dashboard startup local. True requests strict Tailscale startup, including
 when you choose Start dashboard in the menu bar. Save it in signed-in Settings
 or use `nuntius set phone-access on` or `off`. Stop and start the dashboard

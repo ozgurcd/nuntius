@@ -47,6 +47,47 @@ func TestPhoneConfigBoolean(t *testing.T) {
 	}
 }
 
+func TestPhoneConfigUniqueOptIn(t *testing.T) {
+	c, store := fixture(t)
+	b, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal("config fixture encoding")
+	}
+	prefix := strings.TrimSuffix(string(b), "}")
+	path := filepath.Join(t.TempDir(), "config.json")
+	for _, fields := range []string{
+		`,"phone_access":false,"phone_access":true`, `,"phone_access":true,"phone_access":false`,
+		`,"phone_access":false,"phone_access":false`, `,"phone_access":true,"phone_access":true`,
+		`,"phone_access":false,"phone_\u0061ccess":true`, `,"Phone_access":true`, `,"PHONE_ACCESS":false`,
+		`,"phone_access":true,"Phone_access":false`,
+	} {
+		if os.WriteFile(path, []byte(prefix+fields+"}"), 0600) != nil {
+			t.Fatal("config fixture write")
+		}
+		loaded, err := LoadConfig(path)
+		if err == nil {
+			t.Error("ambiguous saved opt-in accepted")
+		} else if err.Error() != "phone_access must be one JSON boolean" && err.Error() != "phone_access must be a JSON boolean" {
+			t.Error("saved opt-in refusal exposed input")
+		}
+		if loaded.PhoneAccess {
+			t.Error("refused opt-in retained enabled value")
+		}
+	}
+	for fields, want := range map[string]bool{"": false, `,"phone_access":true`: true, `,"phone_access":false`: false, `,"phone_\u0061ccess":true`: true} {
+		if os.WriteFile(path, []byte(prefix+fields+"}"), 0600) != nil {
+			t.Fatal("config fixture write")
+		}
+		loaded, err := LoadConfig(path)
+		if err != nil || loaded.PhoneAccess != want {
+			t.Fatal("single canonical saved opt-in refused")
+		}
+	}
+	if _, err := os.Stat(store); !os.IsNotExist(err) {
+		t.Fatal("configuration parsing created runtime effects")
+	}
+}
+
 func TestMenubarPhoneActionsRefusalReasons(t *testing.T) {
 	m, _, _ := manager(t)
 	w, _ := NewWeb(m, "127.0.0.1:0")

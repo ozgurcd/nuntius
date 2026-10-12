@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
+	"strconv"
+	"strings"
+	"unicode"
 )
 
 type ActionState struct {
@@ -60,7 +64,7 @@ func decodeControl(r io.Reader, target any) error {
 		return errors.New(actionReason(""))
 	}
 	decoder := json.NewDecoder(bytes.NewReader(b))
-	if !uniqueControlJSON(b) {
+	if !uniqueControlJSON(b, reflect.TypeOf(target).Elem()) {
 		return errors.New(actionReason(""))
 	}
 	decoder.DisallowUnknownFields()
@@ -70,10 +74,13 @@ func decodeControl(r io.Reader, target any) error {
 	return nil
 }
 
-func uniqueControlJSON(b []byte) bool {
+// Use the same JSON tags and scalar types as the final typed decode. Maps are
+// the closed phone-action inventory; decoded keys are exact and unique.
+func uniqueControlJSON(b []byte, shape reflect.Type) bool {
 	d := json.NewDecoder(bytes.NewReader(b))
-	var value func(int) bool
-	value = func(depth int) bool {
+	d.UseNumber()
+	var value func(reflect.Type, int) bool
+	value = func(shape reflect.Type, depth int) bool {
 		if depth > 16 {
 			return false
 		}
@@ -81,12 +88,18 @@ func uniqueControlJSON(b []byte) bool {
 		if err != nil || t == nil {
 			return false
 		}
-		delim, ok := t.(json.Delim)
-		if !ok {
-			return true
-		}
-		switch delim {
-		case '{':
+		switch shape.Kind() {
+		case reflect.Struct, reflect.Map:
+			if t != json.Delim('{') {
+				return false
+			}
+			fields := map[string]reflect.Type{}
+			if shape.Kind() == reflect.Struct {
+				for i := 0; i < shape.NumField(); i++ {
+					field := shape.Field(i)
+					fields[strings.Split(field.Tag.Get("json"), ",")[0]] = field.Type
+				}
+			}
 			seen := map[string]bool{}
 			for d.More() {
 				k, e := d.Token()
@@ -95,23 +108,51 @@ func uniqueControlJSON(b []byte) bool {
 					return false
 				}
 				seen[key] = true
-				if !value(depth + 1) {
+				child := fields[key]
+				if shape.Kind() == reflect.Map && (key == "qr" || key == "phone") {
+					child = shape.Elem()
+				}
+				if child == nil || !value(child, depth+1) {
 					return false
 				}
 			}
-		case '[':
+			end, err := d.Token()
+			return err == nil && end == json.Delim('}')
+		case reflect.Slice:
+			if t != json.Delim('[') {
+				return false
+			}
 			for d.More() {
-				if !value(depth + 1) {
+				if !value(shape.Elem(), depth+1) {
 					return false
 				}
 			}
+			end, err := d.Token()
+			return err == nil && end == json.Delim(']')
+		case reflect.String:
+			text, ok := t.(string)
+			return ok && !strings.ContainsFunc(text, func(r rune) bool {
+				return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+			})
+		case reflect.Bool:
+			_, ok := t.(bool)
+			return ok
+		case reflect.Int64:
+			number, ok := t.(json.Number)
+			if !ok {
+				return false
+			}
+			_, err := strconv.ParseInt(string(number), 10, 64)
+			return err == nil
 		default:
 			return false
 		}
-		_, err = d.Token()
-		return err == nil
 	}
-	return value(0)
+	if !value(shape, 0) {
+		return false
+	}
+	_, err := d.Token()
+	return err == io.EOF
 }
 
 func localWebArgs(config, store, action string) []string {

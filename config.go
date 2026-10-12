@@ -73,21 +73,12 @@ func LoadConfig(path string) (Config, error) {
 	if e != nil || len(b) > 65536 {
 		return c, errors.New("configuration exceeds 64 KiB or cannot be read")
 	}
+	// Check occurrences before encoding/json can collapse duplicate keys.
+	if !uniquePhoneAccess(b) {
+		return c, errors.New("phone_access must be one JSON boolean")
+	}
 	if e = strictJSON(b, &c); e != nil {
 		return c, e
-	}
-	// encoding/json accepts null for bool; this opt-in must be explicit.
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(b, &fields) != nil {
-		return c, errors.New("invalid configuration")
-	}
-	for key, value := range fields {
-		if strings.EqualFold(key, "phone_access") {
-			value = bytes.TrimSpace(value)
-			if key != "phone_access" || (!bytes.Equal(value, []byte("true")) && !bytes.Equal(value, []byte("false"))) {
-				return c, errors.New("phone_access must be a JSON boolean")
-			}
-		}
 	}
 	if c.Pools != nil && len(c.Lanes) > 0 {
 		return c, errors.New("use pools or lanes, not both")
@@ -98,6 +89,35 @@ func LoadConfig(path string) (Config, error) {
 		c.SourcePath = path
 	}
 	return c, e
+}
+
+func uniquePhoneAccess(b []byte) bool {
+	d := json.NewDecoder(bytes.NewReader(b))
+	start, err := d.Token()
+	if err != nil || start != json.Delim('{') {
+		return false
+	}
+	seen := false
+	for d.More() {
+		token, err := d.Token()
+		key, ok := token.(string)
+		if err != nil || !ok {
+			return false
+		}
+		var value json.RawMessage
+		if d.Decode(&value) != nil {
+			return false
+		}
+		if strings.EqualFold(key, "phone_access") {
+			value = bytes.TrimSpace(value)
+			if key != "phone_access" || seen || (!bytes.Equal(value, []byte("true")) && !bytes.Equal(value, []byte("false"))) {
+				return false
+			}
+			seen = true
+		}
+	}
+	end, err := d.Token()
+	return err == nil && end == json.Delim('}')
 }
 func (c Config) Validate() (time.Duration, error) {
 	if c.QueueFile != nil && *c.QueueFile != "" && !queuePathValid(*c.QueueFile) {
