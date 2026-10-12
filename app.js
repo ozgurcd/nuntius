@@ -90,6 +90,15 @@ function validLaneControls(c) {
 function acceptLaneControls(c, version) {
   if (version !== 1 || !validLaneControls(c)) { laneControls = null; return; }
   if (!laneControls || c.revision >= laneControls.revision) laneControls = c;
+  else {
+    // Availability failures are observations, not older saved control values.
+    // Keep the revision high-water mark and newer known lanes, but fail closed
+    // for any lane unavailable or missing from this fresh observation.
+    laneControls = {...laneControls, lanes:laneControls.lanes.filter(l => c.lanes.some(n => n.name === l.name)).map(l => {
+      const observed = c.lanes.find(n => n.name === l.name);
+      return observed.phase === 'unavailable' ? observed : l;
+    })};
+  }
 }
 function controlFor(lane) { return laneControls?.lanes.find(l => l.name === lane); }
 function blockerWords(blockers) {
@@ -152,16 +161,21 @@ async function setLaneControl(lane, operation, afterCurrent = false) {
     if (!current()) return;
     if (response.status === 403) { signOut(); return; }
     if (!response.ok || data?.schema_version !== 1 || typeof data.paused !== 'boolean' || data.paused !== (operation === 'pause') || typeof data.changed !== 'boolean' ||
-        !validLaneControls(data.lane_control) || data.revision !== data.lane_control.revision || data.revision < payload.expected_revision ||
+        !validLaneControls(data.lane_control) || data.revision !== data.lane_control.revision ||
         data.lane_control.lanes.find(l => l.name === lane)?.paused !== data.paused) {
       const messages = {revision_conflict:'Lane controls changed elsewhere. Current state is being read; review it before another action.',locked:'Lane controls are busy. No change was accepted. Read current state before another action.',rate_limited:'Too many control requests. Read current state before another action.',invalid_request:'This control request was refused. Read current state and check local configuration.'};
       setText(v.controlStatus, messages[data?.code] || 'Save not confirmed. The hold may have changed. Reading current state; review it before another action.');
       laneControls = null; reread = true;
+    } else if (data.revision < Math.max(payload.expected_revision, laneControls?.revision ?? 0)) {
+      acceptLaneControls(data.lane_control, 1);
+      setText(v.controlStatus, 'A newer lane-control change exists. Reading current state; review it before another action.');
+      reread = true;
     } else {
       acceptLaneControls(data.lane_control, 1);
       const saved = controlFor(lane);
-      setText(v.controlStatus, operation === 'pause' ? 'Lane hold saved. New starts are blocked; current work can finish.' :
-        'Lane hold cleared; this action started no work. Other holds: ' + (saved.blockers.length ? blockerWords(saved.blockers) : 'none in this snapshot') + '. A previously approved automatic batch may start work later. Held messages still need explicit review.');
+      setText(v.controlStatus, operation === 'pause' ?
+        (data.changed ? 'Lane hold saved.' : 'This lane was already paused.') + ' New starts are blocked; current work can finish.' :
+        (data.changed ? 'Lane hold cleared;' : 'This lane was already resumed;') + ' this action started no work. Other holds: ' + (saved.blockers.length ? blockerWords(saved.blockers) : 'none in this snapshot') + '. A previously approved automatic batch may start work later. Held messages still need explicit review.');
     }
   } catch {
     if (!current()) return;

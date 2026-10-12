@@ -256,7 +256,7 @@ const make = async (tab='queue') => {const clock={now:Date.parse(queueExample.up
 
 // Lane controls share the shipped script and offline DOM; no real HTTP or agents.
 func TestDashboardLaneControls(t *testing.T) {
-	for _, name := range []string{"presentation", "schema", "save", "conflict", "uncertainty", "revocation", "deadline", "order_focus"} {
+	for _, name := range []string{"presentation", "schema", "save", "conflict", "uncertainty", "revocation", "deadline", "order_focus", "unavailable_revision", "stale_pause", "stale_resume", "unchanged"} {
 		t.Run(name, func(t *testing.T) {
 			assets := map[string]any{"test": name}
 			for key, path := range map[string]string{"script": "app.js", "page": "index.html", "css": "app.css"} {
@@ -298,6 +298,54 @@ const snapshot = (paused=false,phase=paused?'paused':'enabled',revision=7) => ({
 const inject = (h,value) => {h.context.fixtureControl=value;vm.runInContext('lastData = JSON.parse(JSON.stringify(lastData));lastData.lane_control=fixtureControl;render(lastData)',h.context);};
 (async()=>{
   predicate='A09/U02 '+input.test+' on shipped assets';
+  if(input.test==='unavailable_revision'){
+    for(const kind of ['unavailable','missing','unknown']){
+      const {h}=await make(),v=card(h,'codex-1');inject(h,snapshot());
+      h.ids.lane.value='codex-1';h.ids.lane.listeners.change();
+      check(!v.pause.disabled && !h.ids.send.disabled,'revision 7 starts with enabled controls');
+      const unavailable=snapshot(false,'enabled',0);for(const l of unavailable.lanes)l.revision=0;
+      const lane=unavailable.lanes.find(l=>l.name==='codex-1');lane.phase=kind==='unknown'?'unknown':'unavailable';
+      if(kind==='missing')unavailable.lanes=unavailable.lanes.filter(l=>l.name!=='codex-1');
+      inject(h,unavailable);
+      check(v.pause.disabled && v.pauseAfter.disabled && v.resume.disabled && h.ids.send.disabled && h.ids.stopSend.disabled,'revision 0 '+kind+' disables hold and task actions after revision 7');
+      check(v.holdBadge.textContent==='Controls unavailable' && !h.ids.saveNote.disabled && !h.ids.message.disabled,'unavailability is visible; notes and drafts remain usable');
+      if(kind!=='unknown'){
+        check(!card(h,'codex-2').pause.disabled,'known unrelated lane stays usable');
+        inject(h,snapshot(false,'enabled',6));
+        check(v.pause.disabled && h.ids.send.disabled,'older known state cannot reopen unavailable controls');
+      }
+      inject(h,snapshot(false,'enabled',8));check(!v.pause.disabled && !h.ids.send.disabled,'new current snapshot restores controls');
+    }
+    const {h}=await make(),v=card(h,'codex-1');inject(h,snapshot());h.ids.lane.value='codex-1';h.ids.lane.listeners.change();
+    const unavailable=snapshot(true,'unavailable',0);for(const l of unavailable.lanes)l.revision=0;let posts=0,gets=0;
+    h.context.fetch=async(path,options)=>{if(options.method==='POST'){posts++;return reply({schema_version:1,revision:0,paused:true,changed:true,lane_control:unavailable});}gets++;return reply({},503);};
+    await v.pause.click();await settle();
+    check(v.pause.disabled && v.pauseAfter.disabled && v.resume.disabled && h.ids.send.disabled && h.ids.stopSend.disabled,'stale unavailable save reply fails closed when reread fails');
+    check(v.controlStatus.textContent.includes('newer') && posts===1 && gets===1,'stale unavailable reply explains newer change and rereads once without retry');
+  }
+  if(input.test==='stale_pause'||input.test==='stale_resume'){
+    const pausing=input.test==='stale_pause',operation=pausing?'pause':'resume';
+    for(const stage of ['fetch','body','before-request']){
+      const {h}=await make();inject(h,snapshot(!pausing));const v=card(h,'codex-1'),b=pausing?v.pause:v.resume,p=deferred();let posts=0,gets=0;
+      const revision=stage==='before-request'?6:8,newer=snapshot(!pausing,!pausing?'paused':'enabled',9),body={schema_version:1,revision,paused:pausing,changed:true,lane_control:snapshot(pausing,pausing?'paused':'enabled',revision)};
+      h.context.fetch=async(path,options)=>{if(options.method==='POST'){posts++;return stage==='fetch'?p.promise:{ok:true,status:200,json:()=>p.promise};}if(path==='/data'){gets++;return reply({...input.data,lane_control:newer});}return reply({});};
+      b.focus();const save=b.click();await settle();inject(h,newer);
+      p.resolve(stage==='fetch'?reply(body):body);await save;await settle();
+      check(vm.runInContext('laneControls.revision',h.context)===9 && v.holdBadge.textContent===(pausing?'Lane enabled':'Paused'),'revision 9 retained after older '+operation+' reply '+stage);
+      check(v.controlStatus.textContent.includes('newer') && !/hold saved|hold cleared|New starts are blocked|Other holds:/.test(v.controlStatus.textContent),'older '+operation+' reply explains newer change without success or mixed blockers '+stage);
+      check(posts===1 && gets===1,'older '+operation+' reply rereads exactly once without mutation retry '+stage);
+      check(h.doc.activeElement===b && !b.disabled,'stale reply preserves focused control '+stage);
+    }
+  }
+  if(input.test==='unchanged'){
+    for(const operation of ['pause','resume']){
+      const {h}=await make(),paused=operation==='pause';inject(h,snapshot(paused));const v=card(h,'codex-1');let posts=0,gets=0;
+      h.context.fetch=async(path,options)=>{if(options.method==='POST'){posts++;return reply({schema_version:1,revision:7,paused,changed:false,lane_control:snapshot(paused)});}gets++;return reply(input.data);};
+      await vm.runInContext('setLaneControl("codex-1",'+JSON.stringify(operation)+')',h.context);await settle();
+      check(v.controlStatus.textContent.startsWith('This lane was already '+(paused?'paused':'resumed')) && !/hold saved|hold cleared/.test(v.controlStatus.textContent),'unchanged '+operation+' explains already current state');
+      check(posts===1 && gets===0,'unchanged success needs no retry or reread');
+    }
+  }
   if(input.test==='presentation'){
     const {h}=await make(), working=card(h,'claude-1'),idle=card(h,'codex-1'),failed=card(h,'claude-2'),ended=card(h,'codex-2');
     check(h.ids.lanes.children[0]===failed.root,'L01 missing report ranks ahead of working');

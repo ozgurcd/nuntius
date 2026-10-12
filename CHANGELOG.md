@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fail closed when fresh lane controls are unavailable, even at a lower
+  fallback revision. Explain newer changes after stale save replies and read
+  current state once without retrying the change. Say when a lane was already
+  paused or resumed instead of claiming a new saved change.
+
 - Add one guarded dashboard lane-control client with Pause lane, Pause after
   current and Resume lane, revision checks, whole-save deadlines, uncertainty
   rereads and sign-out ownership. Keep hold badges separate from run outcomes,
