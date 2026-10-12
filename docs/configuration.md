@@ -180,7 +180,7 @@ standards as separate exact UTF-8 bytes. A trusted local caller supplies the
 profile name and revision, an explicit separator, the standards marker, and
 either an empty wrapper or `/goal` followed by a newline. It appends the
 separator and standards once. It does not expand templates or execute text.
-This component adds no owner configuration fields, local file reader, CLI,
+The compiler adds no owner configuration fields, local file reader, CLI,
 MCP tool or browser operation. Later adapters must select text or registered
 artifact keys; they must not turn this into an arbitrary path reader.
 
@@ -201,8 +201,8 @@ The seal binds the goal spec and revision, profile, authority reference and
 reviewed source observation together with body, standards, final and dispatch
 SHA-256 digests. It records UTF-8 bytes and Unicode code points separately.
 Dispatch measurements include the `/goal` wrapper when declared. These
-measurements do not yet provide delivery: the next component owns the direct
-12,000-byte limit, per-engine code-point cap and full-artifact pointer rules.
+measurements feed the internal delivery component described below. It enforces
+the direct 12,000-byte limit, per-engine code-point cap and full-artifact rules.
 Native launching and automatic dispatch remain unavailable.
 
 Approval needs the exact sealed revision and authority. It also compares a
@@ -228,3 +228,48 @@ duplicate decoded keys, null fields and unknown fields refuse approval.
 Profile names/revisions/markers, authority and source observations must each
 be one nonblank line of at most 128 UTF-8 bytes. Unicode line and paragraph
 separators and U+0085 are rejected in these one-line fields.
+
+## Native brief delivery (local, unpublished)
+
+A trusted local adapter must explicitly select the lane engine, its positive
+Unicode code-point cap and an existing artifact root that the lane can read.
+There is no guessed root or default cap. This adds no configuration fields or
+CLI, MCP or dashboard operation. Preparing delivery does not approve a goal,
+start a child or bypass a pause. Native launch and admission come later.
+
+A direct prompt uses the exact sealed body, separator and standards, with the
+declared wrapper. The complete prompt must fit both 12,000 UTF-8 bytes and the
+selected engine's code-point cap. Bytes and code points are separate measures;
+the wrapper counts toward both limits. Nothing is truncated.
+
+If either limit is exceeded, delivery uses a short pointer with the goal header,
+quoted absolute file path and full-text SHA-256 digest. The file contains the
+exact sealed body, separator and standards once, without the dispatch wrapper.
+The pointer includes its declared wrapper and must also fit both prompt limits.
+The full file may use at most 128 KiB. A pointer does not append standards again.
+
+The root must be an owner-owned 0700 directory. Every ancestor must be a real
+directory owned by that user or root, without group or other write access;
+protected sticky temporary directories may be ancestors. Links are refused.
+Artifacts are owner-owned regular 0600 files with one hard link. Their names bind
+the goal ID, revision and full digest. New writes use exclusive creation and
+sync the file and directory before returning. Existing files must match the
+exact sealed bytes; delivery never truncates, replaces, repairs or chmods them.
+Reusing a file confirms its durability through the checked read descriptor,
+including when another writer has written the bytes but has not synced them yet.
+A partial write stays in place for review and refuses the next delivery.
+
+The delivery record keeps the full and prompt digests, byte and code-point
+sizes, selected engine and cap, and artifact path and file identity. New delivery,
+retained retries and saved-record reads share the same validation rule. A saved
+record cannot silently adopt a replacement file, even with identical bytes.
+Later admission must check the record again because a successful check cannot
+promise that a path stays readable. A local permission check also cannot prove
+visibility inside a real lane sandbox; that needs a separately authorized pilot.
+
+Refresh creates a separate revision file and preserves the old one for resume.
+This component never expires or deletes artifacts. Archival requires explicit
+owner maintenance after checking that no resume still needs them. Unreadable
+roots, unsafe files, changed identities or digests explain why review is needed;
+errors do not include the private brief text. Approval still uses the existing
+sealed revision, authority and source-observation rules.

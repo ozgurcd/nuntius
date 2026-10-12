@@ -7,6 +7,12 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Oversized native briefs can now use a short pointer to the complete reviewed
+  file in an explicitly selected workspace. Nuntius keeps the full text and
+  shared rules once, records their digests and sizes, and preserves the file for
+  resume. Unsafe or changed files need review. This internal delivery component
+  starts no work and adds no dashboard, CLI or MCP control.
+
 - Native history refuses outdated approval after scope changes and approval without a new reviewed decision; no work starts.
 
 - The dashboard shows the Queue count without opening Queue. Idle cards explain

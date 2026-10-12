@@ -2,6 +2,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -122,6 +124,36 @@ func fakeOsascript() {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "brief-pointer" {
+		prompt, err := io.ReadAll(io.LimitReader(os.Stdin, 12001))
+		if err != nil || len(prompt) > 12000 {
+			os.Exit(31)
+		}
+		match := regexp.MustCompile(`Read the full sealed brief at ("(?:[^"\\]|\\.)*")\. Follow`).FindSubmatch(prompt)
+		if len(match) != 2 {
+			os.Exit(32)
+		}
+		path, err := strconv.Unquote(string(match[1]))
+		if err != nil {
+			os.Exit(33)
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			os.Exit(34)
+		}
+		st, err := f.Stat()
+		if err != nil || !st.Mode().IsRegular() || st.Mode().Perm() != 0600 || st.Size() > 128*1024 {
+			f.Close()
+			os.Exit(35)
+		}
+		full, err := io.ReadAll(io.LimitReader(f, 128*1024+1))
+		closeErr := f.Close()
+		if err != nil || closeErr != nil || int64(len(full)) != st.Size() {
+			os.Exit(36)
+		}
+		fmt.Printf("%x %d\n", sha256.Sum256(full), len(full))
+		return
+	}
 	if os.Getenv("NUNTIUS_FIXTURE_WEB_BINARY") != "" && len(os.Args) > 1 &&
 		(os.Args[1] == "__fixture_web" || os.Args[1] == "__nuntius_web_exec" || os.Args[1] == "--config") {
 		args := os.Args[1:]

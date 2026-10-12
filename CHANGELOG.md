@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Prepare native brief delivery with exact wrapper-inclusive byte/code-point
+  limits and immutable private workspace artifacts for oversized prompts. Keep
+  full/pointer digests and sizes, preserve resume artifacts, and use one safety
+  predicate for new delivery, retained retries and saved descriptors. Native
+  launch and public controls remain unavailable.
+
 - Refuse obsolete or unreviewed native approval in candidate saves and history replay, including unchanged seals and decision history.
 
 - Show the Queue tab count with the first dashboard snapshot. Say a missing idle
@@ -17,7 +23,7 @@
   measurements, including wrapper overhead. Refuse invalid encoding, markers,
   headers and size; changed sources need review without rewriting approved
   bytes. Approval and history replay share the same seal checks; refresh removes
-  obsolete approval and exact grant binding. Delivery, launch and public native
+  obsolete approval and exact grant binding. Launch and public native
   controls remain unavailable.
 
 - Add verified-only native prerequisites and full combined dependency/coverage

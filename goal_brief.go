@@ -54,6 +54,13 @@ type goalBriefSeal struct {
 	DispatchCodePoints int              `json:"dispatch_code_points"`
 }
 
+// deliveryText preserves the approved bytes. A pointer carries no second
+// standards append; its artifact contains this exact full text.
+func (s goalBriefSeal) deliveryText() (full, dispatch string) {
+	full = s.Body + s.Profile.Separator + s.Standards
+	return full, s.Profile.Wrapper + full
+}
+
 func assembleGoalBrief(spec nativeGoalSpec, revision uint64, in goalBriefInput) (goalBriefSeal, error) {
 	var zero goalBriefSeal
 	p := in.Profile
