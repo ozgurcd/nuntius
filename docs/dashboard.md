@@ -435,12 +435,14 @@ tailscale serve --https=443 off
 See the official [Serve command reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
 
 The dashboard adapts to laptop and phone-width windows and your system's light
-or dark mode. The sticky top bar shows dispatch/freeze controls, Running,
+or dark mode. The top bar stays sticky above 720px and scrolls with the page
+at 720px or below. It shows dispatch/freeze controls, Running,
 Available, Paused and Ended counts, and refresh freshness on every tab. Agents opens by default;
 Messages & notes, Digest, Reports & runs, Audit and Settings have their own panels. Arrow keys
 and Home/End navigate tabs. The URL hash selects the view on start and reload.
-The phone header uses two lines: brand and freeze controls, then counts and
-update age. Its pill shows `Enabled` / `Frozen` at narrow widths, with full
+At 720px or below, the brand, controls and overview each use a separate
+full-width row. These rows may wrap. The overview includes counts and update
+age. Its pill shows `Enabled` / `Frozen` at narrow widths, with full
 dispatch/freeze text in its title and accessible label. The tab bar scrolls
 within phone-width windows.
 Agent cards show explained activity and holds, with run IDs, ETA and exact times

@@ -438,7 +438,8 @@ directives are 'self'; no inline script/style or external network asset is used.
 Static asset URLs carry no credential. All existing response headers remain.
 
 The responsive light/dark dashboard keeps freeze controls, running/idle/ended
-counts and refresh time in a sticky header. Accessible tabs select Agents
+counts and refresh time in the header. Above 720px the header stays sticky;
+at 720px or below it scrolls with the page. Accessible tabs select Agents
 (default), Messages & notes, Digest, History or Audit. The URL hash restores
 the selected view on start and reload. Arrow keys and
 Home/End move tab focus and selection; hidden panels defer updates until shown.
@@ -455,8 +456,9 @@ The initial cancel button hides until Keep running or the confirmation timeout.
 Every card's Message button selects that agent in the Messages composer.
 Phone history stacks lane/state, goal, run ID, started/duration and relation; badges, lanes and
 durations do not split words. The phone tab bar scrolls within its own bounds.
-The phone header has brand/freeze controls above counts/update age. At widths
-up to 720px the pill shows Enabled/Frozen; title and aria-label retain the full
+At 720px or below, the brand, controls and overview each use a separate
+full-width row that may wrap. The overview includes counts and update age.
+The pill shows Enabled/Frozen; title and aria-label retain the full
 dispatch/freeze text. Panel focus
 outlines require keyboard input and focus-visible. Initial and newly visible
 panels render even with a recent hold; panel element focus alone is not busy.
