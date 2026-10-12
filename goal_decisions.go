@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unicode"
 
 	"golang.org/x/sys/unix"
 )
@@ -84,7 +85,7 @@ func goalTransitionAllowed(from, to nativeGoalState) bool {
 
 func validGoalDecision(req goalDecisionRequest) bool {
 	if !validGoalOperationID(req.OperationID) || !goalPattern.MatchString(req.GoalID) || req.ExpectedRevision == 0 || req.ExpectedRevision >= goalJournalMaxEvents ||
-		!queueText(req.Reason, 512, false) || !queueText(req.Authority, 128, false) || !queueText(req.Evidence, 128, false) {
+		!goalDecisionReason(req.Reason) || !queueText(req.Authority, 128, false) || !queueText(req.Evidence, 128, false) {
 		return false
 	}
 	if req.Action != "approve" && req.Action != "verify" && req.Action != "park" && req.Action != "cancel" {
@@ -97,6 +98,21 @@ func validGoalDecision(req goalDecisionRequest) bool {
 		return req.ReportDigest == "" && (req.AttemptID == "" || validGoalOperationID(req.AttemptID))
 	}
 	return validGoalOperationID(req.AttemptID) && validGoalDigest(req.ReportDigest)
+}
+
+// Decision reasons are one line in both requests and retained evidence. Keep
+// Queue's byte/control rules, with the additional Unicode separator rule local
+// to this field rather than changing unrelated Queue text.
+func goalDecisionReason(reason string) bool {
+	if !queueText(reason, 512, false) {
+		return false
+	}
+	for _, r := range reason {
+		if unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
+			return false
+		}
+	}
+	return true
 }
 
 func applyGoalDecision(old goalReplayRecord, spec nativeGoalSpec, data goalRecordData, req goalDecisionRequest, seal *goalDecisionSeal) (goalRecordData, error) {

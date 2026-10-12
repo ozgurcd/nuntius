@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Reapply native decision checks during candidate saves and journal replay.
+  Retained accounting must support the reviewed attempt and report; alternate
+  review still requires settled work. Park, cancel and approval share the
+  writer's prerequisites, and decisions cannot invent approval or batch binding.
+  Reject Unicode line and paragraph separators in decision reasons, including
+  retained evidence, without changing unrelated Queue text. Initial history
+  cannot invent a decision about a missing prior revision.
+
 - Share native recognition and public audit decoding through an exact-key
   pre-pass. After JSON unescaping, known field names must match the lowercase
   schema exactly; case aliases and duplicate decoded keys reject the row.

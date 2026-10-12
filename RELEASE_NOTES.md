@@ -7,6 +7,13 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Native goal history now checks saved decisions against the work they reviewed,
+  using the same rules as a new decision. Old attempts, changed reports and
+  unsettled work cannot become verified through history replay. Reasons stay
+  on one line, including Unicode separators. This checks history consistency;
+  it does not prove who supplied a review reference. These internal controls
+  remain unavailable through the dashboard, CLI or MCP.
+
 - Audit readers now check field names before displaying a row. JSON escapes
   are decoded first; known names must match the lowercase schema exactly.
   Case variants and duplicate decoded keys hide that row. The reserved native

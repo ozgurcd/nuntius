@@ -235,7 +235,10 @@ func goalRecordTerminal(state nativeGoalState) bool {
 // the low-level storage seam. Lifecycle decisions are a later component.
 func goalRecordHistoryValid(old, next goalReplayRecord) bool {
 	if old.revision == 0 {
-		return true
+		data, err := goalRecordMetadata(next)
+		// Initial bookkeeping fixtures may describe observations, but there is
+		// no prior stored revision for a decision to have reviewed.
+		return err == nil && len(data.Decisions) == 0
 	}
 	a, err := goalRecordMetadata(old)
 	if err != nil {
@@ -256,8 +259,16 @@ func goalRecordHistoryValid(old, next goalReplayRecord) bool {
 			return false
 		}
 		d := b.Decisions[len(a.Decisions)]
-		to := map[string]nativeGoalState{"approve": nativeGoalApproved, "verify": nativeGoalVerified, "park": nativeGoalParked, "cancel": nativeGoalCancelled}[d.Action]
-		if d.Revision != old.revision || b.State != to || !goalTransitionAllowed(a.State, to) {
+		spec, err := decodeNativeGoalSpec([]byte(old.spec))
+		if err != nil {
+			return false
+		}
+		// Reapply the writer's exact predicate to the retained observation.
+		// Production has no seal validator yet; an opaque seal cannot enable
+		// approval through the lower-level writer or replay either.
+		req := goalDecisionRequest{OperationID: "check", GoalID: spec.ID, ExpectedRevision: d.Revision, Action: d.Action, Reason: d.Reason, Authority: d.Authority, Evidence: d.Evidence, AttemptID: d.AttemptID, ReportDigest: d.ReportDigest, AlternateEvidence: d.AlternateEvidence}
+		expected, err := applyGoalDecision(old, spec, a, req, nil)
+		if err != nil || !reflect.DeepEqual(expected, b) {
 			return false
 		}
 	}

@@ -497,7 +497,9 @@ The internal decision operation records approve, verify, park or cancel with
 the expected goal revision and a unique operation ID. Each decision needs one
 nonblank line of reason, at most 512 UTF-8 bytes, and nonblank authority and
 reviewed-evidence references, each at most 128 bytes. Control characters,
-invalid text and irrelevant review fields refuse before writing. Saved
+Unicode line and paragraph separators (categories Zl and Zp), invalid text
+and irrelevant review fields refuse before writing. The same reason rule
+applies when reading retained decision evidence. Saved
 decisions remain in append order, with the revision they reviewed. Reads show
 redacted reasons and references. Repeating an operation returns its original
 receipt; changing its input refuses. The same private journal, locked save
@@ -518,6 +520,18 @@ explanation until the separate brief sealing and delivery components exist.
 Tests use sealed fixtures; an opaque stored seal never grants approval.
 An owner hold remains in force. A judge reference or adapter source does not
 clear it. Approval grants no automatic batch and starts no work.
+
+Candidate saves and authoritative history replay reapply the same decision
+checks as the ordinary writer against the unchanged prior accounting.
+Verification must name the current ended attempt and, for report review, its
+retained digest. Alternate review still needs settled accounting, without an
+active successor or an unconfirmed launch. Park and cancel obey the same busy
+work refusal. Replay also refuses approval while production seal validation
+is unavailable, and refuses invented approval or batch binding. The resulting
+metadata must match the writer's result exactly. A first history record cannot
+contain decisions about a prior revision that does not exist. These checks
+validate retained history; they do not authenticate a human reference or prevent
+an unsandboxed process running as the same user from replacing all history.
 
 Verification needs an ended current-attempt observation and explicit review.
 Report review names that exact attempt and report digest. A report alone, a
