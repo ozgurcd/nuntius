@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add the internal native goal schema and strict decoder, with explicit work
+  scope, engine/work-class separation, holds and bounded safe metadata. Creation
+  grants no approval. No native storage, launch or public operation is enabled.
+
 - Add identity-bound held-message review, explicit Send and Discard, durable
   receipt explanations and retained removed-lane Resume. Resume never replays
   messages. Unknown or timed-out results reread once without claiming delivery.

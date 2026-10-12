@@ -7,6 +7,10 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Document the native goal data format: separate work scope, engines and holds.
+  This internal component adds no controls and starts no work. Creating goal
+  data does not approve it; the portable Queue works as before.
+
 - Review held messages in Messages & notes before sending or discarding the
   exact original message. Resume clears a lane hold and leaves the message
   visible; it starts no work and never sends the message automatically.

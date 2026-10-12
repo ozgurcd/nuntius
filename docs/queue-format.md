@@ -138,3 +138,89 @@ only on deliberate user action with noreferrer/noopener. Nuntius never fetches,
 previews, proxies or downloads briefs. No local brief route exists.
 
 See [dashboard behavior](dashboard.md#queue-since-v033) and [security](security.md).
+
+## Native goal schema v1 (local, unpublished)
+
+The native schema is an internal component. It does not create stored goals,
+approve work, launch an agent, or add a CLI, MCP or dashboard operation. The
+portable snapshot above remains a separate read-only display format.
+
+Native creation data is one UTF-8 JSON object followed by EOF. Its `version`
+is the integer `1`. Reject duplicate keys, unknown keys at every level, null,
+wrong types, trailing data and documents over 65,536 bytes, including whitespace.
+Numbers use integer notation, never strings, fractions or exponent notation.
+Display text is plain text; controls and bidirectional formatting characters
+are refused. Limits count UTF-8 bytes. No field is silently shortened or defaulted.
+
+Every spec requires these fields:
+
+- `id`: the existing dispatch grammar, `^[A-Z0-9][A-Z0-9.-]{1,63}$`.
+  This identity belongs to the goal and cannot be replaced by a later revision.
+- `title`: 1–240 bytes, nonblank, with no surrounding whitespace; `size`: S, M or L.
+- `lane_kind`: preferred engine, claude, codex or opencode. `kinds`: a nonempty
+  unique set of allowed engines, at most 8 entries, including `lane_kind`.
+  Pool names such as codex-1 are lane names, never engines.
+- `work_kind`: mechanical, design, preparation, code, review or release.
+  Work class and execution engine have different meanings.
+- `lane_binding`: preferred or required. Optional `preferred_lane` follows
+  the configured lane-name grammar, `^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$`.
+  A required binding needs a named lane and cannot silently fall back.
+- `order`: integer 0–2147483647. Later selection sorts ascending, then by ASCII
+  ID. Display filters do not change it.
+- `after`: at most 32 unique dispatch-grammar IDs, with no self edge. An unknown
+  prerequisite remains unresolved; decoding does not mark it complete.
+- `writes`: at most 32 unique canonical workspace-relative paths, each at most
+  240 bytes. An explicit empty array means read-only. Missing or null scope
+  is invalid. Each slash-separated component matches
+  `^[A-Za-z0-9_][A-Za-z0-9._-]*$`. Reject absolute paths, dot components,
+  traversal, repeated/trailing slashes, backslashes, URLs, encodings and compound
+  strings such as `repo other-repo`. List each scope separately.
+- `resources`: at most 32 unique exclusive coordination names, each matching
+  `^[a-z][a-z0-9-]{0,63}$`, for example mint or wiki-pin. An empty array is explicit.
+  These are coordination claims, not paths or permission grants.
+
+Optional `owner_hold` contains exactly `categories` and `reason`. Categories
+are a nonempty unique list of at most 32 lowercase names using the resource-name
+grammar; reason is nonblank plain text, at most 512 bytes. The names label
+decisions still needed; they do not prove approval. Optional `coverage` contains
+exactly `covered_by` (another dispatch-grammar ID) and a nonblank reason of at
+most 512 bytes. It describes a hold, never accepted closure. Graph checks,
+owner decisions and coverage closure belong to later record operations.
+
+Creation accepts no approval, actor, state, outcome, run, revision, pause,
+brief path, report or closure evidence. Approval must be recorded separately
+against the exact immutable brief and authority. A decoded path proves syntax
+only. Future admission must resolve known workspace roots, reject unknown scope,
+and check resource overlap and claims. No filesystem is read during decoding.
+Lane-control, goal and projection revisions remain separate. Lane pause is
+never a goal state; it remains under the existing lane-control authority.
+
+The typed goal states are drafted, approved, running, ended, verified,
+cancelled and parked. Outcomes are completed, timed_out, cancelled, interrupted,
+report_delivery_failed, ended_no_report, unknown_exit and failed. Process failure
+is an outcome, not another goal state. An unknown exit stays unknown; an ended
+run is not verified work. These types define vocabulary, not transition logic.
+
+The internal public DTO copies only the listed spec metadata plus typed state
+and optional outcome supplied by a trusted record. It redacts titles and hold
+reasons, detaches arrays and hold objects from the source, and refuses encoded
+output over 32,768 bytes. It exposes no approval, full brief/report, private
+absolute path, process/session identity, lane-control data or readiness claim.
+Invalid data returns one fixed explanation without echoing input or parser errors.
+
+```json
+{
+  "version": 1,
+  "id": "EXAMPLE-DOCS",
+  "title": "Review documentation",
+  "size": "S",
+  "lane_kind": "codex",
+  "kinds": ["codex", "claude"],
+  "work_kind": "review",
+  "lane_binding": "preferred",
+  "order": 4,
+  "after": ["EXAMPLE-REVIEW"],
+  "writes": [],
+  "resources": []
+}
+```
