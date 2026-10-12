@@ -7,6 +7,10 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Document how native goal history is read safely. Incomplete final records
+  stay uncommitted; damaged history requires review and is never silently
+  skipped or removed. This internal reader adds no controls and starts no work.
+
 - Document the native goal data format: separate work scope, engines and holds.
   This internal component adds no controls and starts no work. Creating goal
   data does not approve it; the portable Queue works as before.

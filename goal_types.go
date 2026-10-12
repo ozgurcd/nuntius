@@ -78,7 +78,7 @@ type nativeCoverageHold struct {
 }
 
 func decodeNativeGoalSpec(b []byte) (nativeGoalSpec, error) {
-	if len(b) > nativeGoalMaxBytes || !utf8.Valid(b) {
+	if len(b) > nativeGoalMaxBytes || !utf8.Valid(b) || !nativeJSONScalars(b) {
 		return nativeGoalSpec{}, errNativeGoalInvalid
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
@@ -127,6 +127,61 @@ func decodeNativeGoalSpec(b []byte) (nativeGoalSpec, error) {
 		return nativeGoalSpec{}, errNativeGoalInvalid
 	}
 	return s, nil
+}
+
+// Go's JSON decoder replaces unpaired escaped surrogates. Native records
+// reject them before decoding so a private spec retains its exact meaning.
+// JSON syntax and raw UTF-8 validity are checked separately by the caller.
+func nativeJSONScalars(b []byte) bool {
+	for i := 0; i < len(b); i++ {
+		if b[i] != '\\' {
+			continue
+		}
+		i++
+		if i >= len(b) || b[i] != 'u' {
+			continue // Includes a literal escaped backslash, never a Unicode escape.
+		}
+		n, ok := nativeJSONHex(b[i+1:])
+		if !ok {
+			return false
+		}
+		i += 4
+		if n >= 0xdc00 && n <= 0xdfff {
+			return false
+		}
+		if n >= 0xd800 && n <= 0xdbff {
+			if i+2 >= len(b) || b[i+1] != '\\' || b[i+2] != 'u' {
+				return false
+			}
+			low, ok := nativeJSONHex(b[i+3:])
+			if !ok || low < 0xdc00 || low > 0xdfff {
+				return false
+			}
+			i += 6
+		}
+	}
+	return true
+}
+
+func nativeJSONHex(b []byte) (uint16, bool) {
+	if len(b) < 4 {
+		return 0, false
+	}
+	var n uint16
+	for _, c := range b[:4] {
+		n <<= 4
+		switch {
+		case c >= '0' && c <= '9':
+			n += uint16(c - '0')
+		case c >= 'a' && c <= 'f':
+			n += uint16(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			n += uint16(c-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return n, true
 }
 
 // nativeClosedFields rejects unknown keys and null even for optional fields.

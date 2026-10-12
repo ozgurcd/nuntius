@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add internal bounded, checksummed native goal journal replay with private
+  spec and seal references, detached metadata and fail-closed corruption checks.
+  Incomplete final appends remain uncommitted and reads preserve all files.
+  Reject unpaired escaped Unicode surrogates in native specs. No writer or
+  native control is enabled.
+
 - Replace held-message receipt snapshots instead of accumulating old rows.
   Keep only reviews still being read or acted on, within the server's row and
   receipt ceilings, and explain when fewer latest receipts are shown.

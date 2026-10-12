@@ -66,6 +66,43 @@ func fixture(t *testing.T) (Config, string) {
 	d := t.TempDir()
 	off := false
 	store := filepath.Join(d, "store")
+	// Cleanup is LIFO: observe after the existing cleanup below, while this
+	// test's records still exist. Never infer teardown from a removed directory.
+	t.Cleanup(func() {
+		entries, err := os.ReadDir(filepath.Join(store, "runs"))
+		if err != nil && !os.IsNotExist(err) {
+			t.Error("offline fixture teardown could not read run records")
+			return
+		}
+		observed := false
+		for _, entry := range entries {
+			if !runPattern.MatchString(entry.Name()) || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			dir := filepath.Join(store, "runs", entry.Name())
+			_, err := os.Lstat(filepath.Join(dir, "meta.json"))
+			if os.IsNotExist(err) {
+				continue // ETA fixtures contain goal metadata without a child record.
+			}
+			r, err := loadRun(dir, entry.Name())
+			if err != nil {
+				t.Error("offline fixture teardown could not validate a child record")
+				continue
+			}
+			if r == nil {
+				t.Log("synthetic corrupt fixture metadata supplies no child identity")
+				continue
+			}
+			observed = true
+			if sameProcess(*r) {
+				t.Error("offline fixture child still exists after test cleanup")
+				return
+			}
+		}
+		if observed {
+			t.Log("offline fixture teardown verified before temporary record removal")
+		}
+	})
 	t.Cleanup(func() {
 		// This directory was created by this test. Never scan the owner's store.
 		m := &Manager{store: store}

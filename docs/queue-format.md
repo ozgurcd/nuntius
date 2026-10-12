@@ -151,6 +151,9 @@ wrong types, trailing data and documents over 65,536 bytes, including whitespace
 Numbers use integer notation, never strings, fractions or exponent notation.
 Display text is plain text; controls and bidirectional formatting characters
 are refused. Limits count UTF-8 bytes. No field is silently shortened or defaulted.
+Unpaired escaped Unicode surrogates are refused rather than replaced during
+decoding. Valid escaped surrogate pairs, literal escaped backslashes and the
+actual Unicode replacement character are accepted.
 
 Every spec requires these fields:
 
@@ -224,3 +227,67 @@ Invalid data returns one fixed explanation without echoing input or parser error
   "resources": []
 }
 ```
+
+## Native journal replay v1 (local, unpublished)
+
+This internal reader reconstructs goal metadata from a private journal. It
+adds no store writer, command, dashboard control, approval or agent launch.
+Lane controls remain separate. Reading never creates a directory or lock,
+repairs a tail, removes history or compacts the journal.
+
+The owner-selected existing directory must have mode 0700 and belong to the
+current user. The journal is `goal-journal.bin` inside that directory. An absent
+journal in a valid directory means an empty projection; a missing or unsafe
+directory is an error. Files must be regular, mode 0600, owned by the current
+user and have one hard link. Descriptor-rooted no-follow opens reject linked
+path components and leaves. Nonblocking opens reject special files without
+waiting. Size and modification checks reject a detected change during reading.
+
+Each frame contains an 84-byte header followed by a JSON event. Header fields
+are, in byte order: four ASCII bytes `NGJF`; a big-endian 32-bit version `1`;
+a big-endian 64-bit sequence; a big-endian 32-bit payload length; the 32-byte
+SHA-256 of those first 20 header bytes; and the 32-byte SHA-256 of the payload.
+The independent header checksum prevents a damaged length from making an
+interior corrupt event appear to be an incomplete final append. Sequence starts
+at 1 and advances by exactly 1. Repeated, backward or skipped sequences fail.
+Checksums detect damaged bytes; they do not authenticate the same OS user.
+
+The event is a closed UTF-8 JSON object with `kind` exactly `goal.spec`,
+`goal_id` using the native dispatch grammar, `revision` in integer notation,
+and `spec_ref`. An optional `seal_ref` must be a valid reference if present.
+Reject duplicate or unknown keys, null, wrong types and trailing roots.
+Each goal's revision starts at 1 and advances by exactly 1. Replay validates
+every referenced historical spec, including superseded revisions, using the
+strict native schema above. The spec ID must equal the event ID. A revision
+cannot silently rename a goal. Later operations must enforce update and terminal
+record policy; this reader does not grant mutation or admission authority.
+
+References are exact flat filenames: `goal-spec-` or `goal-seal-` followed by
+64 lowercase hexadecimal SHA-256 characters. Each name binds the exact bytes
+of its private file. No absolute paths, traversal, arbitrary file selectors,
+full brief, report, spec text or seal text belongs in an event. Replay checks
+seal bytes and their digest as an opaque private reference; it does not approve
+or interpret a seal. Missing, unsafe, oversized or mismatched blobs fail replay.
+
+Limits per replay are 16,777,216 journal bytes, 4,096 payload bytes per frame,
+16,384 complete events, 4,096 distinct goals, and 67,108,864 cumulative blob
+bytes read, counting repeated historical references. Each spec is at most
+65,536 bytes; each opaque seal is at most 262,144 bytes. Exact boundaries are
+accepted. Overflow returns an error without deleting history or returning a
+truncated projection. These component limits do not promise a future complete
+public response will fit its separate response budget.
+
+A valid incomplete final frame is uncommitted: replay returns only preceding
+complete events, their last sequence and byte boundary, plus a torn-tail flag.
+It does not load that frame's references. An invalid header, checksum, event,
+sequence or spec returns no projection, even after a valid prefix. Unsupported
+versions also fail. Reads never skip an interior event or guess a repair.
+The fixed error explains that native history is unavailable or invalid and
+asks the owner to preserve and review it; it echoes no private input or path.
+
+The resulting internal projection owns immutable spec bytes and seal references.
+Each metadata read returns detached arrays and holds; repeated replay of the
+same files gives the same projection. It provides no goal approval, lifecycle
+transition, readiness calculation, current attempt or lane-control revision.
+Durable append, crash reconciliation and sync uncertainty belong to the next
+commit component, before any native writer can be exposed.
