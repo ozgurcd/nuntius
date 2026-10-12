@@ -231,7 +231,7 @@ Invalid data returns one fixed explanation without echoing input or parser error
 ## Native journal replay v1 (local, unpublished)
 
 This internal reader reconstructs goal metadata from a private journal. It
-adds no store writer, command, dashboard control, approval or agent launch.
+adds no command, dashboard control, approval or agent launch.
 Lane controls remain separate. Reading never creates a directory or lock,
 repairs a tail, removes history or compacts the journal.
 
@@ -289,5 +289,55 @@ The resulting internal projection owns immutable spec bytes and seal references.
 Each metadata read returns detached arrays and holds; repeated replay of the
 same files gives the same projection. It provides no goal approval, lifecycle
 transition, readiness calculation, current attempt or lane-control revision.
-Durable append, crash reconciliation and sync uncertainty belong to the next
-commit component, before any native writer can be exposed.
+The internal commit component below saves changes before any native writer
+can be exposed.
+
+## Native journal commit (local, unpublished)
+
+This component saves strictly validated spec bytes and optional opaque seal
+bytes in the existing private store. It adds no CLI, MCP or HTTP operation,
+approval, scheduler or process launch. It does not alter lane pause state.
+The manager mutex comes first, followed by the existing shared control lock.
+Control-lock contention refuses promptly; it never waits for another process.
+No nested control or audit lock is taken. Audit mirroring remains separate work.
+
+Each change supplies the expected goal revision and an operation ID of 1–64
+ASCII letters, digits, dots or hyphens, starting with a letter or digit. Zero
+means the goal must not exist. A saved revision advances by one. A stale
+revision refuses without staging blobs or appending an event. Operation IDs
+are unique across this journal, rather than scoped to a goal. Reusing an ID
+with the same input returns its original goal, revision and event sequence,
+even after another update. Different input refuses. The input fingerprint
+binds the goal ID, expected revision and exact spec/seal content addresses.
+Changing JSON whitespace changes the input; an absent seal differs from an
+empty seal. These are storage identities, not approval or authenticity proofs.
+
+New events carry paired `operation_id` and `input_sha256` fields. Replay
+refuses an invalid pair, fingerprint mismatch or repeated operation ID.
+Earlier internal version-1 frames without either field remain readable.
+Results are reconstructed from the journal; no second receipt file is authoritative.
+
+Blobs are staged privately in the same directory, flushed, and published under
+their SHA-256 names without replacing existing files. Existing blobs must have
+the exact bytes and safe private-file attributes. The blob directory is synced
+before appending. The complete candidate is checked against all replay limits,
+including the cumulative historical blob budget. A valid incomplete tail may
+be truncated to the checked committed boundary only by this locked writer.
+It preserves the entire committed prefix. Reads and lookups never repair it.
+
+The writer appends the checksummed event, syncs the journal and its directory,
+then returns the new detached projection. A failed incomplete append publishes
+nothing; a retry validates and removes only the torn tail before appending once.
+After a complete append, sync or publication failure returns `commit_unconfirmed`
+with a plain explanation: the change may be saved, so look up its operation ID
+before retrying. It never claims rollback or appends a compensating event.
+Lookup shows a complete recorded result without changing files. A matching
+write retry syncs that existing journal and directory before confirming success;
+it does not append again. A lookup alone does not certify a prior failed sync.
+
+Before-append failures may leave unreferenced immutable blobs. A crash may
+leave an unreferenced staging file. Neither grants authority or affects replay;
+this component does not delete history or introduce automatic cleanup. Damaged
+complete history refuses use and requires preserving the files for review.
+Offline crash tests prove process-restart behavior; they do not simulate power
+loss, hostile same-user writes or certify later native lifecycle policy.

@@ -29,11 +29,13 @@ const (
 var errGoalReplay = errors.New("native goal history is unavailable or invalid; preserve the files and review the journal and private references before using native goals")
 
 type goalJournalEvent struct {
-	Kind     string `json:"kind"`
-	GoalID   string `json:"goal_id"`
-	Revision uint64 `json:"revision"`
-	SpecRef  string `json:"spec_ref"`
-	SealRef  string `json:"seal_ref,omitempty"`
+	Kind        string `json:"kind"`
+	GoalID      string `json:"goal_id"`
+	Revision    uint64 `json:"revision"`
+	SpecRef     string `json:"spec_ref"`
+	SealRef     string `json:"seal_ref,omitempty"`
+	OperationID string `json:"operation_id,omitempty"`
+	InputSHA256 string `json:"input_sha256,omitempty"`
 }
 
 type goalReplayRecord struct {
@@ -48,6 +50,7 @@ type goalProjection struct {
 	committedBytes int64
 	tornTail       bool
 	records        map[string]goalReplayRecord
+	operations     map[string]goalOperationReceipt
 }
 
 func replayGoalJournal(path string) (*goalProjection, error) {
@@ -56,11 +59,22 @@ func replayGoalJournal(path string) (*goalProjection, error) {
 		return nil, errGoalReplay
 	}
 	defer root.Close()
+	return replayGoalJournalRoot(root)
+}
+
+func replayGoalJournalRoot(root *os.File) (*goalProjection, error) {
 	data, err := readGoalPrivate(root, goalJournalName, goalJournalMaxBytes)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, errGoalReplay
 	}
-	p := &goalProjection{records: map[string]goalReplayRecord{}}
+	return replayGoalJournalData(root, data)
+}
+
+func replayGoalJournalData(root *os.File, data []byte) (*goalProjection, error) {
+	if len(data) > goalJournalMaxBytes {
+		return nil, errGoalReplay
+	}
+	p := &goalProjection{records: map[string]goalReplayRecord{}, operations: map[string]goalOperationReceipt{}}
 	var blobBytes int64
 	for len(data) != 0 {
 		if p.sequence >= goalJournalMaxEvents || !validGoalFrameHeader(data, p.sequence+1) {
@@ -100,6 +114,12 @@ func replayGoalJournal(path string) (*goalProjection, error) {
 			if _, err := readGoalBlob(root, e.SealRef, "goal-seal-", goalSealMaxBytes, &blobBytes); err != nil {
 				return nil, errGoalReplay
 			}
+		}
+		if e.OperationID != "" {
+			if _, duplicate := p.operations[e.OperationID]; duplicate || e.InputSHA256 != goalInputFingerprint(e.GoalID, e.Revision-1, e.SpecRef, e.SealRef) {
+				return nil, errGoalReplay
+			}
+			p.operations[e.OperationID] = goalOperationReceipt{input: e.InputSHA256, result: goalCommitResult{OperationID: e.OperationID, GoalID: e.GoalID, Revision: e.Revision, Sequence: p.sequence + 1}}
 		}
 		p.records[e.GoalID] = goalReplayRecord{revision: e.Revision, spec: string(spec), sealRef: e.SealRef}
 		p.sequence++
@@ -147,7 +167,7 @@ func decodeGoalJournalEvent(b []byte) (goalJournalEvent, error) {
 		return goalJournalEvent{}, errGoalReplay
 	}
 	m, ok := raw.(map[string]any)
-	if !ok || !nativeClosedFields(m, []string{"kind", "goal_id", "revision", "spec_ref"}, []string{"seal_ref"}) {
+	if !ok || !nativeClosedFields(m, []string{"kind", "goal_id", "revision", "spec_ref"}, []string{"seal_ref", "operation_id", "input_sha256"}) {
 		return goalJournalEvent{}, errGoalReplay
 	}
 	rev, ok := m["revision"].(json.Number)
@@ -163,6 +183,11 @@ func decodeGoalJournalEvent(b []byte) (goalJournalEvent, error) {
 		return goalJournalEvent{}, errGoalReplay
 	}
 	if _, exists := m["seal_ref"]; exists && !validGoalBlobRef(e.SealRef, "goal-seal-") {
+		return goalJournalEvent{}, errGoalReplay
+	}
+	_, operation := m["operation_id"]
+	_, fingerprint := m["input_sha256"]
+	if operation != fingerprint || (operation && (!validGoalOperationID(e.OperationID) || !validGoalBlobRef("goal-spec-"+e.InputSHA256, "goal-spec-"))) {
 		return goalJournalEvent{}, errGoalReplay
 	}
 	return e, nil

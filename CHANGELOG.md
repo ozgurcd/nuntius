@@ -2,10 +2,15 @@
 
 ## Unreleased
 
+- Add an internal native goal commit component with revision checks, immutable
+  private blobs and operation receipts. A repeated operation returns its saved
+  result without another event; uncertain saves require lookup before retry.
+  No public native control or agent launch is enabled.
+
 - Add internal bounded, checksummed native goal journal replay with private
   spec and seal references, detached metadata and fail-closed corruption checks.
   Incomplete final appends remain uncommitted and reads preserve all files.
-  Reject unpaired escaped Unicode surrogates in native specs. No writer or
+  Reject unpaired escaped Unicode surrogates in native specs. No public writer or
   native control is enabled.
 
 - Replace held-message receipt snapshots instead of accumulating old rows.

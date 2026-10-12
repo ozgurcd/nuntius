@@ -7,6 +7,10 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Document how native goal changes are saved safely and how to check an
+  uncertain save before retrying. Repeating the same operation cannot create
+  another history event. This internal component adds no controls or work.
+
 - Document how native goal history is read safely. Incomplete final records
   stay uncommitted; damaged history requires review and is never silently
   skipped or removed. This internal reader adds no controls and starts no work.
