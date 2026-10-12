@@ -7,6 +7,11 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Internal native dispatch now starts the saved approved brief by goal ID.
+  A repeated request keeps its original run. If start is uncertain, the goal
+  stays held for review rather than starting another child. Public goal
+  controls and automatic end/successor handling are not enabled yet.
+
 - Native admission now explains whether reviewed work is ready and whether a
   lane can start it. Pauses, missing review, unavailable claims and overlapping
   work remain visible reasons to wait. This internal check starts no agent and

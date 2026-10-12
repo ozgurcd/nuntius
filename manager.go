@@ -289,7 +289,29 @@ func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, p
 	return m.launchMessage(lane, goal, text, session, lock, parent, message, nil, nil)
 }
 
-func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.File, parent *Run, message *heldMessage, ops *laneControlIO, started *bool) (string, error) {
+func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.File, parent *Run, message *heldMessage, ops *laneControlIO, started *bool, native ...*goalLaunchContext) (string, error) {
+	var launch *goalLaunchContext
+	if len(native) == 1 {
+		launch = native[0]
+	}
+	if len(native) > 1 {
+		return "", errGoalDispatch
+	}
+	if launch == nil {
+		known, err := m.nativeGoalLocked(goal)
+		if err != nil {
+			return "", err
+		}
+		if known {
+			return "", errGoalDispatch
+		}
+	}
+	checkpoint := func(stage string) error {
+		if launch != nil {
+			return launch.fault.check(stage)
+		}
+		return nil
+	}
 	name := lane.Name
 	reviewedRun := ""
 	var messageDir *os.File
@@ -322,14 +344,23 @@ func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.
 		return "", errors.New("cannot allocate run id")
 	}
 	id := hex.EncodeToString(random)
+	if launch != nil {
+		id = launch.id
+	}
 	if message != nil {
 		if e := writeMessageReceipt(messageDir, messageReceipt{Version: 1, Binding: *message, State: "reserved", ChildID: id}, ops); e != nil {
 			return "", e
 		}
 	}
 	dir := filepath.Join(m.store, "runs", ".pending-"+id)
+	if e := checkpoint("prepare_before"); e != nil {
+		return "", e
+	}
 	if e := os.Mkdir(dir, 0700); e != nil {
 		return "", errors.New("cannot create run directory")
+	}
+	if e := checkpoint("prepare_directory"); e != nil {
+		return "", e
 	}
 	model, effort := effectiveIdentity(lane)
 	r := Run{ID: id, Lane: name, Kind: lane.Kind, Model: model, Effort: effort, GoalID: goal, SHA256: digest, Brief: text, Started: time.Now().UTC(), State: "running"}
@@ -346,6 +377,9 @@ func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.
 		}
 	}
 	if e := putPrivate(filepath.Join(dir, "goal.txt"), []byte(text)); e != nil {
+		return "", e
+	}
+	if e := checkpoint("prepare_prompt"); e != nil {
 		return "", e
 	}
 	stdout, e := privateFile(filepath.Join(dir, "events.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_EXCL)
@@ -366,10 +400,19 @@ func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.
 	if e = saveAt(dir, &r); e != nil {
 		return "", e
 	}
+	if e = checkpoint("prepare_meta"); e != nil {
+		return "", e
+	}
 	if e = os.Rename(dir, filepath.Join(m.store, "runs", id)); e != nil {
 		return "", errors.New("cannot publish run directory")
 	}
+	if e = checkpoint("prepare_rename"); e != nil {
+		return "", e
+	}
 	if e = syncDir(filepath.Join(m.store, "runs")); e != nil {
+		return "", e
+	}
+	if e = checkpoint("prepare_sync"); e != nil {
 		return "", e
 	}
 	if parent != nil {
@@ -378,8 +421,20 @@ func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.
 			return "", e
 		}
 	}
-	if e = m.audit(tool, name, goal, digest, "accepted"); e != nil {
-		return "", e
+	if launch == nil {
+		if e = m.audit(tool, name, goal, digest, "accepted"); e != nil {
+			return "", e
+		}
+	} else {
+		if e = checkpoint("before_start_intent"); e != nil {
+			return "", e
+		}
+		if e = launch.beforeStart(); e != nil {
+			return "", e
+		}
+		if e = checkpoint("before_os"); e != nil {
+			return id, e
+		}
 	}
 	if message != nil {
 		if e = laneControlCheckpoint(ops, "review-before-launch"); e != nil {
@@ -387,21 +442,39 @@ func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.
 		}
 	}
 	if e = m.startAgent(filepath.Join(m.store, "runs", id), lane, session, input, stdout, stderr, lock); e != nil {
+		if launch != nil {
+			return id, e
+		}
 		return "", e
+	}
+	if e = checkpoint("after_os"); e != nil {
+		return id, e
 	}
 	rp, e := loadRun(filepath.Join(m.store, "runs", id), id)
 	if e != nil || rp == nil {
+		if launch != nil {
+			return id, errGoalLaunchHeld
+		}
 		return "", errors.New("cannot read detached identity")
 	}
 	r = *rp
 	a := &activeRun{done: make(chan struct{}), stop: make(chan string, 1)}
 	supervisor, e := m.lock("supervisor-" + r.ID)
 	if e != nil {
+		if launch != nil {
+			return id, errGoalLaunchHeld
+		}
 		_ = signalRun(r, syscall.SIGKILL)
 		return "", e
 	}
 	m.active[name] = a
 	go m.follow(r, lock, supervisor, a, m.Grace)
+	if launch != nil {
+		launch.supervised = true
+	}
+	if e = checkpoint("child_identity"); e != nil {
+		return id, e
+	}
 	if started != nil {
 		*started = true
 	}
@@ -637,6 +710,9 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 			m.observeEndedRun(r)
 			continue
 		}
+		if !m.nativeSupervisionAllowed(*r) {
+			continue
+		}
 		if r.State != "running" && r.LaunchdLabel != "" && !r.LaunchdCleaned {
 			if err := m.cleanupJob(r); err != nil {
 				_ = m.audit("launchd_cleanup", r.Lane, r.GoalID, r.SHA256, "failed")
@@ -701,7 +777,7 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 			if r.Model == "" && r.Effort == "" {
 				s.Model, s.Effort = model+" (configured)", effort+" (configured)"
 			}
-			if !m.readOnly && r.State == "running" && m.active[l.Name] == nil {
+			if !m.readOnly && r.State == "running" && m.active[l.Name] == nil && m.nativeSupervisionAllowed(*r) {
 				lock, e := m.lock("supervisor-" + r.ID)
 				if e == nil {
 					if sameProcess(*r) {

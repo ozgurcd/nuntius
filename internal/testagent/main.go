@@ -194,6 +194,26 @@ func main() {
 	}
 	b, _ := io.ReadAll(os.Stdin)
 	mode := string(b)
+	if strings.Contains(mode, "GOAL: DISPATCH (size S)") {
+		cwd, _ := os.Getwd()
+		full := b
+		match := regexp.MustCompile(`Read the full sealed brief at ("(?:[^"\\]|\\.)*")\. Follow`).FindSubmatch(b)
+		if len(match) == 2 {
+			path, err := strconv.Unquote(string(match[1]))
+			if err != nil {
+				os.Exit(41)
+			}
+			full, err = os.ReadFile(path)
+			if err != nil || len(full) > 128*1024 {
+				os.Exit(42)
+			}
+		}
+		evidence := fmt.Sprintf("%x %x %d", sha256.Sum256(b), sha256.Sum256(full), len(full))
+		if os.WriteFile(filepath.Join(cwd, fmt.Sprintf("native-start-%d", os.Getpid())), []byte(evidence), 0600) != nil {
+			os.Exit(43)
+		}
+		mode = string(full)
+	}
 	if strings.Contains(mode, "ack-goal") {
 		fmt.Println(`{"type":"system","session_id":"fixture-session"}`)
 		if strings.Contains(mode, "ack-barrier") {

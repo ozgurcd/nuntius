@@ -57,7 +57,8 @@ type goalProjection struct {
 	operations     map[string]goalOperationReceipt
 	// Derived only from strictly decoded immutable historical spec bytes.
 	// Readers still decode detached values; this cache is never returned.
-	specs map[string]nativeGoalSpec
+	specs       map[string]nativeGoalSpec
+	hasDispatch bool
 }
 
 func replayGoalJournal(path string) (*goalProjection, error) {
@@ -135,11 +136,25 @@ func replayGoalJournalData(root *os.File, data []byte) (*goalProjection, error) 
 			if err != nil || metadata.ApprovalRevision > e.Revision {
 				return nil, errGoalReplay
 			}
+			p.hasDispatch = p.hasDispatch || len(metadata.Dispatches) > 0
 			input = goalRecordFingerprint(input, e.RecordRef, e.MutationSHA256)
 		}
 		nextRecord := goalReplayRecord{revision: e.Revision, spec: string(spec), sealRef: e.SealRef, record: string(record)}
 		if !goalRecordHistoryValid(old, nextRecord, seal) {
 			return nil, errGoalReplay
+		}
+		if p.hasDispatch {
+			before, err := goalRecordMetadata(old)
+			if err != nil {
+				return nil, errGoalReplay
+			}
+			after, err := goalRecordMetadata(nextRecord)
+			if err != nil {
+				return nil, errGoalReplay
+			}
+			if len(after.Dispatches) > len(before.Dispatches) && !goalDependenciesVerified(p, s) {
+				return nil, errGoalReplay
+			}
 		}
 		changes, err := replayGoalChanges(root, p, e, nextRecord, &blobBytes)
 		if err != nil {
@@ -155,6 +170,9 @@ func replayGoalJournalData(root *os.File, data []byte) (*goalProjection, error) 
 		p.specs[e.GoalID] = s
 		for id, record := range changes {
 			p.records[id] = record
+		}
+		if p.hasDispatch && !goalDispatchPopulationValid(p) {
+			return nil, errGoalReplay
 		}
 		p.sequence++
 		p.committedBytes += int64(goalJournalHeaderBytes + size)

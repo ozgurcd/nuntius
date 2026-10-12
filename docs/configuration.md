@@ -203,7 +203,8 @@ SHA-256 digests. It records UTF-8 bytes and Unicode code points separately.
 Dispatch measurements include the `/goal` wrapper when declared. These
 measurements feed the internal delivery component described below. It enforces
 the direct 12,000-byte limit, per-engine code-point cap and full-artifact rules.
-Native launching and automatic dispatch remain unavailable.
+Internal dispatch by approved goal ID is described below; automatic dispatch
+and public native controls remain unavailable.
 
 Approval needs the exact sealed revision and authority. It also compares a
 freshly supplied source observation with the sealed observation. If they differ,
@@ -235,7 +236,8 @@ A trusted local adapter must explicitly select the lane engine, its positive
 Unicode code-point cap and an existing artifact root that the lane can read.
 There is no guessed root or default cap. This adds no configuration fields or
 CLI, MCP or dashboard operation. Preparing delivery does not approve a goal,
-start a child or bypass a pause. Native launch and admission come later.
+start a child or bypass a pause. Internal dispatch reuses the same delivery
+profile and the locked native admission check.
 
 A direct prompt uses the exact sealed body, separator and standards, with the
 declared wrapper. The complete prompt must fit both 12,000 UTF-8 bytes and the
@@ -264,7 +266,10 @@ sizes, selected engine and cap, and artifact path and file identity. New deliver
 retained retries and saved-record reads share the same validation rule. A saved
 record cannot silently adopt a replacement file, even with identical bytes.
 Later admission must check the record again because a successful check cannot
-promise that a path stays readable. A local permission check also cannot prove
+promise that a path stays readable. Internal dispatch retains this descriptor
+and checks it again at the final start boundary and during held reconciliation.
+A same-byte replacement inode cannot become a new approved delivery on retry.
+A local permission check also cannot prove
 visibility inside a real lane sandbox; that needs a separately authorized pilot.
 
 Refresh creates a separate revision file and preserves the old one for resume.
@@ -273,3 +278,9 @@ owner maintenance after checking that no resume still needs them. Unreadable
 roots, unsafe files, changed identities or digests explain why review is needed;
 errors do not include the private brief text. Approval still uses the existing
 sealed revision, authority and source-observation rules.
+
+Native dispatch reads approved direct or pointer bytes. It does not append the
+shared standards or wrapper again, select a guessed owner root, alter lane
+argv/profile settings, or accept a free-text replacement. Body or standards
+changes require explicit resealing and fresh approval. There is no new native
+configuration switch or public adapter in this local component.

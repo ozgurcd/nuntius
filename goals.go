@@ -46,6 +46,7 @@ type goalRecordData struct {
 	Decisions        []goalDecisionEvidence `json:"decisions,omitempty"`
 	Attempt          *goalDecisionAttempt   `json:"attempt,omitempty"`
 	Closure          *goalCoverageEvidence  `json:"closure,omitempty"`
+	Dispatches       []goalDispatchRecord   `json:"dispatches,omitempty"`
 }
 
 type goalRecordRequest struct {
@@ -165,7 +166,7 @@ func decodeGoalRecord(b []byte) (goalRecordData, error) {
 		return r, errGoalRecord
 	}
 	m, ok := raw.(map[string]any)
-	if !ok || !nativeClosedFields(m, []string{"version", "state", "notes"}, []string{"outcome", "approval_revision", "grant_binding", "decisions", "attempt", "closure"}) || !validGoalDecisionJSON(m) || !validGoalCoverageJSON(m) {
+	if !ok || !nativeClosedFields(m, []string{"version", "state", "notes"}, []string{"outcome", "approval_revision", "grant_binding", "decisions", "attempt", "closure", "dispatches"}) || !validGoalDecisionJSON(m) || !validGoalCoverageJSON(m) || !validGoalDispatchJSON(m) {
 		return r, errGoalRecord
 	}
 	version, ok := m["version"].(json.Number)
@@ -243,13 +244,16 @@ func goalRecordHistoryValid(old, next goalReplayRecord, seals ...[]byte) bool {
 		data, err := goalRecordMetadata(next)
 		// Initial bookkeeping fixtures may describe observations, but there is
 		// no prior stored revision for a decision to have reviewed.
-		return err == nil && len(data.Decisions) == 0 && data.Closure == nil
+		return err == nil && len(data.Decisions) == 0 && data.Closure == nil && len(data.Dispatches) == 0
 	}
 	a, err := goalRecordMetadata(old)
 	if err != nil {
 		return false
 	}
 	b, err := goalRecordMetadata(next)
+	if err == nil && !goalDispatchHistoryValid(old, next, a, b, seals) {
+		return false
+	}
 	if err != nil || len(b.Notes) < len(a.Notes) || !reflect.DeepEqual(a.Notes, b.Notes[:len(a.Notes)]) {
 		return false
 	}

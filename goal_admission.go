@@ -136,18 +136,8 @@ func (m *Manager) admitGoalsLocked(env goalAdmissionEnvironment) (goalAdmissionS
 		}
 		r.Ready = len(r.Blockers) == 0
 		if r.Ready {
-			if env.SourceState == nil {
-				r.block("source_unavailable")
-			} else {
-				// Observers receive a fresh decode, including independent arrays.
-				// Observing source must not mutate the scope already checked above.
-				observed, _ := p.spec(spec.ID)
-				state, err := env.SourceState(observed)
-				if err != nil || !goalBriefLine(state) {
-					r.block("source_unavailable")
-				} else if state != seal.SourceState {
-					r.block("source_changed")
-				}
+			if code := goalAdmissionSourceState(spec, seal, env.SourceState); code != "" {
+				r.block(code)
 			}
 			if !auditOK {
 				r.block("native_audit_unavailable")
@@ -189,6 +179,29 @@ func (m *Manager) admitGoalsLocked(env goalAdmissionEnvironment) (goalAdmissionS
 		out.Goals = append(out.Goals, r)
 	}
 	return out, nil
+}
+
+func goalAdmissionSourceState(spec nativeGoalSpec, seal goalBriefSeal, observe func(nativeGoalSpec) (string, error)) string {
+	if observe == nil {
+		return "source_unavailable"
+	}
+	// Observers never receive the caller's arrays or the approved scope.
+	b, err := json.Marshal(spec)
+	if err != nil {
+		return "source_unavailable"
+	}
+	detached, err := decodeNativeGoalSpec(b)
+	if err != nil {
+		return "source_unavailable"
+	}
+	state, err := observe(detached)
+	if err != nil || !goalBriefLine(state) {
+		return "source_unavailable"
+	}
+	if state != seal.SourceState {
+		return "source_changed"
+	}
+	return ""
 }
 
 // A retained approval points to its original sealed revision, not a later
@@ -247,7 +260,7 @@ func goalAdmissionReservations(p *goalProjection, runs []Run, root *os.File, env
 			unknown = true
 			continue
 		}
-		if data.State == nativeGoalRunning || data.Attempt != nil && (!data.Attempt.Ended || data.Attempt.ActiveSuccessor || data.Attempt.LaunchUnconfirmed) {
+		if len(data.Dispatches) == 0 && (data.State == nativeGoalRunning || data.Attempt != nil && (!data.Attempt.Ended || data.Attempt.ActiveSuccessor || data.Attempt.LaunchUnconfirmed)) {
 			// An unsettled attempt outside running may retain an older scope.
 			// Until lifecycle accounting binds that scope, do not infer release.
 			if data.State != nativeGoalRunning {
@@ -260,6 +273,17 @@ func goalAdmissionReservations(p *goalProjection, runs []Run, root *os.File, env
 			}
 			add(id, goalAdmissionScope{Writes: s.Writes, Resources: s.Resources})
 		}
+		for _, d := range data.Dispatches {
+			if d.Phase == "failed" {
+				continue
+			}
+			s, err := decodeNativeGoalSpec([]byte(d.Spec))
+			if err != nil {
+				unknown = true
+				continue
+			}
+			out = append(out, goalAdmissionReservation{id: id, writes: d.Writes, resources: s.Resources})
+		}
 	}
 	for _, run := range runs {
 		// Keep unknown/surviving process observations reserved. No recovery,
@@ -269,6 +293,20 @@ func goalAdmissionReservations(p *goalProjection, runs []Run, root *os.File, env
 			unknown = true
 		}
 		if run.State != "running" && !run.WaitingToResume && !held {
+			continue
+		}
+		linked := false
+		if record, ok := p.records[run.GoalID]; ok {
+			data, err := goalRecordMetadata(record)
+			if err == nil {
+				for _, d := range data.Dispatches {
+					if d.Phase != "failed" && d.RunID == run.ID && d.Request.Lane == run.Lane && string(d.Delivery.Engine) == run.Kind && d.Delivery.PromptSHA256 == run.SHA256 {
+						linked = true
+					}
+				}
+			}
+		}
+		if linked {
 			continue
 		}
 		// A goal ID alone does not bind a legacy run to the current native

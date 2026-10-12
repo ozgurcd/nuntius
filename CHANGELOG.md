@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add internal dispatch of saved approved native goals with revision and retry
+  checks, durable full-ID reservations, exact brief delivery and running
+  receipts. Uncertain launch holds resources and adopts only the identified
+  child; native IDs refuse legacy text replacement. Public controls, automatic
+  end accounting and successors remain assigned to later steps.
+
 - Add internal native goal admission with shared locked Ready/Startable checks,
   current lane and source observations, canonical write/resource reservations,
   fresh complete claim checks, and deterministic eligible selection. Required
@@ -12,7 +18,7 @@
   limits and immutable private workspace artifacts for oversized prompts. Keep
   full/pointer digests and sizes, preserve resume artifacts, and use one safety
   predicate for new delivery, retained retries and saved descriptors. Native
-  launch and public controls remain unavailable.
+  public controls remain unavailable; internal dispatch revalidates delivery.
 
 - Refuse obsolete or unreviewed native approval in candidate saves and history replay, including unchanged seals and decision history.
 

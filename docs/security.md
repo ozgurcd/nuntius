@@ -12,7 +12,7 @@ a fixed action/result. They contain no body, report, session or private path.
 Private delivery intent and receipt files remain separate from lane-control
 state. Pending or uncertain required audit durability blocks the internal native
 admission predicate; it does not prevent independent pause, Cancel or report
-access. No public native operation or launch path is enabled by this component.
+access. No public native operation is enabled by this audit component.
 Receipts do not replace delivery evidence. Bounded inspection checks every
 acknowledged event against the journal and strict safe row schema; missing or
 damaged rows hold native work. Reconciliation appends only missing required
@@ -29,6 +29,24 @@ reject that row. Genuine legacy rows with exact known names and no native
 markers stay readable, including unknown actions. This is not authentication
 against hostile same-user file edits or protection after native evidence is removed.
 See [the delivery protocol](queue-format.md#native-audit-mirror-local-unpublished).
+
+## Native dispatch boundary (local, unpublished)
+
+Internal dispatch accepts only a saved approved goal ID, current revision,
+retry key and eligible lane. It reads the approved bytes; native IDs cannot
+use legacy free-text dispatch, reply or recovery to replace them. The trusted
+adapter supplies source/profile and source/claim observations. JSON fields
+cannot impersonate that adapter or clear an approval/owner hold.
+No public native adapter, host registration or automatic grant is exposed.
+Existing manual-tool Ask approval still belongs to the owner's judge host.
+
+Dispatch reservations and phase transitions share one writer/replay predicate.
+Uncertain launch stays bound to the full ID and canonical scope. Only exact
+process identity permits supervision or a signal; short IDs and remembered
+PIDs do not. Audit exposes safe event identity and fixed phase results, never
+prompt text, delivery paths or process-start details. Public errors use plain
+reasons without raw parser input or private bytes. Same-user file access and
+reference strings do not prove human approval or real sandbox isolation.
 
 ## Lane controls through judge MCP
 

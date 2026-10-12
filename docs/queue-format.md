@@ -621,7 +621,7 @@ No lane pause, process control, public goal adapter or scheduler is added.
 
 Admission is an internal check. It starts no work, takes no repository claim,
 and saves no reservation, prompt, run or goal event. It adds no dashboard, CLI
-or MCP operation. A later launcher must repeat the locked check and keep the
+or MCP operation. The internal native launcher repeats this check and keeps the
 same lock through reservation; an earlier eligible snapshot is not permission
 to launch.
 
@@ -675,3 +675,71 @@ and considers the next eligible one. Preferred lane wins when eligible, followed
 by the preferred engine and ASCII lane name among allowed capable lanes. Ready
 and Startable describe availability, not approval for automatic execution. No
 batch grant or scheduler is enabled by this component.
+
+## Dispatch an approved native goal (local, unpublished)
+
+The internal dispatch operation takes the saved goal ID, its current revision,
+a retry key and an eligible configured lane. The key uses one to sixty-four
+ASCII letters, digits, dots or hyphens and starts with a letter or digit.
+The closed request uses exact keys after unescaping. Replacement body or text,
+unknown fields, case aliases, duplicate decoded keys, nulls and coerced revisions
+refuse before effects. Trusted code supplies the source, lane capability,
+current source observation, repository roots and delivery profile separately.
+These references do not authenticate human consent. No public CLI, MCP or
+dashboard goal-dispatch operation or automatic batch is added.
+
+The requested current revision is separate from the reviewed sealed revision.
+Notes and presentation edits can advance the former without replacing approved
+bytes. A new request must match the current revision. An exact retry resolves
+its saved receipt first, even after a later note. Changing the goal, lane,
+revision, selected profile or adapter source under that key refuses.
+Internal native requests serialize on the existing control inode, so concurrent
+exact retries read the same confirmed outcome. Public lane controls retain
+their existing nonblocking contention refusals.
+
+Dispatch holds the manager mutex and existing shared control lock through final
+admission, reservation and launch. It applies the same admission predicate to
+the requested lane. Required lane binding still cannot fall back. Stored native
+IDs cannot use legacy free text, reply, held-message delivery, continuation or
+recovery to bypass this accounting. Unrelated legacy goals keep their argv and
+supervision.
+
+The journal stores a permanent receipt in the record's closed `dispatches`
+array. It binds request, original approved spec and seal, delivery descriptor,
+canonical write paths, full run ID, adapter source and launch phase. Resource
+names remain in the approved spec. Goal-wide and lane/write/resource holds
+survive cooperating managers and restart. Writer and replay share the same
+retained-phase predicate, including transitions that append no decision or
+keep the same seal. No scope edit can release unsettled work.
+
+The public goal stays approved while the internal phase is reserved or starting.
+The reservation and its audited intent sync before private run preparation.
+The same full ID names the pending directory, prompt and metadata, then the
+published run directory. The exact retained delivery is checked again before
+the start intent. Starting syncs before any possible OS invocation. A running
+receipt binds the exact PID, kernel start identity and job evidence, the current
+attempt and running state before success. Native audit events distinguish
+reservation, start intent, running and proven nonlaunch; stable event identity
+deduplicates redelivery. No private prompt or filesystem path enters that mirror.
+
+Failure before start intent can publish a durable failed receipt, leave the
+goal approved and release its resources. A repeated key returns that same
+failure; a reviewed later dispatch needs a new key and current revision.
+Once start is possible, errors, missing metadata or one observation of an
+absent PID do not prove nonlaunch. The full ID and resources stay held.
+Retained unstarted preparation is held for review rather than launched again.
+An exact identified live child can be supervised and published once on retry.
+Unknown or mismatched identity is never signalled or replaced.
+
+Visible complete journal/audit bytes after failed sync do not mean success.
+Retry confirms durability before publishing the same result. A torn final
+frame remains nonvisible and holds native dispatch. Readers never repair it.
+Receipts are limited to eight per goal and the existing record, event and byte
+limits still apply; there is no eviction or forgotten retry key. Publication
+headroom is checked before starting. Capacity refusal requires owner review.
+
+B11 does not automatically account for native ends or permit successors.
+An immediate child exit stays bound and conservatively reserved; a report
+cannot verify the goal. B12 and B13 own end and successor integration.
+Physical power-loss durability, real lane sandbox visibility and atomic
+external repository claims are outside these offline proofs.

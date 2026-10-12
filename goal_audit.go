@@ -94,6 +94,14 @@ func (m *Manager) mirrorNativeAudit(source string, fault goalCommitIO) (nativeAu
 		return nativeAuditUnavailable(), errNativeAudit
 	}
 	defer lock.Close()
+	return mirrorNativeAuditLocked(root, source, fault)
+}
+
+// Caller owns manager then the shared control lock. Audit locks stay innermost.
+func mirrorNativeAuditLocked(root *os.File, source string, fault goalCommitIO) (nativeAuditState, error) {
+	if !validNativeAuditSource(source) {
+		return nativeAuditUnavailable(), errNativeAudit
+	}
 	state, rows, receipt, intent, err := readNativeAuditRecords(root)
 	if err != nil {
 		return state, err
@@ -260,6 +268,23 @@ func readNativeAuditRecords(root *os.File) (nativeAuditState, []nativeAuditRow, 
 		}
 		sum := sha256.Sum256(data[:size])
 		rows = append(rows, nativeAuditRow{Version: 1, Tool: nativeAuditTool, EventID: "native-goal-" + hex.EncodeToString(sum[:]), Sequence: sequence, GoalID: event.GoalID, Revision: event.Revision, Result: "updated"})
+		if event.RecordRef != "" {
+			var total int64
+			b, err := readGoalBlob(root, event.RecordRef, "goal-record-", goalRecordMaxBytes, &total)
+			if err != nil {
+				return bad()
+			}
+			metadata, err := decodeGoalRecord(b)
+			if err != nil {
+				return bad()
+			}
+			if len(metadata.Dispatches) > 0 {
+				phase := metadata.Dispatches[len(metadata.Dispatches)-1].Phase
+				if event.OperationID == goalDispatchOperation(metadata.Dispatches[len(metadata.Dispatches)-1].Request.Key, phase) {
+					rows[len(rows)-1].Result = "dispatch_" + phase
+				}
+			}
+		}
 		data = data[size:]
 	}
 	receipt := nativeAuditReceipt{}
@@ -401,7 +426,8 @@ func validNativeAuditEventID(id string) bool {
 }
 
 func validNativeAuditRow(row nativeAuditRow) bool {
-	return row.Version == 1 && row.Tool == nativeAuditTool && validNativeAuditEventID(row.EventID) && row.Sequence > 0 && row.Sequence <= goalJournalMaxEvents && row.Revision > 0 && row.Revision <= row.Sequence && goalPattern.MatchString(row.GoalID) && validNativeAuditSource(row.Source) && !row.Time.IsZero() && row.Time.Location() == time.UTC && row.Result == "updated"
+	resultOK := row.Result == "updated" || row.Result == "dispatch_reserved" || row.Result == "dispatch_starting" || row.Result == "dispatch_running" || row.Result == "dispatch_failed"
+	return row.Version == 1 && row.Tool == nativeAuditTool && validNativeAuditEventID(row.EventID) && row.Sequence > 0 && row.Sequence <= goalJournalMaxEvents && row.Revision > 0 && row.Revision <= row.Sequence && goalPattern.MatchString(row.GoalID) && validNativeAuditSource(row.Source) && !row.Time.IsZero() && row.Time.Location() == time.UTC && resultOK
 }
 
 func writeNativeAuditState(root *os.File, name string, b []byte, fault goalCommitIO, stage string) error {

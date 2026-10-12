@@ -9,6 +9,31 @@ only when you opt in with `nuntius menubar --at-login on`. Claude Desktop must b
 
 ## Crash and restart safety
 
+### Native partial launches (local, unpublished)
+
+Internal native dispatch reserves the full run ID before preparation and records
+that start may occur before invoking the OS. A lost response does not authorize
+another child. Retrying the exact goal/revision/key confirms the saved receipt.
+An identified live child must match the full ID, goal, lane, approved prompt
+digest and kernel process identity before adoption. Missing, partial or mismatched
+identity keeps the launch held for review; no guessed PID is signalled.
+
+An unstarted preparation can keep a review hold. A confirmed failure before any
+start intent leaves the goal approved and records a permanent failure receipt.
+Use a new key and current revision only after reviewing that proven nonlaunch.
+Once invocation is possible, an error or an absent process is insufficient
+evidence to release the reservation. Journal and audit sync failures retain the
+same operation. Ordinary legacy recovery cannot launch a replacement native ID.
+
+Native automatic end accounting and successors belong to B12/B13. An immediate
+exit remains bound to its original launch and holds resources conservatively.
+Cancel, Freeze, report and tail remain separate safety/read operations. Lane
+pause changes no timeout or signal policy. Offline killed-caller tests prove
+conservative adoption or hold; they do not certify physical power loss or an
+installed host.
+
+### Legacy runs
+
 Every accepted goal is published durably before an agent starts. Its private
 record contains the lane, goal ID, original brief, session ID once detected,
 resume count and links to earlier/later runs. On macOS, each agent starts through

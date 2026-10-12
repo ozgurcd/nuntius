@@ -60,6 +60,13 @@ func (m *Manager) Recover() error {
 	}
 	for i := range runs {
 		r := &runs[i]
+		native, nativeErr := m.nativeGoalLocked(r.GoalID)
+		if nativeErr != nil {
+			return nativeErr
+		}
+		if native {
+			continue
+		} // B11 retries own adoption; B12/B13 own ends/successors.
 		if r.State != "running" && r.LaunchdLabel != "" && !r.LaunchdCleaned {
 			if err = m.cleanupJob(r); err != nil {
 				_ = m.audit("launchd_cleanup", r.Lane, r.GoalID, r.SHA256, "failed")
@@ -162,6 +169,13 @@ func (m *Manager) Recover() error {
 	// Oldest interrupted goal first. A busy lane leaves every queued goal intact.
 	sort.Slice(runs, func(i, j int) bool { return runs[i].Started.Before(runs[j].Started) })
 	for _, r := range runs {
+		native, nativeErr := m.nativeGoalLocked(r.GoalID)
+		if nativeErr != nil {
+			return nativeErr
+		}
+		if native {
+			continue
+		}
 		if r.State != "interrupted" || r.ResumeCount >= 2 || r.ContinueRunID != "" || m.reportExists(r) {
 			continue
 		}
