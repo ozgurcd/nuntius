@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add an internal native journal audit mirror with durable delivery intent,
+  event IDs, pending state and fail-closed admission checks. Crash replay may
+  repeat safe rows; audit readers deduplicate their IDs and show plain summaries.
+  No native public operation or launcher is enabled.
+
 - Add an internal native goal commit component with revision checks, immutable
   private blobs and operation receipts. A repeated operation returns its saved
   result without another event; uncertain saves require lookup before retry.

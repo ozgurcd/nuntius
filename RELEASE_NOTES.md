@@ -7,6 +7,11 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Native audit delivery now has an internal replayable record. Safe rows show
+  which event and adapter they describe; repeated delivery appears once to audit
+  readers. Pending delivery keeps native work held. Native goal controls and
+  launches are still unavailable.
+
 - Document how native goal changes are saved safely and how to check an
   uncertain save before retrying. Repeating the same operation cannot create
   another history event. This internal component adds no controls or work.

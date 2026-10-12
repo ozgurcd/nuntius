@@ -184,6 +184,11 @@ func (m *Manager) audit(tool, lane, goal, digest, result string, reasons ...stri
 }
 
 func (m *Manager) appendAudit(nonblocking bool, tool, lane, goal, digest, result string, reasons ...string) error {
+	// Native outcomes belong only to the journal mirror, never generic MCP
+	// success/failure auditing. The generic seam cannot fabricate their IDs.
+	if tool == nativeAuditTool {
+		return errNativeAudit
+	}
 	f, e := privateFile(filepath.Join(m.store, "audit.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND)
 	if e != nil {
 		return e
@@ -215,6 +220,20 @@ func (m *Manager) appendAudit(nonblocking bool, tool, lane, goal, digest, result
 		return errors.New("cannot sync audit")
 	}
 	return nil
+}
+
+// The native mirror uses the existing audit file and cooperating audit lock,
+// after manager/control. Reuse A's durable append without its control intent.
+func appendNativeAudit(root *os.File, row nativeAuditRow, fault goalCommitIO) error {
+	if !validNativeAuditRow(row) {
+		return errNativeAudit
+	}
+	b, _ := json.Marshal(row)
+	var fields map[string]any
+	if json.Unmarshal(b, &fields) != nil {
+		return errNativeAudit
+	}
+	return appendLaneControlRow(root, fields, &laneControlIO{checkpoint: fault.checkpoint}, "native_mirror")
 }
 func readWindow(p string, tail bool) ([]byte, error) {
 	f, e := privateFile(p, os.O_RDONLY|syscall.O_NONBLOCK)

@@ -299,7 +299,8 @@ bytes in the existing private store. It adds no CLI, MCP or HTTP operation,
 approval, scheduler or process launch. It does not alter lane pause state.
 The manager mutex comes first, followed by the existing shared control lock.
 Control-lock contention refuses promptly; it never waits for another process.
-No nested control or audit lock is taken. Audit mirroring remains separate work.
+No nested control or audit lock is taken by the commit itself. Audit delivery
+uses the separate mirror component below.
 
 Each change supplies the expected goal revision and an operation ID of 1–64
 ASCII letters, digits, dots or hyphens, starting with a letter or digit. Zero
@@ -341,3 +342,51 @@ this component does not delete history or introduce automatic cleanup. Damaged
 complete history refuses use and requires preserving the files for review.
 Offline crash tests prove process-restart behavior; they do not simulate power
 loss, hostile same-user writes or certify later native lifecycle policy.
+
+## Native audit mirror (local, unpublished)
+
+The committed goal journal is the authority for native changes. The audit log
+is a delivery copy, never a replacement for that history. This internal
+component adds no public goal operation, scheduler or agent launcher. The
+portable Queue and the existing lane-control audit remain independent.
+
+Every complete journal frame has a stable event ID: `native-goal-` followed
+by the lowercase SHA-256 of the exact frame bytes, including its sequence.
+An incomplete final frame produces no audit event. Before delivery, the mirror
+validates the full committed journal and its private references. Invalid history
+blocks native use even if an older audit receipt exists.
+
+Under manager then shared control lock, the mirror confirms journal sync,
+saves a private delivery intent, appends and syncs its audit row, then saves
+and syncs a receipt. The audit file uses the existing nonblocking audit lock.
+The separate mode-0600 files are `goal-audit-intent.json` and
+`goal-audit-receipt.json`; they use the same rooted, no-follow and atomic private
+I/O rules as the journal. Unsafe or corrupt delivery files fail closed.
+They never replace or reconcile `lane-control-intent.json` or change a hold.
+
+The read-only internal status shows the journal sequence, mirrored sequence,
+pending event count and a plain explanation. It creates no files or repairs
+intent. A mirror failure returns unavailable even if a receipt rename became
+visible. A visible receipt alone does not prove a previously failed sync.
+The final locked native admission predicate refuses pending delivery and
+reconfirms the journal, audit, intent, receipt and directory sync before success.
+Later native launch steps must combine this predicate with the existing lane
+admission guard; this component starts no work.
+
+The adapter supplies `cli`, `web`, `mcp` or `native` as the mirror source.
+It records the adapter that first prepared delivery, not an authenticated
+owner identity or the original save time. Caller JSON, actor fields and spec
+contents cannot select it. The intent retains that source and delivery time
+across restart. Each row contains only the version, delivery time, fixed action
+and result, event ID, sequence, goal ID, goal revision and source. It contains
+no brief body, report, session, credential, operation ID, blob reference or
+private path. Generic outcome auditing cannot emit this reserved native action.
+
+A crash after append and before receipt can deliver the same row again.
+This is at-least-once delivery. Readers deduplicate valid native rows by event
+ID and show their identity, source, sequence and revision with a plain summary.
+External consumers must do the same; raw audit history is never rewritten.
+Older audit rows retain their existing classification and presentation.
+An unfinished audit line blocks delivery for review; the mirror does not delete
+it or pretend the event was delivered. Offline crash tests certify process
+restart and reaping, not power-loss durability or hostile same-user edits.

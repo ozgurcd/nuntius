@@ -27,10 +27,15 @@ type AuditEntry struct {
 	Reason   string    `json:"reason"`
 	Digest   string    `json:"digest"`
 	Raw      string    `json:"raw"`
+	EventID  string    `json:"event_id,omitempty"`
+	Source   string    `json:"source,omitempty"`
+	Sequence uint64    `json:"sequence,omitempty"`
+	Revision uint64    `json:"goal_revision,omitempty"`
 }
 
 func parseAudit(b []byte, since time.Time) []AuditEntry {
 	out := []AuditEntry{}
+	seenNative := make(map[string]bool)
 	// Reuse the MCP registry; unknown and internal actions stay visible.
 	reads := make(map[string]bool)
 	for _, tool := range tools() {
@@ -49,8 +54,19 @@ func parseAudit(b []byte, since time.Time) []AuditEntry {
 		if len(line) > 16384 || json.Unmarshal(line, &v) != nil || v.Time.IsZero() || v.Time.Before(since) {
 			continue
 		}
+		var native nativeAuditRow
+		if v.Tool == nativeAuditTool {
+			if decodeLaneControlObject(line, &native) != nil || !validNativeAuditRow(native) || seenNative[native.EventID] {
+				continue
+			}
+			seenNative[native.EventID] = true
+		}
 		entry := AuditEntry{Time: v.Time, Action: cell(bounded(Redact(v.Tool), 128)), Lane: cell(bounded(Redact(v.Lane), 128)), GoalID: cell(bounded(Redact(v.GoalID), 128)), Result: "ok", Reason: cell(bounded(Redact(v.Reason), 512)), Raw: bounded(Redact(string(line)), 16384)}
 		entry.ReadOnly = reads[entry.Action]
+		if v.Tool == nativeAuditTool {
+			entry.EventID, entry.Source = native.EventID, native.Source
+			entry.Sequence, entry.Revision = native.Sequence, native.Revision
+		}
 		switch v.Result {
 		case "accepted", "pass", "started", "ended", "ok", "frozen", "unfrozen", "updated", "":
 		default:
@@ -90,6 +106,8 @@ func auditSummary(e AuditEntry) string {
 		lane = "agent"
 	}
 	switch e.Action {
+	case nativeAuditTool:
+		return "Saved native goal " + goal
 	case "nuntius_dispatch":
 		return "Dispatched " + goal + " to " + lane
 	case "nuntius_reply", "automatic_continue":

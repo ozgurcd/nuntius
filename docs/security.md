@@ -1,5 +1,20 @@
 # Dashboard security notes
 
+## Native audit delivery (Unreleased)
+
+Native journal events remain authoritative. Audit rows are replayable copies
+with stable event IDs; repeated delivery is possible after a crash and readers
+must deduplicate those IDs. The trusted bridge adapter supplies the source.
+Caller roles, spec data and arbitrary JSON cannot provide it. Rows expose only
+safe event identity, goal identity/revision, sequence, source, delivery time and
+a fixed action/result. They contain no body, report, session or private path.
+
+Private delivery intent and receipt files remain separate from lane-control
+state. Pending or uncertain required audit durability blocks the internal native
+admission predicate; it does not prevent independent pause, Cancel or report
+access. No public native operation or launch path is enabled by this component.
+See [the delivery protocol](queue-format.md#native-audit-mirror-local-unpublished).
+
 ## Lane controls through judge MCP
 
 Pause blocks new starts immediately and lets an existing run finish under its
