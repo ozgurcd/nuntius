@@ -37,12 +37,14 @@ type goalRecordNote struct {
 }
 
 type goalRecordData struct {
-	Version          int               `json:"version"`
-	State            nativeGoalState   `json:"state"`
-	Outcome          nativeGoalOutcome `json:"outcome,omitempty"`
-	ApprovalRevision uint64            `json:"approval_revision,omitempty"`
-	GrantBinding     string            `json:"grant_binding,omitempty"`
-	Notes            []goalRecordNote  `json:"notes"`
+	Version          int                    `json:"version"`
+	State            nativeGoalState        `json:"state"`
+	Outcome          nativeGoalOutcome      `json:"outcome,omitempty"`
+	ApprovalRevision uint64                 `json:"approval_revision,omitempty"`
+	GrantBinding     string                 `json:"grant_binding,omitempty"`
+	Notes            []goalRecordNote       `json:"notes"`
+	Decisions        []goalDecisionEvidence `json:"decisions,omitempty"`
+	Attempt          *goalDecisionAttempt   `json:"attempt,omitempty"`
 }
 
 type goalRecordRequest struct {
@@ -61,10 +63,11 @@ type goalNoteRequest struct {
 
 type nativeGoalRecordDTO struct {
 	nativeGoalDTO
-	Revision         uint64           `json:"revision"`
-	ApprovalRevision uint64           `json:"approval_revision,omitempty"`
-	GrantBound       bool             `json:"grant_bound"`
-	Notes            []goalRecordNote `json:"notes"`
+	Revision         uint64                 `json:"revision"`
+	ApprovalRevision uint64                 `json:"approval_revision,omitempty"`
+	GrantBound       bool                   `json:"grant_bound"`
+	Notes            []goalRecordNote       `json:"notes"`
+	Decisions        []goalDecisionEvidence `json:"decisions,omitempty"`
 }
 
 type goalRecordListing struct {
@@ -160,7 +163,7 @@ func decodeGoalRecord(b []byte) (goalRecordData, error) {
 		return r, errGoalRecord
 	}
 	m, ok := raw.(map[string]any)
-	if !ok || !nativeClosedFields(m, []string{"version", "state", "notes"}, []string{"outcome", "approval_revision", "grant_binding"}) {
+	if !ok || !nativeClosedFields(m, []string{"version", "state", "notes"}, []string{"outcome", "approval_revision", "grant_binding", "decisions", "attempt"}) || !validGoalDecisionJSON(m) {
 		return r, errGoalRecord
 	}
 	version, ok := m["version"].(json.Number)
@@ -211,6 +214,9 @@ func decodeGoalRecord(b []byte) (goalRecordData, error) {
 			return goalRecordData{}, errGoalRecord
 		}
 	}
+	if !validGoalDecisionData(r) {
+		return goalRecordData{}, errGoalRecord
+	}
 	return r, nil
 }
 
@@ -241,6 +247,19 @@ func goalRecordHistoryValid(old, next goalReplayRecord) bool {
 	}
 	if old.record != "" && next.record == "" {
 		return false
+	}
+	if len(b.Decisions) < len(a.Decisions) || len(a.Decisions) > 0 && !reflect.DeepEqual(a.Decisions, b.Decisions[:len(a.Decisions)]) {
+		return false
+	}
+	if len(b.Decisions) > len(a.Decisions) {
+		if len(b.Decisions) != len(a.Decisions)+1 || old.spec != next.spec || old.sealRef != next.sealRef || a.Outcome != b.Outcome || !reflect.DeepEqual(a.Attempt, b.Attempt) {
+			return false
+		}
+		d := b.Decisions[len(a.Decisions)]
+		to := map[string]nativeGoalState{"approve": nativeGoalApproved, "verify": nativeGoalVerified, "park": nativeGoalParked, "cancel": nativeGoalCancelled}[d.Action]
+		if d.Revision != old.revision || b.State != to || !goalTransitionAllowed(a.State, to) {
+			return false
+		}
 	}
 	if goalRecordTerminal(a.State) {
 		if old.spec != next.spec || old.sealRef != next.sealRef {
@@ -370,11 +389,8 @@ func (m *Manager) changeGoalRecord(kind string, req goalRecordRequest, note goal
 			}
 		}
 	}
-	record, err := json.Marshal(metadata)
+	record, err := encodeGoalRecord(metadata)
 	if err != nil {
-		return goalCommitResult{}, errGoalRecord
-	}
-	if _, err := decodeGoalRecord(record); err != nil {
 		return goalCommitResult{}, err
 	}
 	specRef := goalBlobName("goal-spec-", specBytes)
@@ -441,7 +457,12 @@ func goalRecordView(r goalReplayRecord) (nativeGoalRecordDTO, error) {
 		metadata.Notes[i].Text = Redact(metadata.Notes[i].Text)
 		metadata.Notes[i].Evidence = Redact(metadata.Notes[i].Evidence)
 	}
-	return nativeGoalRecordDTO{nativeGoalDTO: v, Revision: r.revision, ApprovalRevision: metadata.ApprovalRevision, GrantBound: metadata.GrantBinding != "", Notes: metadata.Notes}, nil
+	for i := range metadata.Decisions {
+		metadata.Decisions[i].Reason = Redact(metadata.Decisions[i].Reason)
+		metadata.Decisions[i].Authority = Redact(metadata.Decisions[i].Authority)
+		metadata.Decisions[i].Evidence = Redact(metadata.Decisions[i].Evidence)
+	}
+	return nativeGoalRecordDTO{nativeGoalDTO: v, Revision: r.revision, ApprovalRevision: metadata.ApprovalRevision, GrantBound: metadata.GrantBinding != "", Notes: metadata.Notes, Decisions: metadata.Decisions}, nil
 }
 
 func goalRecordList(p *goalProjection, present bool, offset, limit int) (*goalRecordListing, error) {

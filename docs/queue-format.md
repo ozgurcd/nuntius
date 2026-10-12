@@ -439,7 +439,10 @@ Notes remain in append order through edits and restarts. Each note has one
 nonblank line of at most 1,024 UTF-8 bytes and an optional one-line evidence
 reference of at most 128 bytes. Each goal retains at most 32 notes, with no
 eviction. Encoded record metadata is limited to 65,536 bytes, including JSON
-escaping. A full history explains that capacity needs review. It never removes
+escaping. Reaching either the note-count ceiling or the encoded metadata
+ceiling explains that capacity needs review. Encoded overflow has a distinct
+reason from invalid fields, including when quote escaping fills the byte
+budget before the note-count ceiling. It never removes
 an earlier note to make room. Read DTOs redact note text and evidence and
 return detached values; private seals and batch identities are never returned.
 
@@ -480,3 +483,54 @@ with presence false. A missing directory has a separate missing-store error.
 Unsafe roots, corrupt history and invalid references fail closed; they never
 look like an empty queue. These component reads do not certify later native
 approval, dependency, launch, lifecycle or public-adapter behavior.
+
+## Native goal decisions (local, unpublished)
+
+The internal decision operation records approve, verify, park or cancel with
+the expected goal revision and a unique operation ID. Each decision needs one
+nonblank line of reason, at most 512 UTF-8 bytes, and nonblank authority and
+reviewed-evidence references, each at most 128 bytes. Control characters,
+invalid text and irrelevant review fields refuse before writing. Saved
+decisions remain in append order, with the revision they reviewed. Reads show
+redacted reasons and references. Repeating an operation returns its original
+receipt; changing its input refuses. The same private journal, locked save
+protocol and uncertain-save lookup rules apply. History is never evicted.
+
+Drafted goals may become approved, parked or cancelled. Approved goals may
+become parked or cancelled. Ended goals may become verified, parked or
+cancelled. Parked goals may become approved or cancelled. Verified and
+cancelled results stay permanent; correction evidence is a note, and reopening
+needs a new goal ID. Later lifecycle components own approved-to-running,
+running-to-ended and explicitly authorized ended-to-running continuation.
+Later coverage work owns coverage holds and closure. These are not decision
+actions in this component.
+
+Approval needs a validated seal for the exact stored spec, revision and
+authority. The production operation currently refuses approval with a plain
+explanation until the separate brief sealing and delivery components exist.
+Tests use sealed fixtures; an opaque stored seal never grants approval.
+An owner hold remains in force. A judge reference or adapter source does not
+clear it. Approval grants no automatic batch and starts no work.
+
+Verification needs an ended current-attempt observation and explicit review.
+Report review names that exact attempt and report digest. A report alone, a
+previous attempt or a changed report cannot verify work. Explicit alternate
+reviewed evidence can replace a report, including reviewed work without a run,
+but it must still match the committed accounting observation. Missing
+accounting, active successors and uncertain launches refuse verification.
+This component publishes no attempt observation in production; later lifecycle
+steps supply those observations. Test fixtures do not certify a real run.
+
+Park and goal cancel are bookkeeping. They never signal or stop a process,
+change a lane hold, freeze work, run recovery or schedule a launch. A running
+goal refuses both. First use the existing separately authorized run-cancel
+operation if needed, account for its actual end, then record the goal decision.
+Its actual outcome remains unchanged, including when work completed before
+cancellation. Existing report, tail, Cancel, Freeze and lane controls remain
+independent of the native journal.
+
+No CLI, HTTP or MCP goal surface is added here. Later MCP adapters retain the
+owner host's Ask policy. Authority and evidence references record a human
+decision; they do not authenticate an owner against an unsandboxed client
+running as the same operating-system user. No source or role field changes
+that limit or supplies an owner-hold release.

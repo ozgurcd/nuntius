@@ -7,6 +7,12 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Native goal decisions now retain why work was parked, cancelled or reviewed.
+  A report alone cannot verify work, and a goal decision never stops a running
+  agent. Approval explains that brief sealing is still unavailable. Full note
+  metadata explains its capacity limit without dropping earlier notes. These
+  internal controls are not yet exposed through the dashboard, CLI or MCP.
+
 - Native audit checks now detect missing or damaged delivered events. Native
   work stays held until safe delivery is restored; retry adds only missing
   events and preserves existing history. Files that cannot be checked safely

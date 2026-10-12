@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add internal native goal decisions with retained reasons and authority/review
+  references, exact transition checks and current-attempt report binding.
+  Running park/cancel refuses without stopping work; permanent results need
+  a new ID to reopen. Production approval explains that brief sealing is not
+  available yet. Encoded metadata capacity has a distinct plain refusal.
+  No public goal controls, native launch or scheduler is enabled.
+
 - Check acknowledged native audit events against the journal and intact safe
   rows before reporting healthy delivery. Restore only missing required rows,
   preserving raw history. Explain bounded-inspection refusals. Reject malformed
