@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Compile immutable native brief seals from exact body, declared separator and
+  shared standards bytes. Bind profile, source observation, spec, revision and
+  authority with separate body/standards/final/dispatch digests and byte/code-point
+  measurements, including wrapper overhead. Refuse invalid encoding, markers,
+  headers and size; changed sources need review without rewriting approved
+  bytes. Approval and history replay share the same seal checks; refresh removes
+  obsolete approval and exact grant binding. Delivery, launch and public native
+  controls remain unavailable.
+
 - Add verified-only native prerequisites and full combined dependency/coverage
   cycle checks, including forward references. Structured coverage parks settled
   sources and closes their transitive chain only from retained target acceptance.

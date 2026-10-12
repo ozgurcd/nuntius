@@ -7,6 +7,13 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Native briefs now retain the exact reviewed body and shared rules in an
+  immutable seal. Changed source observations need review before approval;
+  refreshing a brief removes its old approval and automatic grant. Invalid
+  headers, encoding, duplicate shared rules and oversized briefs explain why
+  review is needed. These internal operations start no work and remain
+  unavailable through the dashboard, CLI or MCP.
+
 - Native prerequisites now require verified work. Cancellation or an ended run
   cannot unblock them. Explicit coverage holds related work until its target
   review is accepted, then closes the covered chain together with visible review

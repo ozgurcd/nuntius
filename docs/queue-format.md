@@ -517,10 +517,12 @@ running-to-ended and explicitly authorized ended-to-running continuation.
 Coverage holds and closure use the separate rule below. They are not decision
 actions. A covered source cannot be verified by an independent verify action.
 
-Approval needs a validated seal for the exact stored spec, revision and
-authority. The production operation currently refuses approval with a plain
-explanation until the separate brief sealing and delivery components exist.
-Tests use sealed fixtures; an opaque stored seal never grants approval.
+Approval needs a validated compiled seal for the exact stored spec, revision,
+authority and current source observation. The internal compiler now supplies
+this predicate; an opaque stored seal never grants approval. See
+[configuration.md](configuration.md#native-brief-seals-local-unpublished) for
+assembly, source review, size measurements and refresh rules. Delivery and
+native dispatch remain later components; approval starts no work.
 An owner hold remains in force. A judge reference or adapter source does not
 clear it. Approval grants no automatic batch and starts no work.
 
@@ -529,8 +531,9 @@ checks as the ordinary writer against the unchanged prior accounting.
 Verification must name the current ended attempt and, for report review, its
 retained digest. Alternate review still needs settled accounting, without an
 active successor or an unconfirmed launch. Park and cancel obey the same busy
-work refusal. Replay also refuses approval while production seal validation
-is unavailable, and refuses invented approval or batch binding. The resulting
+work refusal. Replay recomputes the same exact seal/source check for approval,
+and refuses invented approval or batch binding. A seal change must remove the
+old approval and grant, even in a lower-level save or replay. The resulting
 metadata must match the writer's result exactly. A first history record cannot
 contain decisions about a prior revision that does not exist. These checks
 validate retained history; they do not authenticate a human reference or prevent

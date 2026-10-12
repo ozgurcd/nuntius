@@ -154,7 +154,7 @@ func commitGoalLocked(root *os.File, req goalCommitRequest, id, specRef, sealRef
 	if p.sequence >= goalJournalMaxEvents || (p.records[id].revision == 0 && len(p.records) >= goalJournalMaxGoals) {
 		return goalCommitResult{}, nil, errGoalCommit
 	}
-	if !goalRecordHistoryValid(p.records[id], goalReplayRecord{revision: req.ExpectedRevision + 1, spec: string(req.Spec), sealRef: sealRef, record: string(req.Record)}) {
+	if !goalRecordHistoryValid(p.records[id], goalReplayRecord{revision: req.ExpectedRevision + 1, spec: string(req.Spec), sealRef: sealRef, record: string(req.Record)}, req.Seal) {
 		return goalCommitResult{}, nil, errGoalRecord
 	}
 	changes, err := goalDependencyChanges(p, id, goalReplayRecord{revision: req.ExpectedRevision + 1, spec: string(req.Spec), sealRef: sealRef, record: string(req.Record)})

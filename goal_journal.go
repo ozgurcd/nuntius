@@ -117,8 +117,10 @@ func replayGoalJournalData(root *os.File, data []byte) (*goalProjection, error) 
 		if err != nil || s.ID != e.GoalID {
 			return nil, errGoalReplay
 		}
+		var seal []byte
 		if e.SealRef != "" {
-			if _, err := readGoalBlob(root, e.SealRef, "goal-seal-", goalSealMaxBytes, &blobBytes); err != nil {
+			seal, err = readGoalBlob(root, e.SealRef, "goal-seal-", goalSealMaxBytes, &blobBytes)
+			if err != nil {
 				return nil, errGoalReplay
 			}
 		}
@@ -136,7 +138,7 @@ func replayGoalJournalData(root *os.File, data []byte) (*goalProjection, error) 
 			input = goalRecordFingerprint(input, e.RecordRef, e.MutationSHA256)
 		}
 		nextRecord := goalReplayRecord{revision: e.Revision, spec: string(spec), sealRef: e.SealRef, record: string(record)}
-		if !goalRecordHistoryValid(old, nextRecord) {
+		if !goalRecordHistoryValid(old, nextRecord, seal) {
 			return nil, errGoalReplay
 		}
 		changes, err := replayGoalChanges(root, p, e, nextRecord, &blobBytes)

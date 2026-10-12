@@ -172,3 +172,55 @@ clean absolute regular-file path without symbolic links. An absent explicit
 file never falls back. Settings reports only default/configured/disabled;
 it cannot read back or edit the path. The coordinator publishes snapshots,
 and Nuntius only reads them. See [queue-format.md](queue-format.md).
+
+## Native brief seals (local, unpublished)
+
+The internal brief compiler keeps the author's body and the owner's shared
+standards as separate exact UTF-8 bytes. A trusted local caller supplies the
+profile name and revision, an explicit separator, the standards marker, and
+either an empty wrapper or `/goal` followed by a newline. It appends the
+separator and standards once. It does not expand templates or execute text.
+This component adds no owner configuration fields, local file reader, CLI,
+MCP tool or browser operation. Later adapters must select text or registered
+artifact keys; they must not turn this into an arbitrary path reader.
+
+The first body line must start `GOAL: ID (size S)`, using the stored goal ID
+and S, M or L size. Optional comma-separated header details may follow the
+size inside the parentheses. A short description may follow the parentheses.
+The header must remain one line. Nuntius does not infer identity or size from
+other prose. Invalid UTF-8, a byte order mark anywhere, a `PLACEHOLDER` prefix,
+a missing or repeated standards marker, and mismatched headers need review.
+The final body, separator and standards together may use at most 128 KiB.
+Nothing is truncated. The private encoded seal must also fit its existing
+256 KiB storage limit, including JSON escaping.
+Assembly refusals explain the cause and give safe assembled and dispatch
+byte/code-point counts. Invalid UTF-8 makes the code-point count unavailable.
+The refusal never prints the body, standards or supplied references.
+
+The seal binds the goal spec and revision, profile, authority reference and
+reviewed source observation together with body, standards, final and dispatch
+SHA-256 digests. It records UTF-8 bytes and Unicode code points separately.
+Dispatch measurements include the `/goal` wrapper when declared. These
+measurements do not yet provide delivery: the next component owns the direct
+12,000-byte limit, per-engine code-point cap and full-artifact pointer rules.
+Native launching and automatic dispatch remain unavailable.
+
+Approval needs the exact sealed revision and authority. It also compares a
+freshly supplied source observation with the sealed observation. If they differ,
+`preflight_review_required` explains that the source changed and needs review
+before resealing and approval. Nuntius checks these references, not the truth
+of repository facts or human consent. A reference is not authentication.
+
+Changed body or standards bytes offer a newer source without editing the old
+seal or approved bytes. Refresh explicitly creates a new goal revision, returns
+it to drafted, and removes the old approval and exact automatic grant. Review
+and approve that new revision separately. A failed refresh preserves the old
+seal. Bookkeeping sealing and approval start no child and leave lane controls,
+pause, Resume, held messages and legacy dispatch unchanged.
+
+The writer and saved-history reader recompute the same complete seal and
+approval predicates. Closed JSON keys must match after unescaping; case aliases,
+duplicate decoded keys, null fields and unknown fields refuse approval.
+Profile names/revisions/markers, authority and source observations must each
+be one nonblank line of at most 128 UTF-8 bytes. Unicode line and paragraph
+separators and U+0085 are rejected in these one-line fields.

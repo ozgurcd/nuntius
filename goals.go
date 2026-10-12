@@ -238,7 +238,7 @@ func goalRecordTerminal(state nativeGoalState) bool {
 
 // A replay cannot drop old notes or rewrite a permanent result, even through
 // the low-level storage seam. Lifecycle decisions are a later component.
-func goalRecordHistoryValid(old, next goalReplayRecord) bool {
+func goalRecordHistoryValid(old, next goalReplayRecord, seals ...[]byte) bool {
 	if old.revision == 0 {
 		data, err := goalRecordMetadata(next)
 		// Initial bookkeeping fixtures may describe observations, but there is
@@ -259,6 +259,17 @@ func goalRecordHistoryValid(old, next goalReplayRecord) bool {
 	if len(b.Decisions) < len(a.Decisions) || len(a.Decisions) > 0 && !reflect.DeepEqual(a.Decisions, b.Decisions[:len(a.Decisions)]) {
 		return false
 	}
+	if old.sealRef != next.sealRef {
+		if b.ApprovalRevision != 0 || b.GrantBinding != "" {
+			return false
+		}
+		if b.State != nativeGoalDrafted {
+			spec, err := decodeNativeGoalSpec([]byte(next.spec))
+			if err != nil || spec.Coverage == nil || b.State != nativeGoalParked {
+				return false
+			}
+		}
+	}
 	if len(b.Decisions) > len(a.Decisions) {
 		if len(b.Decisions) != len(a.Decisions)+1 || old.spec != next.spec || old.sealRef != next.sealRef || a.Outcome != b.Outcome || !reflect.DeepEqual(a.Attempt, b.Attempt) {
 			return false
@@ -269,10 +280,13 @@ func goalRecordHistoryValid(old, next goalReplayRecord) bool {
 			return false
 		}
 		// Reapply the writer's exact predicate to the retained observation.
-		// Production has no seal validator yet; an opaque seal cannot enable
-		// approval through the lower-level writer or replay either.
-		req := goalDecisionRequest{OperationID: "check", GoalID: spec.ID, ExpectedRevision: d.Revision, Action: d.Action, Reason: d.Reason, Authority: d.Authority, Evidence: d.Evidence, AttemptID: d.AttemptID, ReportDigest: d.ReportDigest, AlternateEvidence: d.AlternateEvidence}
-		expected, err := applyGoalDecision(old, spec, a, req, nil)
+		// A compiled seal must satisfy the same predicate on write and replay.
+		req := goalDecisionRequest{OperationID: "check", GoalID: spec.ID, ExpectedRevision: d.Revision, Action: d.Action, Reason: d.Reason, Authority: d.Authority, Evidence: d.Evidence, AttemptID: d.AttemptID, ReportDigest: d.ReportDigest, AlternateEvidence: d.AlternateEvidence, SourceState: d.SourceState}
+		var checked *goalDecisionSeal
+		if len(seals) == 1 {
+			checked = validateGoalBrief(old, req.Authority, seals[0])
+		}
+		expected, err := applyGoalDecision(old, spec, a, req, checked)
 		if err != nil || !reflect.DeepEqual(expected, b) {
 			return false
 		}
@@ -477,6 +491,7 @@ func goalRecordView(r goalReplayRecord) (nativeGoalRecordDTO, error) {
 		metadata.Decisions[i].Reason = Redact(metadata.Decisions[i].Reason)
 		metadata.Decisions[i].Authority = Redact(metadata.Decisions[i].Authority)
 		metadata.Decisions[i].Evidence = Redact(metadata.Decisions[i].Evidence)
+		metadata.Decisions[i].SourceState = Redact(metadata.Decisions[i].SourceState)
 	}
 	if metadata.Closure != nil {
 		metadata.Closure.Authority = Redact(metadata.Closure.Authority)

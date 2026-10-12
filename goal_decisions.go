@@ -16,7 +16,7 @@ var (
 	errGoalDecision            = errors.New("native goal decision is invalid; supply one-line reason, authority and reviewed evidence references")
 	errGoalTransition          = errors.New("native goal cannot make this transition; review its current state, or use a new ID for a permanent result")
 	errGoalDecisionBusy        = errors.New("native goal still has active or uncertain work; account for its end before recording a decision; this operation stops no process")
-	errGoalApprovalUnavailable = errors.New("native goal approval is unavailable until the brief sealing and delivery components can validate its exact revision and authority")
+	errGoalApprovalUnavailable = errors.New("approval needs a valid sealed brief for this exact revision and authority; review and reseal the goal first")
 	errGoalReview              = errors.New("native goal needs reviewed evidence for its current ended attempt, or explicit alternate reviewed evidence; a report alone does not verify work")
 	errGoalOwnerHold           = errors.New("native goal needs its owner decision; an adapter source or judge authority reference cannot clear the owner hold")
 )
@@ -32,6 +32,7 @@ type goalDecisionRequest struct {
 	AttemptID         string
 	ReportDigest      string
 	AlternateEvidence bool
+	SourceState       string `json:"SourceState,omitempty"`
 }
 
 // These observations are committed bookkeeping, never caller-supplied decision
@@ -53,15 +54,17 @@ type goalDecisionEvidence struct {
 	AttemptID         string `json:"attempt_id,omitempty"`
 	ReportDigest      string `json:"report_digest,omitempty"`
 	AlternateEvidence bool   `json:"alternate_evidence,omitempty"`
+	SourceState       string `json:"source_state,omitempty"`
 }
 
 // A sealed fixture is not a production compiler or an authority credential.
 // No production caller supplies this until the separate sealing steps land.
 type goalDecisionSeal struct {
-	Revision  uint64
-	SpecRef   string
-	SealRef   string
-	Authority string
+	Revision    uint64
+	SpecRef     string
+	SealRef     string
+	Authority   string
+	SourceState string
 }
 
 // The complete D2 state table includes lifecycle edges for later components.
@@ -92,7 +95,11 @@ func validGoalDecision(req goalDecisionRequest) bool {
 		return false
 	}
 	if req.Action != "verify" {
-		return req.AttemptID == "" && req.ReportDigest == "" && !req.AlternateEvidence
+		return req.AttemptID == "" && req.ReportDigest == "" && !req.AlternateEvidence &&
+			(req.SourceState == "" || req.Action == "approve" && goalBriefLine(req.SourceState))
+	}
+	if req.SourceState != "" {
+		return false
 	}
 	if req.AlternateEvidence {
 		return req.ReportDigest == "" && (req.AttemptID == "" || validGoalOperationID(req.AttemptID))
@@ -136,6 +143,9 @@ func applyGoalDecision(old goalReplayRecord, spec nativeGoalSpec, data goalRecor
 		if seal == nil || seal.Revision != old.revision || seal.SpecRef != goalBlobName("goal-spec-", []byte(old.spec)) || seal.SealRef == "" || seal.SealRef != old.sealRef || seal.Authority != req.Authority {
 			return data, errGoalApprovalUnavailable
 		}
+		if seal.SourceState != req.SourceState {
+			return data, errGoalPreflight
+		}
 		data.ApprovalRevision = old.revision
 	}
 	if req.Action == "verify" {
@@ -151,6 +161,7 @@ func applyGoalDecision(old goalReplayRecord, spec nativeGoalSpec, data goalRecor
 	data.Decisions = append(append([]goalDecisionEvidence(nil), data.Decisions...), goalDecisionEvidence{
 		Action: req.Action, Revision: old.revision, Reason: req.Reason, Authority: req.Authority, Evidence: req.Evidence,
 		AttemptID: req.AttemptID, ReportDigest: req.ReportDigest, AlternateEvidence: req.AlternateEvidence,
+		SourceState: req.SourceState,
 	})
 	return data, nil
 }
@@ -202,14 +213,6 @@ func (m *Manager) decideGoal(req goalDecisionRequest) (goalCommitResult, error) 
 	if err != nil {
 		return goalCommitResult{}, errGoalTransition
 	}
-	data, err = applyGoalDecision(old, spec, data, req, nil)
-	if err != nil {
-		return goalCommitResult{}, err
-	}
-	record, err := encodeGoalRecord(data)
-	if err != nil {
-		return goalCommitResult{}, err
-	}
 	var sealBytes []byte
 	if old.sealRef != "" {
 		var total int64
@@ -217,6 +220,14 @@ func (m *Manager) decideGoal(req goalDecisionRequest) (goalCommitResult, error) 
 		if err != nil {
 			return goalCommitResult{}, errGoalReplay
 		}
+	}
+	data, err = applyGoalDecision(old, spec, data, req, validateGoalBrief(old, req.Authority, sealBytes))
+	if err != nil {
+		return goalCommitResult{}, err
+	}
+	record, err := encodeGoalRecord(data)
+	if err != nil {
+		return goalCommitResult{}, err
 	}
 	specRef := goalBlobName("goal-spec-", []byte(old.spec))
 	input := goalRecordFingerprint(goalInputFingerprint(req.GoalID, old.revision, specRef, old.sealRef), goalBlobName("goal-record-", record), mutation)
@@ -232,7 +243,7 @@ func validGoalDecisionData(r goalRecordData) bool {
 		}
 	}
 	for _, d := range r.Decisions {
-		req := goalDecisionRequest{OperationID: "check", GoalID: "CHECK", ExpectedRevision: d.Revision, Action: d.Action, Reason: d.Reason, Authority: d.Authority, Evidence: d.Evidence, AttemptID: d.AttemptID, ReportDigest: d.ReportDigest, AlternateEvidence: d.AlternateEvidence}
+		req := goalDecisionRequest{OperationID: "check", GoalID: "CHECK", ExpectedRevision: d.Revision, Action: d.Action, Reason: d.Reason, Authority: d.Authority, Evidence: d.Evidence, AttemptID: d.AttemptID, ReportDigest: d.ReportDigest, AlternateEvidence: d.AlternateEvidence, SourceState: d.SourceState}
 		if !validGoalDecision(req) || strings.TrimSpace(d.Reason) == "" {
 			return false
 		}
@@ -259,7 +270,7 @@ func validGoalDecisionJSON(m map[string]any) bool {
 		}
 		for _, row := range rows {
 			d, ok := row.(map[string]any)
-			if !ok || !nativeClosedFields(d, []string{"action", "revision", "reason", "authority", "evidence"}, []string{"attempt_id", "report_digest", "alternate_evidence"}) {
+			if !ok || !nativeClosedFields(d, []string{"action", "revision", "reason", "authority", "evidence"}, []string{"attempt_id", "report_digest", "alternate_evidence", "source_state"}) {
 				return false
 			}
 			n, ok := d["revision"].(json.Number)
