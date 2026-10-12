@@ -7,6 +7,8 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Native history refuses outdated approval after scope changes and approval without a new reviewed decision; no work starts.
+
 - The dashboard shows the Queue count without opening Queue. Idle cards explain
   a missing reason once, and lane settings use plain words. Open **What do these
   counts mean?** for the full explanation; your browser remembers that choice.

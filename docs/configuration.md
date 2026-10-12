@@ -219,7 +219,11 @@ seal. Bookkeeping sealing and approval start no child and leave lane controls,
 pause, Resume, held messages and legacy dispatch unchanged.
 
 The writer and saved-history reader recompute the same complete seal and
-approval predicates. Closed JSON keys must match after unescaping; case aliases,
+approval predicates. Changing execution scope removes the old approval and
+exact automatic grant, even if the old seal and decision history are unchanged.
+Entering approved state needs a new reviewed decision with the matching seal,
+authority and source observation. Notes and title or ordering edits keep existing
+approval and history. Closed JSON keys must match after unescaping; case aliases,
 duplicate decoded keys, null fields and unknown fields refuse approval.
 Profile names/revisions/markers, authority and source observations must each
 be one nonblank line of at most 128 UTF-8 bytes. Unicode line and paragraph

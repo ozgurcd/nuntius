@@ -259,8 +259,23 @@ func goalRecordHistoryValid(old, next goalReplayRecord, seals ...[]byte) bool {
 	if len(b.Decisions) < len(a.Decisions) || len(a.Decisions) > 0 && !reflect.DeepEqual(a.Decisions, b.Decisions[:len(a.Decisions)]) {
 		return false
 	}
-	if old.sealRef != next.sealRef {
+	scopeChanged := false
+	if old.spec != next.spec {
+		before, err := decodeNativeGoalSpec([]byte(old.spec))
+		if err != nil {
+			return false
+		}
+		after, err := decodeNativeGoalSpec([]byte(next.spec))
+		if err != nil {
+			return false
+		}
+		scopeChanged = goalScopeChanged(before, after)
+	}
+	if scopeChanged || old.sealRef != next.sealRef {
 		if b.ApprovalRevision != 0 || b.GrantBinding != "" {
+			return false
+		}
+		if scopeChanged && b.Outcome != "" {
 			return false
 		}
 		if b.State != nativeGoalDrafted {
@@ -269,6 +284,15 @@ func goalRecordHistoryValid(old, next goalReplayRecord, seals ...[]byte) bool {
 				return false
 			}
 		}
+	}
+	// Retaining a decision prefix cannot confer a new approval or exact grant.
+	// Notes and presentation edits may keep an existing binding; approval must
+	// append a reviewed decision and pass the seal/source predicate below.
+	if len(b.Decisions) == len(a.Decisions) &&
+		(b.State == nativeGoalApproved && (a.State != nativeGoalApproved || b.ApprovalRevision != a.ApprovalRevision) ||
+			b.ApprovalRevision != 0 && b.ApprovalRevision != a.ApprovalRevision ||
+			b.GrantBinding != "" && b.GrantBinding != a.GrantBinding) {
+		return false
 	}
 	if len(b.Decisions) > len(a.Decisions) {
 		if len(b.Decisions) != len(a.Decisions)+1 || old.spec != next.spec || old.sealRef != next.sealRef || a.Outcome != b.Outcome || !reflect.DeepEqual(a.Attempt, b.Attempt) {
@@ -299,6 +323,12 @@ func goalRecordHistoryValid(old, next goalReplayRecord, seals ...[]byte) bool {
 		return reflect.DeepEqual(a, b)
 	}
 	return true
+}
+
+func goalScopeChanged(before, after nativeGoalSpec) bool {
+	// Title and presentation order do not alter the execution scope.
+	before.Title, after.Title, before.Order, after.Order = "", "", 0, 0
+	return !reflect.DeepEqual(before, after)
 }
 
 func (m *Manager) changeGoalRecord(kind string, req goalRecordRequest, note goalNoteRequest) (goalCommitResult, error) {
@@ -411,10 +441,7 @@ func (m *Manager) changeGoalRecord(kind string, req goalRecordRequest, note goal
 		}
 		if old.revision != 0 {
 			before, _ := p.spec(id)
-			after := req.Spec
-			// Title and presentation order do not alter the execution scope.
-			before.Title, after.Title, before.Order, after.Order = "", "", 0, 0
-			if !reflect.DeepEqual(before, after) || old.sealRef != sealRef {
+			if goalScopeChanged(before, req.Spec) || old.sealRef != sealRef {
 				metadata.State, metadata.Outcome, metadata.ApprovalRevision, metadata.GrantBinding = nativeGoalDrafted, "", 0, ""
 			}
 		}

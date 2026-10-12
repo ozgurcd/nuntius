@@ -533,7 +533,12 @@ retained digest. Alternate review still needs settled accounting, without an
 active successor or an unconfirmed launch. Park and cancel obey the same busy
 work refusal. Replay recomputes the same exact seal/source check for approval,
 and refuses invented approval or batch binding. A seal change must remove the
-old approval and grant, even in a lower-level save or replay. The resulting
+old approval and grant, even in a lower-level save or replay. The same reset is
+required when execution scope changes while the seal and decisions stay unchanged.
+An unchanged decision history cannot approve a draft or parked goal, change its
+approval revision or create an exact grant. Approval needs a new reviewed decision
+with matching seal, authority and source observation. Append-only notes and title
+or ordering edits preserve existing approval and old decisions. The resulting
 metadata must match the writer's result exactly. A first history record cannot
 contain decisions about a prior revision that does not exist. These checks
 validate retained history; they do not authenticate a human reference or prevent

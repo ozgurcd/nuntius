@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Refuse obsolete or unreviewed native approval in candidate saves and history replay, including unchanged seals and decision history.
+
 - Show the Queue tab count with the first dashboard snapshot. Say a missing idle
   reason once and show lane model and effort settings in plain words, with exact
   values kept in Evidence. Counts keep a short reminder and an accessible full
