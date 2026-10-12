@@ -91,6 +91,13 @@ The tests compile an offline Go fake. They never execute the real agents,
 load agent settings, or make network calls. The separate govulncheck gate reads
 the public vulnerability database.
 
+Offline children own process groups and register their kernel birth identities
+under a test-owned lease. Fixture cleanup and TestMain stop those groups before
+removing records. Lease loss also stops a fake after abrupt timeout or test-process
+termination. Independent native fault groups share the existing four-group bound;
+their slot remains held through child cleanup. These protections apply only to
+compiled test programs and do not change installed agent supervision.
+
 
 ## Menu-bar Settings
 

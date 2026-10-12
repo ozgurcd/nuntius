@@ -9,12 +9,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/ozgurcd/nuntius/internal/fixturelife"
 )
 
 var fakeBinary string
@@ -28,6 +31,23 @@ func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "nuntius-fixture-")
 	if err != nil {
 		os.Exit(1)
+	}
+	var owner *fixturelife.Owner
+	if os.Getenv(fixturelife.Environment) == "" {
+		owner, err = fixturelife.New(filepath.Join(dir, "children"))
+		if err != nil {
+			os.Exit(1)
+		}
+		_ = os.Setenv(fixturelife.Environment, owner.Dir)
+		interrupt := make(chan os.Signal, 1)
+		signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
+		go func() {
+			<-interrupt
+			if owner.Close() != nil {
+				fmt.Println("offline interrupted child cleanup failed")
+			}
+			os.Exit(130)
+		}()
 	}
 	fakeBinary = filepath.Join(dir, "fake-agent")
 	cmd := exec.Command("go", "build", "-o", fakeBinary, "./internal/testagent")
@@ -57,6 +77,10 @@ func TestMain(m *testing.M) {
 	}
 	tailscaleAppPath = filepath.Join(dir, "absent-app")
 	code := m.Run()
+	if owner != nil && owner.Close() != nil {
+		fmt.Println("offline final child cleanup failed")
+		code = 1
+	}
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
 }
@@ -111,6 +135,9 @@ func fixture(t *testing.T) (Config, string) {
 			if sameProcess(r) {
 				_ = signalRun(r, syscall.SIGKILL)
 			}
+		}
+		if err := fixturelife.Stop(os.Getenv(fixturelife.Environment), d); err != nil {
+			t.Error("offline fixture process group cleanup failed")
 		}
 	})
 	return Config{Lanes: []Lane{{Name: "claude", Kind: "claude", Workdir: d, Binary: fakeBinary}, {Name: "codex", Kind: "codex", Workdir: d, Binary: fakeBinary}}, MaxRuntime: "10s", ReportsDir: d, Notifications: &off}, store

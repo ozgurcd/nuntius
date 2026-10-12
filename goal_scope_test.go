@@ -21,16 +21,16 @@ func canonicalBindingFixture(t *testing.T, writes []string, roots map[string]str
 	spec.After, spec.Writes, spec.Resources = []string{}, writes, []string{}
 	in.Body = []byte("GOAL: DISPATCH (size S)\nwait")
 	if _, err := m.createGoal(goalRecordRequest{OperationID: "create", Spec: spec}); err != nil {
-		t.Fatal(err)
+		t.Fatal("canonical setup create:", err)
 	}
 	if _, err := m.sealGoalBrief(goalRecordRequest{OperationID: "seal", ExpectedRevision: 1, Spec: spec}, in); err != nil {
-		t.Fatal(err)
+		t.Fatal("canonical setup seal:", err)
 	}
 	if _, err := m.decideGoal(goalDecisionRequest{OperationID: "approve", GoalID: spec.ID, ExpectedRevision: 2, Action: "approve", Reason: "Reviewed", Authority: in.Authority, Evidence: "review", SourceState: in.SourceState}); err != nil {
-		t.Fatal(err)
+		t.Fatal("canonical setup approve:", err)
 	}
 	if _, err := m.mirrorNativeAudit("cli", goalCommitIO{}); err != nil {
-		t.Fatal(err)
+		t.Fatal("canonical setup mirror:", err)
 	}
 	ctx := goalDispatchContext{Source: "cli", Profile: goalDeliveryProfile{Engine: "codex", CodePointCap: 4000, Root: deliveryRoot(t)}, Environment: goalAdmissionEnvironment{
 		Roots:        roots,

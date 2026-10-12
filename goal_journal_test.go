@@ -421,6 +421,7 @@ func TestGoalReplayBounds(t *testing.T) {
 }
 
 func TestGoalReplayCapacity(t *testing.T) {
+	goalEndParallel(t)
 	t.Run("events", func(t *testing.T) {
 		dir := goalReplayDir(t)
 		ref := goalReplayBlob(t, dir, "goal-spec-", nativeSchemaBytes(t, nativeSchemaFixture()))

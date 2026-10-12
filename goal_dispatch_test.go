@@ -312,6 +312,7 @@ func TestDispatchGoalIDLaunchFailure(t *testing.T) {
 }
 
 func TestDispatchGoalIDReservationFaults(t *testing.T) {
+	goalEndParallel(t)
 	for _, stage := range []string{"blob_write", "blob_sync", "blob_publish", "blobs_sync", "before_append", "partial_write", "journal_sync", "journal_directory_sync", "publication", "native_intent.write", "native_receipt.write"} {
 		t.Run(stage, func(t *testing.T) {
 			m, req, ctx := dispatchFixture(t)
@@ -438,6 +439,7 @@ func TestDispatchGoalIDChildStartFaults(t *testing.T) {
 }
 
 func TestDispatchGoalIDPublicationFaults(t *testing.T) {
+	goalEndParallel(t)
 	for _, stage := range []string{"running_publication", "journal_sync", "journal_directory_sync", "publication", "native_receipt.write", "before_success"} {
 		t.Run(stage, func(t *testing.T) {
 			m, req, ctx := dispatchFixture(t)
@@ -793,6 +795,7 @@ func TestDispatchGoalIDProcessHelper(t *testing.T) {
 }
 
 func TestDispatchGoalIDExactlyOneAdoptedChild(t *testing.T) {
+	goalEndParallel(t)
 	for _, stage := range []string{"before_append", "before_os", "after_os", "child_identity", "before_success"} {
 		t.Run(stage, func(t *testing.T) {
 			m, req, ctx := dispatchFixture(t)

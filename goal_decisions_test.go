@@ -372,6 +372,7 @@ func TestGoalTransitionsStrictAndHistory(t *testing.T) {
 }
 
 func TestGoalTransitionsCapacity(t *testing.T) {
+	goalEndParallel(t)
 	m, create := goalRecordsFixture(t)
 	if _, err := m.createGoal(create); err != nil {
 		t.Fatal(err)

@@ -196,6 +196,7 @@ func coverageTransactionFixture(t *testing.T) (*Manager, goalCommitRequest) {
 }
 
 func TestCoveredClosureAtomic(t *testing.T) {
+	goalEndParallel(t)
 	for _, stage := range []string{"cascade_blob", "before_append", "partial_write", "journal_sync", "journal_directory_sync", "publication", "none"} {
 		t.Run(stage, func(t *testing.T) {
 			m, req := coverageTransactionFixture(t)

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/ozgurcd/nuntius/internal/fixturelife"
 )
 
 // fakeTailscale records every invocation and answers from files in the
@@ -130,6 +132,10 @@ func fakeOsascript() {
 }
 
 func main() {
+	if err := fixturelife.Guard(); err != nil {
+		fmt.Fprintln(os.Stderr, "offline child lifetime setup failed")
+		os.Exit(44)
+	}
 	if len(os.Args) == 2 && os.Args[1] == "brief-pointer" {
 		prompt, err := io.ReadAll(io.LimitReader(os.Stdin, 12001))
 		if err != nil || len(prompt) > 12000 {
