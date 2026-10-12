@@ -76,6 +76,8 @@ const queueRows = new Map();
 let laneControls = null;
 const laneSaves = new Map();
 const heldRows = new Map(), heldSaves = new Map(), retainedHolds = new Map();
+// Match the server's active/uncertain plus terminal snapshot ceilings.
+const heldReceiptLimit = 64, heldRowLimit = 128;
 // One control client for Agents and future native Queue consumers. No storage.
 function validLaneControls(c) {
   return c?.lane_control_version === 1 && Number.isSafeInteger(c.revision) && c.revision >= 0 &&
@@ -287,15 +289,38 @@ function renderHeldMessages(d) {
     setText(el('heldSummary'), 'Could not read held messages or receipts. Last-known messages stay visible; no delivery is confirmed.');
     updateHeldControls(); return;
   }
+  const terminal = m => m.state === 'discarded' || (m.state === 'consumed' && m.delivery_confirmed);
+  const received = new Map(value.messages.map(m => [heldIdentity(m), m])), selected = new Map();
+  const previous = Array.from(heldRows.values());
+  const priority = v => v.root.contains(document.activeElement) ? 0 : heldSaves.has(heldIdentity(v.data)) ? 1 : busy(v.root) ? 2 : 3;
+  const pinned = previous.filter(v => heldSaves.has(heldIdentity(v.data)) || busy(v.root) || v.review.open).sort((a,b) => priority(a) - priority(b));
+  let receipts = 0;
+  const keep = m => {
+    const key = heldIdentity(m);
+    if (selected.has(key) || selected.size >= heldRowLimit || (terminal(m) && receipts >= heldReceiptLimit)) return;
+    selected.set(key, m); if (terminal(m)) receipts++;
+  };
+  // Current active/uncertain reservations always win over receipt history.
+  value.messages.filter(m => !terminal(m)).forEach(keep);
+  // Keep only the specific reviews being read/acted on, never their old peers.
+  // Focus and pending actions take precedence if many old reviews remain open.
+  pinned.forEach(v => keep(received.get(heldIdentity(v.data)) || v.data));
+  value.messages.filter(terminal).forEach(keep);
+  const omitted = value.older_receipts_omitted || value.messages.some(m => !selected.has(heldIdentity(m))) || previous.some(v => !selected.has(heldIdentity(v.data)));
+  const latest = value.messages.filter(m => terminal(m) && selected.has(heldIdentity(m))).length;
+  const earlier = Array.from(selected.keys()).filter(key => !received.has(key)).length;
   setText(el('heldSummary'), (value.messages.length ? 'Review the original goal and message before Send or Discard. Resume never replays a held message.' : 'No held messages or receipts in this received snapshot.') +
-    (value.older_receipts_omitted ? ' Older terminal receipts are outside this view; all readable active reviews are retained.' : ''));
-  const pinned = heldSaves.size || Array.from(heldRows.values()).some(v => busy(v.root) || v.review.open);
-  let entries = value.messages;
-  if (pinned) {
-    const received = new Map(value.messages.map(m => [heldIdentity(m), m]));
-    entries = Array.from(heldRows.values()).map(v => received.get(heldIdentity(v.data)) || v.data)
-      .concat(value.messages.filter(m => !heldRows.has(heldIdentity(m))));
+    (omitted ? ' Showing the latest ' + latest + ' receipts from this snapshot. Other receipts are omitted to keep this view bounded.' : '') +
+    (earlier ? ' ' + earlier + ' earlier reviews stay visible with last-known state; read again before another action.' : ''));
+  let entries = Array.from(selected.values());
+  if (pinned.length) {
+    // Preserve the place and nodes of retained reviews while replacing peers.
+    entries = previous.filter(v => selected.has(heldIdentity(v.data))).map(v => selected.get(heldIdentity(v.data)))
+      .concat(entries.filter(m => !heldRows.has(heldIdentity(m))));
   }
+  // Generic reconciliation may keep a recently interacted-with row. This view
+  // has already budgeted those rows, so it must enforce its own hard ceiling.
+  for (const [key,v] of heldRows) if (!selected.has(key)) { v.root.remove(); heldRows.delete(key); }
   reconcile(el('heldMessages'), entries, heldRows, makeHeldRow, updateHeldRow, heldIdentity);
   // A disappeared row that owns focus stays readable but cannot be acted on.
   updateHeldControls();

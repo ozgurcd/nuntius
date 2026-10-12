@@ -41,9 +41,18 @@ from the A05 bindings and receipts. It exposes redacted text and session
 availability, never the private session value. Reads do not reconcile receipts,
 consume messages or start a child. Unavailable data retains last-known rows with
 actions disabled; it never implies that a message was sent or discarded.
-The view retains up to 64 active held or uncertain reviews and the latest 64
-confirmed terminal receipts, ordered by original run start time. It names omitted
-older terminal receipts. Exceeding the active-review bound fails closed.
+Each server snapshot includes up to 64 active held or uncertain reviews and the
+latest 64 confirmed terminal receipts, ordered by original run start time.
+Exceeding the active-review bound fails closed. The client replaces the snapshot
+population on refresh; it never accumulates unrelated obsolete receipts. Only
+open, focused or pending reviews may retain last-known rows. Current active or
+uncertain reviews take priority, then retained reviews (focus and pending actions
+first), then the latest terminal receipts. The client keeps at most 128 rows in
+total and 64 terminal receipts, including retained reviews. It says how many
+latest receipts it shows when anything is omitted and labels retained missing
+reviews last-known with actions disabled. Retained reviews keep their nodes and
+place while they fit these bounds; closing an obsolete review releases it on the
+next snapshot. An unavailable snapshot adds no rows.
 An uncertain reservation can still be explicitly reviewed and discarded; that
 removes only the reviewed content and does not cancel a possible follow-up run.
 

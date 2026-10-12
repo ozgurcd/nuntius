@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Replace held-message receipt snapshots instead of accumulating old rows.
+  Keep only reviews still being read or acted on, within the server's row and
+  receipt ceilings, and explain when fewer latest receipts are shown.
+
 - Add the internal native goal schema and strict decoder, with explicit work
   scope, engine/work-class separation, holds and bounded safe metadata. Creation
   grants no approval. No native storage, launch or public operation is enabled.

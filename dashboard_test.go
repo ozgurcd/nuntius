@@ -256,7 +256,7 @@ const make = async (tab='queue') => {const clock={now:Date.parse(queueExample.up
 
 // Lane controls share the shipped script and offline DOM; no real HTTP or agents.
 func TestDashboardLaneControls(t *testing.T) {
-	for _, name := range []string{"presentation", "schema", "save", "conflict", "uncertainty", "revocation", "deadline", "order_focus", "unavailable_revision", "stale_pause", "stale_resume", "unchanged", "held_resume", "held_guards", "held_delivery", "held_discard", "held_wrong_run", "held_uncertainty", "held_focus", "held_signout", "held_counts"} {
+	for _, name := range []string{"presentation", "schema", "save", "conflict", "uncertainty", "revocation", "deadline", "order_focus", "unavailable_revision", "stale_pause", "stale_resume", "unchanged", "held_resume", "held_guards", "held_delivery", "held_discard", "held_wrong_run", "held_uncertainty", "held_focus", "held_signout", "held_counts", "held_retention", "held_replacement"} {
 		t.Run(name, func(t *testing.T) {
 			assets := map[string]any{"test": name}
 			for key, path := range map[string]string{"script": "app.js", "page": "index.html", "css": "app.css"} {
@@ -311,6 +311,42 @@ const posts=h=>h.calls.filter(c=>c.options?.method==='POST');
  predicate='A10/U03 '+input.test+' exists on shipped assets';
  const {h,d}=await make();
  check(h.ids.heldMessages && h.ids.heldMessages.children.length===1,'held message review is visible');
+ if(input.test==='held_retention'){
+  // Review X4: four bounded snapshots must not become an obsolete union.
+  let pinned;
+  for(let batch=0;batch<4;batch++){
+   d.held_messages.messages=Array.from({length:64},(_,i)=>({...receipt((batch*64+i+1).toString(16).padStart(32,'0')),text:'',state:'discarded',content_discarded:true}));
+   inject(h,d);if(batch===0){pinned=row(h);pinned.review.open=true;}
+   check(vm.runInContext('heldRows.size',h.context)===64 && h.ids.heldMessages.children.length===64,'X4 keeps terminal receipt rows at the server ceiling on snapshot '+batch);
+   check(vm.runInContext('heldRows',h.context).get('codex-1:'+pinned.data.run_id)===pinned && pinned.review.open,'X4 keeps only the original open review across replacement');
+   if(batch>0)check(h.ids.heldSummary.textContent.toLowerCase().includes('showing the latest 63 receipts'),'receipt omissions explain the current snapshot population');
+  }
+  const active=Array.from({length:64},(_,i)=>receipt((1000+i).toString(16).padStart(32,'0')));
+  d.held_messages.messages=[...active,...d.held_messages.messages];inject(h,d);
+  check(vm.runInContext('heldRows.size',h.context)===128 && h.ids.heldMessages.children.length===128,'active plus terminal rows stay within the server total ceiling');
+  check(active.every(m=>vm.runInContext('heldRows',h.context).has('codex-1:'+m.run_id)),'retention never hides a current active or uncertain review');
+  check(pinned.review.open && pinned.state.textContent.includes('Last-known'),'old open receipt remains explicitly last-known');
+  const focused=vm.runInContext('heldRows',h.context).get('codex-1:'+active[0].run_id);focused.send.focus();
+  for(const v of vm.runInContext('heldRows',h.context).values())v.review.open=true;
+  const newest=active.map((m,i)=>({...m,run_id:(2000+i).toString(16).padStart(32,'0'),state:i%2?'reserved':'consumed',delivery_confirmed:false}));
+  d.held_messages.messages=[...newest,...d.held_messages.messages.filter(m=>m.state==='discarded')];inject(h,d);
+  check(vm.runInContext('heldRows.size',h.context)===128 && h.ids.heldMessages.children.length===128,'many open stale reviews cannot bypass the total row ceiling');
+  check(newest.every(m=>vm.runInContext('heldRows',h.context).has('codex-1:'+m.run_id)),'current reservations and unidentified receipts precede old open history');
+  check(h.doc.activeElement===focused.send && focused.review.open && focused.root.parentElement===h.ids.heldMessages,'focused own review survives saturated replacement');
+  for(const v of vm.runInContext('heldRows',h.context).values())v.review.open=false;h.ids.message.focus();inject(h,d);
+  check(vm.runInContext('heldRows.size',h.context)===128 && vm.runInContext('heldRows',h.context).size===d.held_messages.messages.length && !vm.runInContext('heldRows',h.context).has('codex-1:'+focused.data.run_id),'closing stale reviews restores exactly the received population');
+ }
+ if(input.test==='held_replacement'){
+  const v=await review(h);v.send.focus();
+  const unrelated=receipt('d'.repeat(32));d.held_messages.messages.push(unrelated);inject(h,d);
+  d.held_messages.messages=[receipt('e'.repeat(32))];inject(h,d);
+  check(vm.runInContext('heldRows.size',h.context)===2 && !vm.runInContext("heldRows.has('codex-1:'+ 'd'.repeat(32))",h.context),'replacement removes unrelated obsolete rows');
+  check(vm.runInContext("heldRows.get('codex-1:'+ 'a'.repeat(32))",h.context)===v && v.review.open && h.doc.activeElement===v.send,'replacement preserves the own review node, expansion and focus');
+  check(v.state.textContent.includes('Last-known') && v.send.disabled && v.discard.disabled,'retained own review cannot act on a missing current binding');
+  check(v.text.textContent===receipt().text && v.text.children.length===0,'retained own review keeps safe text');
+  v.review.open=false;h.ids.message.focus();inject(h,d);
+  check(vm.runInContext('heldRows.size',h.context)===1 && h.ids.heldMessages.children.length===1,'closed obsolete review is released on the next snapshot');
+ }
  if(input.test==='held_resume'){
   const v=row(h),c=d.lane_control.lanes.find(l=>l.name==='codex-1');c.paused=true;c.phase='paused';c.blockers=['lane_paused','held_message'];inject(h,d);
   vm.runInContext("selectTab('agents')",h.context);const card=vm.runInContext("cards.get('codex-1')",h.context);
