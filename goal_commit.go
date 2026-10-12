@@ -157,6 +157,10 @@ func commitGoalLocked(root *os.File, req goalCommitRequest, id, specRef, sealRef
 	if !goalRecordHistoryValid(p.records[id], goalReplayRecord{revision: req.ExpectedRevision + 1, spec: string(req.Spec), sealRef: sealRef, record: string(req.Record)}) {
 		return goalCommitResult{}, nil, errGoalRecord
 	}
+	changes, err := goalDependencyChanges(p, id, goalReplayRecord{revision: req.ExpectedRevision + 1, spec: string(req.Spec), sealRef: sealRef, record: string(req.Record)})
+	if err != nil {
+		return goalCommitResult{}, nil, err
+	}
 	if stageGoalBlob(root, specRef, req.Spec, fault) != nil {
 		return goalCommitResult{}, nil, errGoalCommit
 	}
@@ -171,6 +175,16 @@ func commitGoalLocked(root *os.File, req goalCommitRequest, id, specRef, sealRef
 		e.RecordRef = goalBlobName("goal-record-", req.Record)
 		e.MutationSHA256 = req.MutationSHA256
 		if stageGoalBlob(root, e.RecordRef, req.Record, fault) != nil || root.Sync() != nil {
+			return goalCommitResult{}, nil, errGoalCommit
+		}
+	}
+	if len(changes) > 0 {
+		b, err := encodeGoalChanges(root, changes, fault)
+		if err != nil {
+			return goalCommitResult{}, nil, errGoalCommit
+		}
+		e.ChangesRef = goalBlobName("goal-changes-", b)
+		if stageGoalBlob(root, e.ChangesRef, b, fault) != nil || root.Sync() != nil {
 			return goalCommitResult{}, nil, errGoalCommit
 		}
 	}

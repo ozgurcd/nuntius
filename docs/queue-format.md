@@ -187,8 +187,9 @@ are a nonempty unique list of at most 32 lowercase names using the resource-name
 grammar; reason is nonblank plain text, at most 512 bytes. The names label
 decisions still needed; they do not prove approval. Optional `coverage` contains
 exactly `covered_by` (another dispatch-grammar ID) and a nonblank reason of at
-most 512 bytes. It describes a hold, never accepted closure. Graph checks,
-owner decisions and coverage closure belong to later record operations.
+most 512 bytes. The spec describes a hold, never acceptance by itself. Coverage
+reasons also reject Unicode line and paragraph separators. The dependency and
+coverage operation described below records closure separately.
 
 Creation accepts no approval, actor, state, outcome, run, revision, pause,
 brief path, report or closure evidence. Approval must be recorded separately
@@ -287,8 +288,9 @@ asks the owner to preserve and review it; it echoes no private input or path.
 
 The resulting internal projection owns immutable spec bytes and seal references.
 Each metadata read returns detached arrays and holds; repeated replay of the
-same files gives the same projection. Spec-only historical records read as
-drafted. Record snapshots described below retain state and notes, but replay
+same files gives the same projection. Spec-only historical records without
+coverage read as drafted. Coverage needs a parked record or the complete
+derived change set described below. Record snapshots retain state and notes, but replay
 itself provides no approval operation, lifecycle transition, readiness
 calculation, current attempt or lane-control revision.
 The internal commit component below saves changes before any native writer
@@ -424,7 +426,7 @@ restart and reaping, not power-loss durability or hostile same-user edits.
 
 ## Native goal records (local, unpublished)
 
-Internal manager operations create a drafted goal, replace its typed spec with
+Internal manager operations create a drafted goal without coverage, replace its typed spec with
 an expected-revision check, or append a note. These operations share the
 existing manager then control-lock serialization and the same journal writer.
 They introduce no command, MCP tool, HTTP route, approval operation, scheduler
@@ -434,7 +436,8 @@ lane holds do not load this journal as part of their existing operations.
 Creation requires a new ID, revision zero and no seal. It grants no approval
 or batch binding. Updates require the current revision and keep the ID fixed.
 A changed execution scope or seal, including seal removal, returns the record
-to drafted and clears approval and batch binding. Execution scope includes
+to drafted and clears approval and batch binding. Coverage then parks it or
+closes it from an already verified target as described below. Execution scope includes
 every spec field except title and presentation order. Changing only those
 presentation fields retains the original binding; it does not approve the
 new revision. Running and ended records refuse spec edits until their separate
@@ -461,7 +464,7 @@ and sync rules as spec blobs, and counts toward the cumulative replay budget.
 Metadata is a closed object containing version 1, typed state, notes, and
 optional outcome, approval revision and batch binding. Unknown, duplicate,
 null, wrong-type, malformed or oversized fields fail replay. Historical
-spec-only frames remain readable. Once record metadata exists, a spec-only
+spec-only frames without coverage remain readable. Once record metadata exists, a spec-only
 frame cannot erase it. Replay independently refuses lost notes and rewritten
 permanent results, even if a frame's checksums are valid.
 
@@ -489,7 +492,7 @@ the journal. An absent journal in a valid private directory is an empty list
 with presence false. A missing directory has a separate missing-store error.
 Unsafe roots, corrupt history and invalid references fail closed; they never
 look like an empty queue. These component reads do not certify later native
-approval, dependency, launch, lifecycle or public-adapter behavior.
+approval, launch, lifecycle or public-adapter behavior.
 
 ## Native goal decisions (local, unpublished)
 
@@ -511,8 +514,8 @@ cancelled. Parked goals may become approved or cancelled. Verified and
 cancelled results stay permanent; correction evidence is a note, and reopening
 needs a new goal ID. Later lifecycle components own approved-to-running,
 running-to-ended and explicitly authorized ended-to-running continuation.
-Later coverage work owns coverage holds and closure. These are not decision
-actions in this component.
+Coverage holds and closure use the separate rule below. They are not decision
+actions. A covered source cannot be verified by an independent verify action.
 
 Approval needs a validated seal for the exact stored spec, revision and
 authority. The production operation currently refuses approval with a plain
@@ -555,3 +558,52 @@ owner host's Ask policy. Authority and evidence references record a human
 decision; they do not authenticate an owner against an unsandboxed client
 running as the same operating-system user. No source or role field changes
 that limit or supplies an owner-hold release.
+
+## Native dependencies and coverage (local, unpublished)
+
+A prerequisite in `after` is satisfied only when that exact goal is verified.
+Cancelled, missing, ended and parked work does not satisfy it. Failed work
+still awaiting verification does not satisfy it either. This is
+prerequisite truth only; it does not authorize admission or dispatch. All saved
+goals participate in one graph containing both `after` and `covered_by` edges.
+A missing target stays unresolved. Adding it later must still leave the complete
+graph free of cycles, including mixed dependency and coverage cycles.
+
+Structured coverage parks a source that has no running or unsettled attempt.
+Running work, an active successor or an uncertain launch refuses coverage.
+The source remains held while its target is unverified, including a cancelled,
+failed or parked target. A target's explicit accepted review is the closure
+authority. A verified target with that retained review closes its covered
+sources, then their covered sources, in the same operation. This also applies
+when coverage is added after the target was verified. A source's own unfinished
+prerequisites do not prevent closure through the accepted target.
+
+Each closed source shows `closure`: its immediate `target`, the exact
+`target_revision`, and the acceptance `authority` and `evidence`. A transitive
+closure keeps the same acceptance references. All keys use their exact spelling
+after JSON unescaping. Case aliases, duplicate decoded keys, unknown fields,
+null and wrong types fail. References and coverage reasons stay on one line,
+including Unicode separators and U+0085. These references record the review;
+they do not prove human identity against another unsandboxed same-user process.
+
+Closure changes the source to verified and clears batch binding. It preserves
+its actual attempt, outcome and notes. It never invents a run, report, duration
+or independent verification decision. Permanent results and their provenance
+remain unchanged; correction evidence still belongs in a note or new goal.
+Dependents of a closed source now have a verified prerequisite. Repeating a
+target verification returns its original receipt and emits no extra closure.
+
+All affected revisions publish through one journal frame. Its optional
+`changes_ref` binds an immutable private `goal-changes-` SHA-256 blob containing
+the sorted complete change set. Each row names goal ID, revision, spec reference,
+optional seal reference and record reference. The primary input stays in the
+frame so both save and replay can recompute the same complete result. Missing,
+extra, forged or partial changes fail before a projection is returned.
+
+The cascade is bounded by the stored population limit of 4,096 goals. A change
+set is at most 2,097,152 bytes and uses the existing safe blob I/O and cumulative
+67,108,864-byte replay budget. The 4,096-byte frame ceiling is unchanged.
+Capacity or unsafe-history failures refuse the whole operation; no subset
+closes. A torn final frame exposes none of its changes. A complete frame with
+an unconfirmed sync requires the existing receipt lookup and confirming retry.
+No lane pause, process control, public goal adapter or scheduler is added.

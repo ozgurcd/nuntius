@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add verified-only native prerequisites and full combined dependency/coverage
+  cycle checks, including forward references. Structured coverage parks settled
+  sources and closes their transitive chain only from retained target acceptance.
+  One journal frame publishes every affected revision, with explicit closure
+  provenance and the same complete save/replay predicate. Coverage never invents
+  a run or report. Strict key and one-line rules apply to retained closure data.
+  Public native controls and launches remain unavailable.
+
 - Reapply native decision checks during candidate saves and journal replay.
   Retained accounting must support the reviewed attempt and report; alternate
   review still requires settled work. Park, cancel and approval share the

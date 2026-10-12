@@ -7,6 +7,12 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Native prerequisites now require verified work. Cancellation or an ended run
+  cannot unblock them. Explicit coverage holds related work until its target
+  review is accepted, then closes the covered chain together with visible review
+  references. It does not invent runs or reports. These internal operations
+  remain unavailable through the dashboard, CLI or MCP.
+
 - Native goal history now checks saved decisions against the work they reviewed,
   using the same rules as a new decision. Old attempts, changed reports and
   unsettled work cannot become verified through history replay. Reasons stay

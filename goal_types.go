@@ -247,7 +247,7 @@ func validNativeGoalSpec(s nativeGoalSpec) bool {
 	if s.OwnerHold != nil && (len(s.OwnerHold.Categories) == 0 || !nativeStringSet(s.OwnerHold.Categories, nativeGoalMaxList, nativeResourceName.MatchString) || !queueText(s.OwnerHold.Reason, 512, false)) {
 		return false
 	}
-	if s.Coverage != nil && (!goalPattern.MatchString(s.Coverage.CoveredBy) || s.Coverage.CoveredBy == s.ID || !queueText(s.Coverage.Reason, 512, false)) {
+	if s.Coverage != nil && (!goalPattern.MatchString(s.Coverage.CoveredBy) || s.Coverage.CoveredBy == s.ID || !goalDecisionReason(s.Coverage.Reason)) {
 		return false
 	}
 	return true

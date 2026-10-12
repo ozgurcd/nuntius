@@ -139,6 +139,9 @@ func applyGoalDecision(old goalReplayRecord, spec nativeGoalSpec, data goalRecor
 		data.ApprovalRevision = old.revision
 	}
 	if req.Action == "verify" {
+		if spec.Coverage != nil {
+			return data, errGoalDependencies
+		}
 		a := data.Attempt
 		if a == nil || !a.Ended || req.AttemptID != a.ID || (!req.AlternateEvidence && (a.ReportDigest == "" || req.ReportDigest != a.ReportDigest)) {
 			return data, errGoalReview

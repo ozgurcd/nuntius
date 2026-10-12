@@ -45,6 +45,7 @@ type goalRecordData struct {
 	Notes            []goalRecordNote       `json:"notes"`
 	Decisions        []goalDecisionEvidence `json:"decisions,omitempty"`
 	Attempt          *goalDecisionAttempt   `json:"attempt,omitempty"`
+	Closure          *goalCoverageEvidence  `json:"closure,omitempty"`
 }
 
 type goalRecordRequest struct {
@@ -68,6 +69,7 @@ type nativeGoalRecordDTO struct {
 	GrantBound       bool                   `json:"grant_bound"`
 	Notes            []goalRecordNote       `json:"notes"`
 	Decisions        []goalDecisionEvidence `json:"decisions,omitempty"`
+	Closure          *goalCoverageEvidence  `json:"closure,omitempty"`
 }
 
 type goalRecordListing struct {
@@ -163,7 +165,7 @@ func decodeGoalRecord(b []byte) (goalRecordData, error) {
 		return r, errGoalRecord
 	}
 	m, ok := raw.(map[string]any)
-	if !ok || !nativeClosedFields(m, []string{"version", "state", "notes"}, []string{"outcome", "approval_revision", "grant_binding", "decisions", "attempt"}) || !validGoalDecisionJSON(m) {
+	if !ok || !nativeClosedFields(m, []string{"version", "state", "notes"}, []string{"outcome", "approval_revision", "grant_binding", "decisions", "attempt", "closure"}) || !validGoalDecisionJSON(m) || !validGoalCoverageJSON(m) {
 		return r, errGoalRecord
 	}
 	version, ok := m["version"].(json.Number)
@@ -217,6 +219,9 @@ func decodeGoalRecord(b []byte) (goalRecordData, error) {
 	if !validGoalDecisionData(r) {
 		return goalRecordData{}, errGoalRecord
 	}
+	if c := r.Closure; c != nil && (r.State != nativeGoalVerified || !goalPattern.MatchString(c.Target) || c.TargetRevision == 0 || c.TargetRevision > goalJournalMaxEvents || !queueText(c.Authority, 128, false) || !queueText(c.Evidence, 128, false) || !goalDecisionReason(c.Authority) || !goalDecisionReason(c.Evidence)) {
+		return goalRecordData{}, errGoalRecord
+	}
 	return r, nil
 }
 
@@ -238,7 +243,7 @@ func goalRecordHistoryValid(old, next goalReplayRecord) bool {
 		data, err := goalRecordMetadata(next)
 		// Initial bookkeeping fixtures may describe observations, but there is
 		// no prior stored revision for a decision to have reviewed.
-		return err == nil && len(data.Decisions) == 0
+		return err == nil && len(data.Decisions) == 0 && data.Closure == nil
 	}
 	a, err := goalRecordMetadata(old)
 	if err != nil {
@@ -473,7 +478,11 @@ func goalRecordView(r goalReplayRecord) (nativeGoalRecordDTO, error) {
 		metadata.Decisions[i].Authority = Redact(metadata.Decisions[i].Authority)
 		metadata.Decisions[i].Evidence = Redact(metadata.Decisions[i].Evidence)
 	}
-	return nativeGoalRecordDTO{nativeGoalDTO: v, Revision: r.revision, ApprovalRevision: metadata.ApprovalRevision, GrantBound: metadata.GrantBinding != "", Notes: metadata.Notes, Decisions: metadata.Decisions}, nil
+	if metadata.Closure != nil {
+		metadata.Closure.Authority = Redact(metadata.Closure.Authority)
+		metadata.Closure.Evidence = Redact(metadata.Closure.Evidence)
+	}
+	return nativeGoalRecordDTO{nativeGoalDTO: v, Revision: r.revision, ApprovalRevision: metadata.ApprovalRevision, GrantBound: metadata.GrantBinding != "", Notes: metadata.Notes, Decisions: metadata.Decisions, Closure: metadata.Closure}, nil
 }
 
 func goalRecordList(p *goalProjection, present bool, offset, limit int) (*goalRecordListing, error) {

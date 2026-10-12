@@ -104,10 +104,17 @@ func TestGoalReplay(t *testing.T) {
 		doc["owner_hold"] = map[string]any{"categories": []string{"scope"}, "reason": "Review scope"}
 		doc["coverage"] = map[string]any{"covered_by": "OTHER-GOAL", "reason": "Related work"}
 		b := nativeSchemaBytes(t, doc)
-		first := goalReplayEvent(t, dir, "EXAMPLE-DOCS", 1, b)
+		// Coverage now has a durable parked record, rather than a bare draft spec.
+		record, _ := encodeGoalRecord(goalRecordData{Version: 1, State: nativeGoalParked, Notes: []goalRecordNote{}})
+		recordRef := goalReplayBlob(t, dir, "goal-record-", record)
+		firstEvent := goalJournalEvent{Kind: "goal.spec", GoalID: "EXAMPLE-DOCS", Revision: 1, SpecRef: goalReplayBlob(t, dir, "goal-spec-", b), RecordRef: recordRef, OperationID: "coverage-create", MutationSHA256: strings.Repeat("a", 64)}
+		firstEvent.InputSHA256 = goalRecordFingerprint(goalInputFingerprint(firstEvent.GoalID, 0, firstEvent.SpecRef, ""), recordRef, firstEvent.MutationSHA256)
+		first, _ := json.Marshal(firstEvent)
 		doc["title"] = "Updated documentation"
 		doc["writes"] = []string{"repo/docs"}
 		e := goalJournalEvent{Kind: "goal.spec", GoalID: "EXAMPLE-DOCS", Revision: 2, SpecRef: goalReplayBlob(t, dir, "goal-spec-", nativeSchemaBytes(t, doc)), SealRef: goalReplayBlob(t, dir, "goal-seal-", []byte("private sealed fixture"))}
+		e.RecordRef, e.OperationID, e.MutationSHA256 = recordRef, "coverage-update", strings.Repeat("b", 64)
+		e.InputSHA256 = goalRecordFingerprint(goalInputFingerprint(e.GoalID, 1, e.SpecRef, e.SealRef), recordRef, e.MutationSHA256)
 		second, _ := json.Marshal(e)
 		data := append(goalReplayFrame(1, first), goalReplayFrame(2, second)...)
 		goalReplayWrite(t, dir, goalJournalName, data)
@@ -120,6 +127,10 @@ func TestGoalReplay(t *testing.T) {
 		s, ok := p.spec("EXAMPLE-DOCS")
 		if !ok || s.Title != "Updated documentation" || p.records[s.ID].revision != 2 || p.records[s.ID].sealRef != e.SealRef {
 			t.Fatal("replayed record or private reference changed")
+		}
+		metadata, err := goalRecordMetadata(p.records[s.ID])
+		if err != nil || metadata.State != nativeGoalParked {
+			t.Fatal("coverage fixture did not remain parked")
 		}
 		s.Kinds[0] = "claude"
 		s.Writes[0] = "changed"
