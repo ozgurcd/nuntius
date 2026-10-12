@@ -67,6 +67,15 @@ attention badge. Agents has a **Retained holds on removed lanes** section with
 Resume only; it never grows a pool or recreates a lane. A removed lane is never
 Available. No native goal-readiness reason is inferred from an idle lane.
 
+Counts stay visible above a short reminder that Running and Paused can overlap.
+Open **What do these counts mean?** for the full explanation. This keyboard and
+screen-reader accessible disclosure starts closed and remembers only its open
+or closed view preference in this browser. It still works when browser storage
+is disabled. Refreshes keep your choice. At phone widths and narrowed zoomed
+windows, the header scrolls with the page; the title, dispatch badge and buttons
+use separate rows so they remain readable at 320 pixels. Neutral card badges
+use the main text colour for stronger contrast in dark mode.
+
 Sign-out, expiry and cross-tab sign-out immediately clear held and retained rows,
 review checks, private selectors and drafts, even with a pending request or body.
 Late responses cannot restore them. The wrapping layout uses both system themes;
@@ -106,6 +115,10 @@ provided; otherwise it says unavailable. Silence past fifteen minutes is a
 possible stall, which may be a long command, never confirmed stuck. Idle without
 an authoritative reason says that the reason is unavailable and suggests Queue.
 Ended cards say Run duration; a normal exit does not establish acceptance.
+The idle heading states the missing reason once; the body gives Queue guidance.
+Lane settings read in plain words, such as **Claude · claude-opus-5-5 · effort
+medium**, preserving the model's case. **Evidence and exact times** retains the
+exact model and effort values with their field names.
 
 Attention first puts failed/missing-report attempts and report decisions before
 quiet or unavailable lanes, other ended attempts, working lanes and idle lanes.
@@ -130,7 +143,9 @@ restores the list; filtering preserves original priorities and the tab's total
 count. Phone rows become labelled cards with wrapping IDs and full waiting text.
 Keyboard Arrow/Home/End navigation works across tabs.
 
-Queue reads once on entry and every ten seconds while visible and signed in,
+Queue also reads with the first operational snapshot so its tab count appears
+without opening the tab. A direct Queue entry shares that initial read. Queue
+then reads on entry and every ten seconds while visible and signed in,
 independently of the two-second operational poll. Filters, focus and expanded
 details remain in memory through refreshes. Snapshot publication time and last
 successful fetch time are separate. Failed refreshes show the last valid queue

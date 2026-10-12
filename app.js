@@ -423,6 +423,13 @@ const auditReadsKey = 'nuntius.web.audit.showReads';
 try {
   el('auditReads').checked = localStorage.getItem(auditReadsKey) === 'true';
 } catch { /* Filtering still works when browser storage is disabled. */ }
+const countExplanationKey = 'nuntius.web.countExplanation.open';
+try {
+  el('countExplanation').open = localStorage.getItem(countExplanationKey) === 'true';
+} catch { /* The native disclosure still works without browser storage. */ }
+el('countExplanation').addEventListener('toggle', () => {
+  try { localStorage.setItem(countExplanationKey, String(el('countExplanation').open)); } catch {}
+});
 
 function selectTab(id, focus = false, push = true) {
   const signedIn = authenticated();
@@ -609,9 +616,10 @@ function makeCard(s) {
   confirm.append(node('p', '', 'Interrupt this run?'), yes, back);
   cancelControls.append(cancel); controls.append(cancelControls);
   const evidence = node('details', 'lane-evidence');
-  evidence.append(node('summary','','Evidence and exact times'), stats);
+  const rawIdentity = node('p', 'hint');
+  evidence.append(node('summary','','Evidence and exact times'), rawIdentity, stats);
   root.append(head, goal, health, reason, rankReason, activity, durationBasis, received, reportStatus, reportLink, holdBadge, holdReason, controls, controlStatus, tail, confirm, evidence);
-  const view = {root, kind, badge, goal, fields, health, reason, rankReason, holdBadge, holdReason, durationBasis, received, reportStatus, reportLink, evidence, pause, pauseAfter, resume, message, controlStatus, activityText, tail, tailText, tailAge, tailJump, tailNotice, tailState, cancelControls, confirm, resetCancel};
+  const view = {root, kind, rawIdentity, badge, goal, fields, health, reason, rankReason, holdBadge, holdReason, durationBasis, received, reportStatus, reportLink, evidence, pause, pauseAfter, resume, message, controlStatus, activityText, tail, tailText, tailAge, tailJump, tailNotice, tailState, cancelControls, confirm, resetCancel};
   return view;
 }
 function bindTail(tailText) {
@@ -675,7 +683,9 @@ function updateCard(v, s) {
   updateCardTail(v, s, (lastData.tails || {})[s.lane] || []);
   updateLaneControls(v, s.lane);
   if (busy(v.root)) return;
-  setText(v.kind, (s.kind || 'Agent') + ' · model=' + (s.model || 'default') + ' effort=' + (s.effort || 'default'));
+  const kind = {claude:'Claude',codex:'Codex',opencode:'OpenCode'}[s.kind] || s.kind || 'Agent';
+  setText(v.kind, kind + ' · ' + (s.model || 'default') + ' · effort ' + (s.effort || 'default'));
+  setText(v.rawIdentity, 'model=' + (s.model || 'default') + ' effort=' + (s.effort || 'default'));
   stateBadge(v.badge, s.display_state || s.state, s.badge);
   v.goal.className = s.goal_id ? 'goal' : 'goal goal-placeholder';
   setText(v.goal, s.goal_id || 'No current goal');
@@ -857,7 +867,7 @@ function laneExplanation(s) {
   if (!c || c.phase === 'unavailable') return {rank:1,rankReason:'Current lane controls are unavailable',label:s.state === 'running'?'Working — controls unavailable':'Lane controls unavailable',reason:'New-start permission is unknown and blocked. Tail, reports, notes and independent safety controls remain usable.'};
   if (s.state !== 'running' && s.state !== 'idle') return {rank:2,rankReason:'Ended attempt awaits review',label:'Ended — awaiting review',reason:'Process ended' + (s.exit === 0 ? ' normally' : s.exit == null ? ' with unknown exit' : ' with exit ' + s.exit) + '. A saved report does not establish acceptance or verification.'};
   if (s.state === 'running') return {rank:3,rankReason:'Current work is running',label:s.current_action?.running_seconds != null?'Waiting on its own work':'Working',reason:s.current_action?.running_seconds != null ? 'Waiting for its command to finish; running for ' + duration(s.current_action.running_seconds) + '. This is observed activity, not a successful result.' : 'Working — no newer action observed. Inspect the safe action summary and tail.'};
-  return {rank:4,rankReason:c.paused?'Intentional lane hold':'Idle lane',label:c.paused?'Idle on purpose':'Idle — reason unavailable',reason:c.paused ? 'Paused by the lane control; no new work will start until it is resumed. Notes and reading remain usable.' : 'Idle — reason not available yet. Idle alone does not establish why work has not started. Review Queue if you expected work.'};
+  return {rank:4,rankReason:c.paused?'Intentional lane hold':'Idle lane',label:c.paused?'Idle on purpose':'Idle — reason unavailable',reason:c.paused ? 'Paused by the lane control; no new work will start until it is resumed. Notes and reading remain usable.' : 'No authoritative reason has been received. Review Queue if you expected work.'};
 }
 function agentOrder(d) {
   const byName = (a,b) => a.lane < b.lane ? -1 : a.lane > b.lane ? 1 : 0;
@@ -1059,7 +1069,11 @@ async function refresh(replace = false) {
     if (response.status === 403) { signOut(); return; }
     if (!response.ok) throw new Error('unavailable');
     lastUpdate = Date.now();
+    const firstSnapshot = !lastData;
     render(d);
+    // Prime the Queue badge even when Agents is selected. Its own read keeps
+    // the existing deadline, auth-epoch and obsolete-response protections.
+    if (firstSnapshot && !queueFetched) loadQueue(false, true);
     setText(el('lastRefresh'), 'Last refresh ' + new Date(lastUpdate).toLocaleTimeString());
     el('lastRefresh').dateTime = new Date(lastUpdate).toISOString();
     el('lastRefresh').title = new Date(lastUpdate).toLocaleString();
@@ -1422,8 +1436,8 @@ function renderQueue() {
   el('queueEmpty').hidden=true;el('queueTable').hidden=false;
   if(!items.length)queueEmpty(queueData.goals.length?'No matching goals':'No planned goals',queueData.goals.length?'Try another lane kind or state, or clear your filters.':'Running and finished work appears in Agents and History.');
 }
-async function loadQueue(replace = false) {
-  if (!authenticated() || document.hidden || !pageActive || el('queue').hidden) return;
+async function loadQueue(replace = false, initialSnapshot = false) {
+  if (!authenticated() || document.hidden || !pageActive || (el('queue').hidden && !initialSnapshot)) return;
   const request = beginDashboardRead('/queue', replace);
   if (!request) return;
   queueLoading=true;

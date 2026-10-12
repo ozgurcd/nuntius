@@ -7,6 +7,13 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- The dashboard shows the Queue count without opening Queue. Idle cards explain
+  a missing reason once, and lane settings use plain words. Open **What do these
+  counts mean?** for the full explanation; your browser remembers that choice.
+  At phone widths and in narrow zoomed windows, the header scrolls out of the
+  way and the title and buttons use separate rows. Idle badges are easier to
+  read in dark mode. No work starts because of these view changes.
+
 - Native briefs now retain the exact reviewed body and shared rules in an
   immutable seal. Changed source observations need review before approval;
   refreshing a brief removes its old approval and automatic grant. Invalid

@@ -19,7 +19,13 @@
       <div class="metric"><strong id="idleCount">—</strong><span>Available</span></div>
       <div class="metric"><strong id="pausedCount">—</strong><span>Paused · overlaps</span></div>
       <div class="metric"><strong id="endedCount">—</strong><span>Ended</span></div>
-      <p id="countMeaning" class="hint"></p>
+      <div class="count-help">
+        <p class="hint">One snapshot; Running and Paused can overlap.</p>
+        <details id="countExplanation">
+          <summary>What do these counts mean?</summary>
+          <p id="countMeaning" class="hint"></p>
+        </details>
+      </div>
       <div class="refresh-meta"><span id="updated">Waiting for first update</span><time id="lastRefresh">Last refresh —</time></div>
     </div>
   </header>

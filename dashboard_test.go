@@ -500,7 +500,7 @@ const inject = (h,value) => {h.context.fixtureControl=value;vm.runInContext('las
     const {h}=await make(), working=card(h,'claude-1'),idle=card(h,'codex-1'),failed=card(h,'claude-2'),ended=card(h,'codex-2');
     check(h.ids.lanes.children[0]===failed.root,'L01 missing report ranks ahead of working');
     check(working.health.textContent==='Waiting on its own work' && working.reason.textContent.includes('command'),'L02 open action explains waiting');
-    check(idle.reason.textContent.includes('Idle — reason not available') && idle.root.textContent.includes('Review Queue'),'L03 unknown idle is explicit');
+    check(idle.health.textContent === 'Idle — reason unavailable' && idle.reason.textContent.includes('No authoritative reason') && !idle.reason.textContent.startsWith('Idle') && idle.root.textContent.includes('Review Queue'),'L03 unknown idle is explicit without repetition');
     check(working.durationBasis.textContent.includes('median of 5 earlier') && working.durationBasis.textContent.includes('size M'),'L04 inline duration provenance');
     check(ended.reportLink.tagName==='A' && ended.reportLink.textContent.includes('REVIEW-RELEASE') && ended.reportLink.textContent.includes('Current'),'L05 correctly bound current report link');
     ended.reportLink.listeners.click({preventDefault(){}});await settle();
@@ -656,6 +656,48 @@ function rendered(h, id) {
 }
 (async () => {
   const tabIDs=['agents','queue','messages','digest','runs','auditSection','settings'];
+  const geoFailures = [];
+  const geoCheck = (ok, label) => { if (!ok) geoFailures.push(label); };
+  const geoStore = new Map(), geo = start('#agents', geoStore, '?token=fixture-auth'); await settle();
+  geoCheck(geo.calls.some(c => c.path === '/queue') && geo.ids.queueTabCount.textContent === '3', 'G1 Queue count loads with first operational snapshot without opening Queue');
+  await vm.runInContext('refresh()', geo.context); await settle();
+  geoCheck(geo.calls.filter(c => c.path === '/queue').length === 1, 'G1 hidden Queue is primed once rather than on every operational poll');
+  for (const current of [{...queueExample,goals:[]},{status:'disabled'},{status:'not_configured'}]) {
+    const h = start('#agents',new Map(),'?token=fixture-auth',false,undefined,200,null,null,undefined,{status:200,current}); await settle();
+    geoCheck(h.ids.queueTabCount.textContent === (current.status === 'ok' ? '0' : '—') && !h.ids.overview.hidden && h.ids.error.hidden, 'G1 empty or disabled Queue keeps operational dashboard usable');
+  }
+  const failedQueue = start('#agents',new Map(),'?token=fixture-auth',false,undefined,200,null,null,undefined,{reject:true}); await settle();
+  geoCheck(failedQueue.ids.queueTabCount.textContent === '—' && !failedQueue.ids.overview.hidden && failedQueue.ids.error.hidden, 'G1 unavailable initial Queue cannot fail the operational snapshot');
+  let finishGeoQueue;
+  const pendingGeoQueue = new Promise(resolve => { finishGeoQueue = resolve; });
+  const lateQueue = start('#agents',new Map(),'?token=fixture-auth',false,undefined,200,null,null,undefined,{pending:pendingGeoQueue}); await settle();
+  geoCheck(lateQueue.calls.some(c => c.path === '/queue') && !lateQueue.ids.overview.hidden, 'G1 initial Queue can wait without blocking Agents');
+  lateQueue.ids.signOut.click();
+  finishGeoQueue({ok:true,status:200,json:async()=>queueExample}); await settle();
+  geoCheck(lateQueue.ids.queueTabCount.textContent === '—' && lateQueue.ids.queueRows.children.length === 0, 'G1 late background Queue reply cannot restore signed-out data');
+  vm.runInContext("lastData = JSON.parse(JSON.stringify(lastData)); lastData.lanes[0].state = 'idle'; lastData.lanes[0].kind = 'claude'; lastData.lanes[0].model = 'claude-opus-5-5'; lastData.lanes[0].effort = 'medium'; render(lastData)", geo.context);
+  const geoCard = vm.runInContext("cards.get('claude-1')", geo.context);
+  geoCheck(geoCard.health.textContent === 'Idle — reason unavailable' && !geoCard.reason.textContent.startsWith('Idle') && geoCard.reason.textContent.includes('Review Queue'), 'G2 idle reason is stated once with Queue guidance');
+  geoCheck(geoCard.kind.textContent === 'Claude · claude-opus-5-5 · effort medium', 'G4 lane settings use plain words and exact case');
+  geoCheck(geoCard.evidence.textContent.includes('model=claude-opus-5-5 effort=medium'), 'G4 exact model and effort remain in Evidence');
+  const meaning = geo.ids.countExplanation;
+  geoCheck(meaning?.tagName === 'DETAILS' && !meaning.open && meaning.querySelector('summary') && input.page.includes('<summary>What do these counts mean?</summary>'), 'G3 count explanation uses a collapsed native keyboard-accessible disclosure');
+  if (meaning) {
+    meaning.open = true; meaning.listeners.toggle?.();
+    vm.runInContext('render(lastData)', geo.context);
+    geoCheck(meaning.open, 'G3 polling preserves count disclosure state');
+    const restored = start('#agents', geoStore); await settle();
+    geoCheck(restored.ids.countExplanation?.open, 'G3 browser remembers expanded disclosure');
+    restored.ids.countExplanation.open = false; restored.ids.countExplanation.listeners.toggle?.();
+    const collapsed = start('#agents', geoStore); await settle();
+    geoCheck(!collapsed.ids.countExplanation?.open, 'G3 browser remembers collapsed disclosure');
+    const blocked = start('#agents', new Map(), '?token=fixture-auth', true); await settle();
+    blocked.ids.countExplanation.open = true; blocked.ids.countExplanation.listeners.toggle?.();
+    geoCheck(blocked.ids.countExplanation.open, 'G3 disclosure works with storage blocked');
+    vm.runInContext('signOut()', geo.context); await settle();
+    geoCheck(geo.ids.queueTabCount.textContent === '—' && !geo.ids.countMeaning.textContent, 'G1/G3 sign-out clears queue count and private explanation');
+  }
+  if (geoFailures.length) { predicate = geoFailures.join('; '); throw new Error(); }
   // Reload deliberately leaves this DOM intact: clearing must happen before
   // navigation completes, including while an action is waiting for a reply.
   const headerFailures = [];
@@ -847,7 +889,7 @@ function rendered(h, id) {
   phoneCheck(!device.has('nuntius.web.token'), 'legacy tab key is not persisted');
   phoneCheck(!signedIn.location.search && !signedIn.location.href.includes('fixture-auth'), 'phone bootstrap removes grant from URL');
   const discarded = start('#runs', device, '', false, clock); await settle();
-  phoneCheck(discarded.calls.length === 1 && rendered(discarded, 'runs'), 'bookmark survives discarded tab with fresh sessionStorage');
+  phoneCheck(discarded.calls.length === 2 && discarded.calls.some(c => c.path === '/queue') && rendered(discarded, 'runs'), 'bookmark survives discarded tab with fresh sessionStorage and primes Queue count');
   phoneCheck(device.get('nuntius.web.credential') === (saved && JSON.stringify(saved)), 'bookmark does not renew grant lifetime');
   clock.now += sevenDays;
   const expired = start('#agents', device, '', false, clock); await settle();
@@ -861,13 +903,15 @@ function rendered(h, id) {
   const signoutStore = new Map();
   const signout = start('#agents', signoutStore, '?token=fixture-auth', false, clock); await settle();
   phoneCheck(signout.ids.signOut?.listeners.click !== undefined, 'explicit phone sign-out control exists');
+  const beforeSignout = signout.calls.length;
   signout.ids.signOut?.click();
   await vm.runInContext("action('unfreeze'); refresh()", signout.context); await settle();
-  phoneCheck(!signoutStore.has('nuntius.web.credential') && signout.location.reloads === 1 && signout.calls.length === 1, 'sign-out clears grant and navigates away from private data without further requests');
+  phoneCheck(!signoutStore.has('nuntius.web.credential') && signout.location.reloads === 1 && signout.calls.length === beforeSignout, 'sign-out clears grant and navigates away from private data without further requests');
   const secondTab = start('#agents', new Map(), '?token=fixture-auth', false, clock); await settle();
+  const beforeCrossTab = secondTab.calls.length;
   if (secondTab.win.storage) secondTab.win.storage({key:'nuntius.web.credential', newValue:null, storageArea:vm.runInContext('localStorage',secondTab.context)});
   await vm.runInContext("action('unfreeze'); refresh()", secondTab.context); await settle();
-  phoneCheck(secondTab.location.reloads === 1 && secondTab.calls.length === 1, 'storage event signs out other open tabs');
+  phoneCheck(secondTab.location.reloads === 1 && secondTab.calls.length === beforeCrossTab, 'storage event signs out other open tabs without new requests');
   const revokedStore = new Map([['nuntius.web.credential',JSON.stringify({token:'fixture-auth',expiresAt:clock.now+sevenDays})]]);
   const revoked = start('#runs', revokedStore, '', false, clock, 403); await settle();
   phoneCheck(!revokedStore.has('nuntius.web.credential') && revoked.location.reloads === 1, 'server revocation removes remembered grant');
@@ -876,9 +920,10 @@ function rendered(h, id) {
   phoneCheck(transientStore.has('nuntius.web.credential') && transient.location.reloads === 0, 'temporary server failure retains remembered sign-in');
   const activeClock = {now: clock.now}, activeStore = new Map();
   const active = start('#agents',activeStore,'?token=fixture-auth',false,activeClock); await settle();
+  const beforeExpiry = active.calls.length;
   activeClock.now += sevenDays;
   await vm.runInContext("action('unfreeze'); refresh()",active.context); await settle();
-  phoneCheck(active.calls.length === 1 && !activeStore.has('nuntius.web.credential') && active.location.reloads === 1, 'open page expiry blocks actions and polling');
+  phoneCheck(active.calls.length === beforeExpiry && !activeStore.has('nuntius.web.credential') && active.location.reloads === 1, 'open page expiry blocks actions and polling');
   let release;
   const deferred = new Promise(resolve => { release = resolve; });
   const inflight = start('#runs',new Map(),'?token=fixture-auth',false,clock,200,deferred);
@@ -893,10 +938,11 @@ function rendered(h, id) {
     const response = new Promise((resolve, fail) => { finish = resolve; reject = fail; });
     const store = new Map();
     const h = start('#runs', store, '?token=fixture-auth', false, clock, 200, null, response); await settle();
+    const beforeAction = h.calls.length;
     const pendingAction = h.ids.freezeButton.click();
-    check(h.calls.length === 2 && h.calls[1].path === '/action' && h.ids.freezeButton.disabled, 'action is pending and locks action controls');
+    check(h.calls.length === beforeAction + 1 && h.calls[beforeAction].path === '/action' && h.ids.freezeButton.disabled, 'action is pending and locks action controls');
     h.ids.freezeButton.click();
-    check(h.calls.length === 2, 'disabled-aware click suppresses a locked action');
+    check(h.calls.length === beforeAction + 1, 'disabled-aware click suppresses a locked action');
     check(!h.ids.signOut.disabled, 'Sign out stays enabled during a pending action');
     h.ids.signOut.click();
     check(!h.ids.signInPanel.hidden && tabIDs.every(id=>h.ids[id].hidden), 'sign-out immediately hides private panels during pending action');
@@ -908,7 +954,7 @@ function rendered(h, id) {
     check(await pendingAction === false, 'late signed-out action never reports success: ' + result);
     await settle();
     check(!store.has('nuntius.web.credential') && !vm.runInContext('authenticated()', h.context) && h.location.reloads === 1, 'late action cannot restore credentials or repeat sign-out: ' + result);
-    check(h.ids.notice.hidden && h.ids.error.hidden && h.ids.runs.querySelectorAll('tbody').length === 0 && h.calls.length === 2, 'late action cannot restore notices, private data or refresh requests: ' + result);
+    check(h.ids.notice.hidden && h.ids.error.hidden && h.ids.runs.querySelectorAll('tbody').length === 0 && h.calls.length === beforeAction + 1, 'late action cannot restore notices, private data or refresh requests: ' + result);
   }
 	const phoneWidth = 390;
 	const phoneRules = [...input.css.matchAll(/@media\s*\(max-width:\s*(\d+)px\)\s*\{([^@]*?)(?=@media|$)/g)].filter(r => phoneWidth <= Number(r[1])).map(r => r[2]).join('\n');
@@ -919,13 +965,13 @@ function rendered(h, id) {
     const h = start('#' + id, new Map(), '?token=fixture-auth');
     await settle();
     check(rendered(h, id), 'focused hash panel renders: ' + id);
-    check(h.calls.length === 1 && h.calls[0].path === '/data', 'authenticated initial data fetch');
+    check(h.calls.length === 2 && h.calls[0].path === '/data' && h.calls[1].path === '/queue', 'authenticated initial data and Queue count fetch');
     check(!h.location.search, 'bootstrap removes URL query');
     const store = new Map();
     const first = start('#agents', store, '?token=fixture-auth'); await settle();
     const reloaded = start('#' + id, store); await settle();
     check(rendered(reloaded, id), 'reload retains hash and authentication: ' + id);
-    check(reloaded.calls.length === 1 && reloaded.calls[0].options.headers['X-Nuntius-Token'] === first.calls[0].options.headers['X-Nuntius-Token'], 'reload uses device storage');
+    check(reloaded.calls.length === 2 && reloaded.calls[0].options.headers['X-Nuntius-Token'] === first.calls[0].options.headers['X-Nuntius-Token'], 'reload uses device storage and primes Queue count');
     // A hidden panel can retain focus and a recent hold from a prior interaction.
     vm.runInContext("holds.set(el('" + id + "'), Date.now() + 5000)", h.context);
     vm.runInContext("selectTab('agents')", h.context);

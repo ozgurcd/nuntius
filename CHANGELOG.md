@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Show the Queue tab count with the first dashboard snapshot. Say a missing idle
+  reason once and show lane model and effort settings in plain words, with exact
+  values kept in Evidence. Counts keep a short reminder and an accessible full
+  explanation that remembers its open or closed view preference. Phone and
+  zoomed narrow headers scroll with the page, with title and controls on separate
+  wrapping rows. Neutral card badges have stronger dark-mode text contrast.
+
 - Compile immutable native brief seals from exact body, declared separator and
   shared standards bytes. Bind profile, source observation, spec, revision and
   authority with separate body/standards/final/dispatch digests and byte/code-point
