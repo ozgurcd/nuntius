@@ -172,9 +172,7 @@ func coverageTransactionFixture(t *testing.T) (*Manager, goalCommitRequest) {
 		req.OperationID = fmt.Sprintf("create-%02d", i)
 		req.Spec.ID = fmt.Sprintf("SOURCE-%02d", i)
 		req.Spec.Coverage = &nativeCoverageHold{CoveredBy: "TARGET", Reason: "Target acceptance covers the work"}
-		if _, err := m.createGoal(req); err != nil {
-			t.Fatal(err)
-		}
+		goalFixtureSave(t, "coverage source create", func() error { _, err := m.createGoal(req); return err })
 	}
 	p, err := replayGoalJournal(m.store)
 	if err != nil {
@@ -326,6 +324,7 @@ func coverageLastFrame(t *testing.T, m *Manager) (*os.File, []byte, uint64, goal
 }
 
 func TestCoverageReplayIntegrity(t *testing.T) {
+	goalEndParallel(t)
 	for _, kind := range []string{"omitted", "partial", "forged", "duplicate", "revision", "cycle"} {
 		t.Run(kind, func(t *testing.T) {
 			m, req := coverageTransactionFixture(t)

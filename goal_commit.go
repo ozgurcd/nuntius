@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 
 	"golang.org/x/sys/unix"
@@ -30,6 +31,35 @@ type goalCommitResult struct {
 }
 
 type goalCommitIO struct{ checkpoint func(string) error }
+
+// Keep public refusal text fixed. Tests can inspect only a fixed operation
+// label and numeric errno, never an OS error's path or private contents.
+type goalPersistenceFailure struct {
+	refusal error
+	stage   string
+	errno   int
+}
+
+func (e *goalPersistenceFailure) Error() string                        { return e.refusal.Error() }
+func (e *goalPersistenceFailure) Unwrap() error                        { return e.refusal }
+func (e *goalPersistenceFailure) PersistenceDiagnostic() (string, int) { return e.stage, e.errno }
+
+func goalPersistenceError(refusal error, stage string, cause error) error {
+	if cause == nil {
+		return nil
+	}
+	var prior *goalPersistenceFailure
+	if errors.As(cause, &prior) {
+		return cause
+	}
+	var errno unix.Errno
+	_ = errors.As(cause, &errno)
+	var control *laneControlFault
+	if errors.As(cause, &control) && control.Code == "locked" {
+		errno = unix.EWOULDBLOCK
+	}
+	return &goalPersistenceFailure{refusal: refusal, stage: stage, errno: int(errno)}
+}
 
 type goalOperationReceipt struct {
 	input    string
@@ -161,21 +191,29 @@ func commitGoalLocked(root *os.File, req goalCommitRequest, id, specRef, sealRef
 	if err != nil {
 		return goalCommitResult{}, nil, err
 	}
-	if stageGoalBlob(root, specRef, req.Spec, fault) != nil {
+	if err := stageGoalBlob(root, specRef, req.Spec, fault); err != nil {
+		return goalCommitResult{}, nil, err
+	}
+	if sealRef != "" {
+		if err := stageGoalBlob(root, sealRef, req.Seal, fault); err != nil {
+			return goalCommitResult{}, nil, err
+		}
+	}
+	if fault.check("blobs_sync") != nil {
 		return goalCommitResult{}, nil, errGoalCommit
 	}
-	if sealRef != "" && stageGoalBlob(root, sealRef, req.Seal, fault) != nil {
-		return goalCommitResult{}, nil, errGoalCommit
-	}
-	if fault.check("blobs_sync") != nil || root.Sync() != nil {
-		return goalCommitResult{}, nil, errGoalCommit
+	if err := goalPersistenceError(errGoalCommit, "blobs.directory_sync", root.Sync()); err != nil {
+		return goalCommitResult{}, nil, err
 	}
 	e := goalJournalEvent{Kind: "goal.spec", GoalID: id, Revision: req.ExpectedRevision + 1, SpecRef: specRef, SealRef: sealRef, OperationID: req.OperationID, InputSHA256: input}
 	if req.Record != nil {
 		e.RecordRef = goalBlobName("goal-record-", req.Record)
 		e.MutationSHA256 = req.MutationSHA256
-		if stageGoalBlob(root, e.RecordRef, req.Record, fault) != nil || root.Sync() != nil {
-			return goalCommitResult{}, nil, errGoalCommit
+		if err := stageGoalBlob(root, e.RecordRef, req.Record, fault); err != nil {
+			return goalCommitResult{}, nil, err
+		}
+		if err := goalPersistenceError(errGoalCommit, "record.directory_sync", root.Sync()); err != nil {
+			return goalCommitResult{}, nil, err
 		}
 	}
 	if len(changes) > 0 {
@@ -299,14 +337,14 @@ func stageGoalBlob(root *os.File, ref string, data []byte, fault goalCommitIO) e
 		}
 		fd, err := unix.Openat(int(root.Fd()), ref, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 		if err != nil {
-			return errGoalCommit
+			return goalPersistenceError(errGoalCommit, "blob.reopen", err)
 		}
 		f := os.NewFile(uintptr(fd), "native-goal-blob")
 		defer f.Close()
 		if checkLaneControlFile(fd) != nil {
 			return errGoalCommit
 		}
-		return f.Sync()
+		return goalPersistenceError(errGoalCommit, "blob.existing_sync", f.Sync())
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return errGoalCommit
@@ -318,7 +356,7 @@ func stageGoalBlob(root *os.File, ref string, data []byte, fault goalCommitIO) e
 	name := ".goal-stage-" + hex.EncodeToString(nonce[:])
 	fd, err := unix.Openat(int(root.Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
 	if err != nil {
-		return errGoalCommit
+		return goalPersistenceError(errGoalCommit, "blob.open", err)
 	}
 	f := os.NewFile(uintptr(fd), "native-goal-stage")
 	defer f.Close()
@@ -327,22 +365,28 @@ func stageGoalBlob(root *os.File, ref string, data []byte, fault goalCommitIO) e
 		return errGoalCommit
 	}
 	if n, err := f.Write(data); err != nil || n != len(data) {
+		if err == nil {
+			err = io.ErrShortWrite
+		}
+		return goalPersistenceError(errGoalCommit, "blob.write", err)
+	}
+	if fault.check("blob_sync") != nil {
 		return errGoalCommit
 	}
-	if fault.check("blob_sync") != nil || f.Sync() != nil {
-		return errGoalCommit
+	if err := goalPersistenceError(errGoalCommit, "blob.sync", f.Sync()); err != nil {
+		return err
 	}
 	if err := f.Close(); err != nil {
-		return errGoalCommit
+		return goalPersistenceError(errGoalCommit, "blob.close", err)
 	}
 	if fault.check("blob_publish") != nil {
 		return errGoalCommit
 	}
-	if unix.Linkat(int(root.Fd()), name, int(root.Fd()), ref, 0) != nil {
-		return errGoalCommit
+	if err := unix.Linkat(int(root.Fd()), name, int(root.Fd()), ref, 0); err != nil {
+		return goalPersistenceError(errGoalCommit, "blob.publish", err)
 	}
-	if unix.Unlinkat(int(root.Fd()), name, 0) != nil {
-		return errGoalCommit
+	if err := unix.Unlinkat(int(root.Fd()), name, 0); err != nil {
+		return goalPersistenceError(errGoalCommit, "blob.unlink", err)
 	}
 	return nil
 }

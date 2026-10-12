@@ -24,6 +24,10 @@ var fakeBinary string
 var cliBinary string
 
 func TestMain(m *testing.M) {
+	if os.Args[len(os.Args)-1] == "fixture-web-server" {
+		fixtureWebServer()
+		os.Exit(0)
+	}
 	if code, handled := launchEntry(os.Args[1:]); handled {
 		os.Exit(code)
 	}
@@ -48,6 +52,18 @@ func TestMain(m *testing.M) {
 			}
 			os.Exit(130)
 		}()
+	}
+	if binary := os.Getenv("NUNTIUS_LIFETIME_FAKE_BINARY"); binary != "" {
+		// The outer lifetime test already built this fake. Sharing it avoids
+		// spending the helper's unchanged timeout on redundant compilation.
+		fakeBinary = binary
+		code := m.Run()
+		if owner != nil && owner.Close() != nil {
+			fmt.Println("offline final child cleanup failed")
+			code = 1
+		}
+		_ = os.RemoveAll(dir)
+		os.Exit(code)
 	}
 	fakeBinary = filepath.Join(dir, "fake-agent")
 	cmd := exec.Command("go", "build", "-o", fakeBinary, "./internal/testagent")
@@ -163,6 +179,14 @@ func waitState(t *testing.T, m *Manager, lane, state string) Status {
 	t.Helper()
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
+		// Native Status repairs and replays the entire journal. Observe the
+		// small run record first while a verified live child is still running;
+		// always use the real Status for the requested state and dead/adopted runs.
+		r, err := m.latest(lane)
+		if err == nil && r != nil && r.State == "running" && state == "ended" && sameProcess(*r) {
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
 		s, e := m.Status()
 		if e != nil {
 			t.Fatal(e)

@@ -30,18 +30,19 @@ func dispatchFixtureBody(t *testing.T, body, lane string) (*Manager, goalDispatc
 	s.ID, s.PreferredLane, s.LaneBinding = "DISPATCH", lane, "required"
 	s.After, s.Writes, s.Resources = []string{}, []string{}, []string{"dispatch-resource"}
 	in.Body = []byte("GOAL: DISPATCH (size S)\n" + body)
-	if _, err := m.createGoal(goalRecordRequest{OperationID: "dispatch-create", Spec: s}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.sealGoalBrief(goalRecordRequest{OperationID: "dispatch-seal", ExpectedRevision: 1, Spec: s}, in); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.decideGoal(goalDecisionRequest{OperationID: "dispatch-approve", GoalID: s.ID, ExpectedRevision: 2, Action: "approve", Reason: "Reviewed scope", Authority: in.Authority, Evidence: "review", SourceState: in.SourceState}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.mirrorNativeAudit("cli", goalCommitIO{}); err != nil {
-		t.Fatal(err)
-	}
+	goalFixtureSave(t, "dispatch create", func() error {
+		_, err := m.createGoal(goalRecordRequest{OperationID: "dispatch-create", Spec: s})
+		return err
+	})
+	goalFixtureSave(t, "dispatch seal", func() error {
+		_, err := m.sealGoalBrief(goalRecordRequest{OperationID: "dispatch-seal", ExpectedRevision: 1, Spec: s}, in)
+		return err
+	})
+	goalFixtureSave(t, "dispatch approve", func() error {
+		_, err := m.decideGoal(goalDecisionRequest{OperationID: "dispatch-approve", GoalID: s.ID, ExpectedRevision: 2, Action: "approve", Reason: "Reviewed scope", Authority: in.Authority, Evidence: "review", SourceState: in.SourceState})
+		return err
+	})
+	goalFixtureSave(t, "dispatch mirror", func() error { _, err := m.mirrorNativeAudit("cli", goalCommitIO{}); return err })
 	ctx := goalDispatchContext{Source: "cli", Profile: goalDeliveryProfile{Engine: "codex", CodePointCap: 4000, Root: deliveryRoot(t)}, Environment: goalAdmissionEnvironment{
 		Capabilities: map[string]goalAdmissionCapability{"codex": {Kind: "codex", WorkKinds: []nativeWorkKind{"review"}}, "claude": {Kind: "claude", WorkKinds: []nativeWorkKind{"review"}}},
 		SourceState:  func(nativeGoalSpec) (string, error) { return in.SourceState, nil },
@@ -476,9 +477,18 @@ func TestDispatchGoalIDPublicationFaults(t *testing.T) {
 			if len(data.Dispatches) != 1 || data.Dispatches[0].PID <= 1 {
 				t.Fatal("missing exact launch identity")
 			}
+			// The restart adapter's periodic writer legitimately owns a separate
+			// nonblocking store lock. Finish that adapter before the final audit
+			// observation; all restart/duplicate/identity assertions ran above.
+			if err := n.Close(); err != nil {
+				t.Fatal("close restart adapter before audit observation", err)
+			}
 			audit, e := m.nativeAuditStatus()
 			if e != nil || audit.Pending != 0 {
-				t.Fatal("running audit unconfirmed", e)
+				if e != nil {
+					goalSetupFailure(t, "running audit", e)
+				}
+				t.Fatalf("running audit unconfirmed: sequence=%d mirrored=%d pending=%d", audit.Sequence, audit.Mirrored, audit.Pending)
 			}
 		})
 	}

@@ -110,6 +110,7 @@ func TestTerminalMissingReportRecovery(t *testing.T) {
 }
 
 func TestTerminalStreamConservativeRecovery(t *testing.T) {
+	goalEndParallel(t)
 	stop := terminalStart + terminalText("done") + terminalStop
 	cases := map[string]string{
 		"no-stream": "", "mid-step": terminalStart,

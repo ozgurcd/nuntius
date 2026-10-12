@@ -9,6 +9,7 @@ import (
 )
 
 func TestHeldReviewTerminalAuditRetry(t *testing.T) {
+	goalEndParallel(t)
 	for _, action := range []string{"send", "discard"} {
 		for _, boundary := range []string{"append", "fsync", "dirsync"} {
 			for _, retry := range []string{"action", "reconcile", "direct"} {

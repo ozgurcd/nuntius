@@ -296,6 +296,7 @@ func TestGoalRecordsListings(t *testing.T) {
 }
 
 func TestGoalRecordsBoundsAndSafety(t *testing.T) {
+	goalEndParallel(t)
 	m, req := goalRecordsFixture(t)
 	if _, err := m.createGoal(req); err != nil {
 		t.Fatal("create failed")

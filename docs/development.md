@@ -98,6 +98,22 @@ termination. Independent native fault groups share the existing four-group bound
 their slot remains held through child cleanup. These protections apply only to
 compiled test programs and do not change installed agent supervision.
 
+The fake web launcher gives each separate server session its own lease-watching
+wrapper. The server remains its own session leader; the wrapper registers and
+watches its kernel identity, so it is stopped on owner loss even without a
+fixture guard of its own. The interruption regression
+checks an unguarded stand-in after INT, TERM, KILL and test timeout; its release
+marker and bounded fallback allow cleanup even for a failing regression.
+Independent admission, held-message, record and replay matrices use the same
+four-slot bound, held through cleanup. End-state waits inspect the small run
+record while a verified child is live, then call real Status for the final
+observation; deadlines and assertions stay unchanged. Persistence refusals keep
+fixed public text while tests can report a fixed operation label and numeric
+errno, without recording OS error paths or private contents.
+Prelaunch fixture saves also share Go's fork barrier until their lock descriptors
+close. This excludes temporary descriptor inheritance by unrelated test launches;
+it adds no retry and does not alter the production nonblocking store lock.
+
 
 ## Menu-bar Settings
 

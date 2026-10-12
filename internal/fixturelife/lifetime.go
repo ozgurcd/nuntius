@@ -48,8 +48,7 @@ func New(dir string) (*Owner, error) {
 // manager helper. Kernel lock release covers panic, timeout and SIGKILL, where
 // neither t.Cleanup nor a signal handler can run.
 func Guard() error {
-	dir := os.Getenv(Environment)
-	if dir == "" {
+	if os.Getenv(Environment) == "" {
 		return nil
 	}
 	if syscall.Getpgrp() != os.Getpid() {
@@ -57,52 +56,87 @@ func Guard() error {
 			return err
 		}
 	}
-	pid := os.Getpid()
-	start, err := processStart(pid)
-	if err != nil {
-		return err
-	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
+	_, err = guard(os.Getpid(), cwd, true)
+	return err
+}
+
+// GuardChild owns a separate-session offline child whose executable has no
+// Guard of its own. Its caller remains alive to wait and reap that child.
+func GuardChild(pid int, cwd string) (func(), error) { return guard(pid, cwd, false) }
+
+func guard(pid int, cwd string, self bool) (stop func(), err error) {
+	dir := os.Getenv(Environment)
+	if dir == "" {
+		return func() {}, nil
+	}
+	start, err := processStart(pid)
+	if err != nil {
+		return nil, err
+	}
+	if group, e := syscall.Getpgid(pid); e != nil || group != pid {
+		return nil, errors.New("offline child is not a group leader")
+	}
+	stop = func() {
+		birth, e := processStart(pid)
+		if group, groupErr := syscall.Getpgid(pid); e == nil && birth == start && groupErr == nil && group == pid {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+		}
+		if self {
+			os.Exit(1)
+		}
+	}
+	defer func() {
+		if err != nil {
+			stop()
+		}
+	}()
 	b, err := json.Marshal(Child{PID: pid, Start: start, Workdir: cwd})
 	if err != nil {
-		return err
+		return stop, err
 	}
 	name := strconv.Itoa(pid)
 	children := bucket(dir, cwd)
 	if err = os.MkdirAll(children, 0700); err != nil {
-		return err
+		return stop, err
 	}
 	if _, err := os.Stat(filepath.Join(children, "closed")); !os.IsNotExist(err) {
-		return errors.New("offline fixture already closed")
+		return stop, errors.New("offline fixture already closed")
 	}
 	staged := filepath.Join(children, ".register-"+name)
 	if err = os.WriteFile(staged, b, 0600); err != nil {
-		return err
+		return stop, err
 	}
 	if err = os.Rename(staged, filepath.Join(children, name)); err != nil {
-		return err
+		return stop, err
 	}
 	lease, err := os.OpenFile(filepath.Join(dir, "lease"), os.O_RDWR, 0)
 	if err != nil {
-		return err
+		return stop, err
 	}
 	go func() {
 		defer lease.Close()
 		for {
+			if !self {
+				birth, e := processStart(pid)
+				if e != nil || birth != start {
+					return
+				}
+			}
 			err := syscall.Flock(int(lease.Fd()), syscall.LOCK_SH|syscall.LOCK_NB)
-			stop, _ := os.ReadFile(filepath.Join(children, "stop-"+name))
+			stopMarker, _ := os.ReadFile(filepath.Join(children, "stop-"+name))
 			_, closed := os.Stat(filepath.Join(children, "closed"))
-			if err == nil || !errors.Is(err, syscall.EWOULDBLOCK) || string(stop) == start || !os.IsNotExist(closed) {
-				_ = syscall.Kill(-pid, syscall.SIGKILL)
-				os.Exit(1)
+			if err == nil || !errors.Is(err, syscall.EWOULDBLOCK) || string(stopMarker) == start || !os.IsNotExist(closed) {
+				stop()
+				return
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
 	}()
-	return nil
+	return stop, nil
 }
 
 func Children(dir, workdir string) ([]Child, error) {

@@ -353,6 +353,7 @@ func TestHeldReviewLaunchFailure(t *testing.T) {
 }
 
 func TestHeldReviewCrashAfterLaunch(t *testing.T) {
+	goalEndParallel(t)
 	t.Run("discard-retains-launch-reservation", func(t *testing.T) {
 		m, h := heldReviewFixture(t, "fixture-thread")
 		if _, err := m.sendHeld(h, heldReviewFault("review-after-launch")); err == nil {

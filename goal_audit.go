@@ -61,16 +61,16 @@ func (m *Manager) nativeAuditStatus() (nativeAuditState, error) {
 	defer m.mu.Unlock()
 	root, err := openLaneControlRoot(m.store)
 	if err != nil {
-		return nativeAuditUnavailable(), errNativeAudit
+		return nativeAuditUnavailable(), goalPersistenceError(errNativeAudit, "audit.root", err)
 	}
 	defer root.Close()
-	lock, err := laneControlReadLock(root)
+	lock, err := openLaneControlLock(root, unix.LOCK_SH, false)
 	if err != nil {
-		return nativeAuditUnavailable(), errNativeAudit
+		return nativeAuditUnavailable(), goalPersistenceError(errNativeAudit, "audit.lock", err)
 	}
 	defer lock.Close()
 	state, _, _, _, err := readNativeAudit(root)
-	return state, err
+	return state, goalPersistenceError(err, "audit.read", err)
 }
 
 // source is supplied by the trusted adapter invoking this component. It is

@@ -67,6 +67,7 @@ func admissionPause(t *testing.T, m *Manager, after bool) {
 }
 
 func TestLaneAdmissionRefusals(t *testing.T) {
+	goalEndParallel(t)
 	for _, after := range []bool{false, true} {
 		for _, state := range []string{"idle", "ended", "busy"} {
 			for _, op := range []string{"dispatch", "reply", "send", "stop-and-send"} {
@@ -160,6 +161,7 @@ func TestLaneAdmissionDrainsAndIsolation(t *testing.T) {
 }
 
 func TestLaneAdmissionUnavailable(t *testing.T) {
+	goalEndParallel(t)
 	for _, health := range []string{"corrupt", "resume-intent", "missing-lock", "unsafe-lock"} {
 		for _, op := range []string{"dispatch", "reply", "send", "stop-and-send"} {
 			t.Run(health+"/"+op, func(t *testing.T) {
@@ -264,6 +266,7 @@ func TestLaneAdmissionFrozenAndValidation(t *testing.T) {
 }
 
 func TestLaneAdmissionSafetyControls(t *testing.T) {
+	goalEndParallel(t)
 	for _, after := range []bool{false, true} {
 		for _, action := range []string{"cancel", "freeze", "timeout"} {
 			t.Run(fmt.Sprintf("after=%t/%s", after, action), func(t *testing.T) {

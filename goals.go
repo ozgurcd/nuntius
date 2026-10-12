@@ -384,12 +384,12 @@ func (m *Manager) changeGoalRecord(kind string, req goalRecordRequest, note goal
 	}
 	root, err := openLaneControlRoot(m.store)
 	if err != nil {
-		return goalCommitResult{}, errGoalCommit
+		return goalCommitResult{}, goalPersistenceError(errGoalCommit, "record.root", err)
 	}
 	defer root.Close()
 	lock, err := laneControlLock(root, unix.LOCK_EX)
 	if err != nil {
-		return goalCommitResult{}, errGoalCommit
+		return goalCommitResult{}, goalPersistenceError(errGoalCommit, "record.lock", err)
 	}
 	defer lock.Close()
 	p, err := replayGoalJournalRoot(root)

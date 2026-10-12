@@ -132,9 +132,49 @@ func fakeOsascript() {
 }
 
 func main() {
-	if err := fixturelife.Guard(); err != nil {
-		fmt.Fprintln(os.Stderr, "offline child lifetime setup failed")
-		os.Exit(44)
+	webSession := len(os.Args) > 2 && os.Args[1] == "__fixture_web_session"
+	if !webSession {
+		if err := fixturelife.Guard(); err != nil {
+			fmt.Fprintln(os.Stderr, "offline child lifetime setup failed")
+			os.Exit(44)
+		}
+	}
+	if webSession {
+		interrupt := make(chan os.Signal, 1)
+		signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
+		cmd := exec.Command(os.Getenv("NUNTIUS_FIXTURE_WEB_BINARY"), os.Args[3:]...)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := cmd.Start(); err != nil {
+			os.Exit(45)
+		}
+		cwd, err := os.Getwd()
+		if err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			os.Exit(46)
+		}
+		stop, err := fixturelife.GuardChild(cmd.Process.Pid, cwd)
+		if err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			os.Exit(46)
+		}
+		name := filepath.Join(os.Getenv("NUNTIUS_FIXTURE_WEB_DIR"), os.Args[2]+".pid")
+		if err := os.WriteFile(name, []byte(strconv.Itoa(cmd.Process.Pid)), 0600); err != nil {
+			stop()
+			_ = cmd.Wait()
+			os.Exit(46)
+		}
+		done := make(chan struct{})
+		go func() { _ = cmd.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-interrupt:
+			stop()
+			<-done
+		}
+		return
 	}
 	if len(os.Args) == 2 && os.Args[1] == "brief-pointer" {
 		prompt, err := io.ReadAll(io.LimitReader(os.Stdin, 12001))
@@ -334,13 +374,16 @@ func fixtureWeb(args []string) {
 		return
 	}
 	defer func() { _ = os.WriteFile(name+".reaped", nil, 0600) }()
-	cmd := exec.Command(os.Getenv("NUNTIUS_FIXTURE_WEB_BINARY"), args...)
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(exe, append([]string{"__fixture_web_session", strconv.Itoa(os.Getpid())}, args...)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if cmd.Start() != nil {
 		return
 	}
-	_ = os.WriteFile(name+".pid", []byte(strconv.Itoa(cmd.Process.Pid)), 0600)
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -352,12 +395,12 @@ func fixtureWeb(args []string) {
 		case <-done:
 			return
 		case <-deadline.C:
-			_ = cmd.Process.Kill()
+			_ = cmd.Process.Signal(syscall.SIGTERM)
 			<-done
 			return
 		case <-ticker.C:
 			if _, err := os.Stat(filepath.Join(dir, "stop")); err == nil {
-				_ = cmd.Process.Kill()
+				_ = cmd.Process.Signal(syscall.SIGTERM)
 				<-done
 				return
 			}
