@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Share native recognition and public audit decoding through an exact-key
+  pre-pass. After JSON unescaping, known field names must match the lowercase
+  schema exactly; case aliases and duplicate decoded keys reject the row.
+  Native markers or the reserved action also require the closed safe schema
+  before entry or raw text is built. Exact escaped names and genuine legacy
+  unknown actions remain readable; removed native evidence is outside this rule.
+
 - Add internal native goal decisions with retained reasons and authority/review
   references, exact transition checks and current-attempt report binding.
   Running park/cancel refuses without stopping work; permanent results need

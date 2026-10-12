@@ -3,6 +3,7 @@ package nuntius
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -126,6 +127,86 @@ func TestNativeAuditIntegrityLoss(t *testing.T) {
 
 func TestNativeAuditIntegrityEnvelope(t *testing.T) {
 	_, row := nativeAuditIntegrityFixture(t)
+	for _, key := range []string{`Tool`, `TOOL`, `ToOl`, `T\u006fol`} {
+		t.Run("alternate-action/"+key, func(t *testing.T) {
+			bad := []byte(`{"time":"2026-10-12T00:00:00Z","` + key + `":"` + nativeAuditTool + `","result":"ok","body":"private-spec-sentinel"}`)
+			var permissive struct {
+				Tool string `json:"tool"`
+			}
+			if json.Unmarshal(bad, &permissive) != nil || permissive.Tool != nativeAuditTool {
+				t.Fatal("alternate action did not reach the permissive decoder control")
+			}
+			if len(parseAudit(bad, time.Time{})) != 0 {
+				t.Fatal("alternate native action exposed an entry or raw body")
+			}
+		})
+	}
+	for _, field := range []string{"native_audit_version", "time", "tool", "event_id", "sequence", "goal_id", "goal_revision", "source", "result"} {
+		for _, key := range []string{strings.ToUpper(field), strings.ToUpper(field[:1]) + field[1:], `\u00` + fmt.Sprintf("%02x", field[0]-32) + field[1:]} {
+			for _, duplicate := range []bool{false, true} {
+				t.Run(fmt.Sprintf("field/%s/%s/duplicate=%t", field, key, duplicate), func(t *testing.T) {
+					var values map[string]json.RawMessage
+					if json.Unmarshal(row, &values) != nil {
+						t.Fatal("safe native fixture did not decode")
+					}
+					bad := bytes.Replace(row, []byte(`"`+field+`"`), []byte(`"`+key+`"`), 1)
+					if duplicate {
+						bad = append([]byte(`{"`+field+`":`+string(values[field])+`,`), bad[1:]...)
+					}
+					if len(parseAudit(bad, time.Time{})) != 0 {
+						t.Fatal("noncanonical or ambiguous native field entered public presentation")
+					}
+				})
+			}
+		}
+	}
+	for _, field := range []string{"native_audit_version", "event_id", "goal_revision"} {
+		for _, key := range []string{strings.ToUpper(field), strings.ToUpper(field[:1]) + field[1:], `\u00` + fmt.Sprintf("%02x", field[0]-32) + field[1:]} {
+			t.Run("marker-only/"+key, func(t *testing.T) {
+				bad := []byte(`{"time":"2026-10-12T00:00:00Z","tool":"future_action","` + key + `":null,"body":"private-spec-sentinel"}`)
+				if len(parseAudit(bad, time.Time{})) != 0 {
+					t.Fatal("alternate native marker exposed an entry or raw body")
+				}
+			})
+		}
+	}
+	for _, keys := range []string{
+		`"tool":"future_action","Tool":"` + nativeAuditTool + `"`,
+		`"Tool":"` + nativeAuditTool + `","tool":"future_action"`,
+		`"tool":"` + nativeAuditTool + `","Tool":"future_action"`,
+		`"Tool":"future_action","tool":"` + nativeAuditTool + `"`,
+		`"tool":"future_action","t\u006fol":"` + nativeAuditTool + `"`,
+	} {
+		t.Run("mixed-action/"+keys, func(t *testing.T) {
+			bad := []byte(`{"time":"2026-10-12T00:00:00Z",` + keys + `,"body":"private-spec-sentinel"}`)
+			if len(parseAudit(bad, time.Time{})) != 0 {
+				t.Fatal("ambiguous native action exposed an entry or raw body")
+			}
+		})
+	}
+	// The guard covers every public field, not just today's native markers.
+	for _, key := range []string{"Time", "Lane", "Goal_id", "SHA256", "Result", "Reason", "ſha256", "ſource", "ſequence", "reſult"} {
+		t.Run("public-field/"+key, func(t *testing.T) {
+			bad := []byte(`{"time":"2026-10-12T00:00:00Z","tool":"future_action","` + key + `":"private-spec-sentinel"}`)
+			if len(parseAudit(bad, time.Time{})) != 0 {
+				t.Fatal("noncanonical public field entered audit presentation")
+			}
+		})
+	}
+	for _, field := range []string{"native_audit_version", "time", "tool", "event_id", "sequence", "goal_id", "goal_revision", "source", "result"} {
+		t.Run("escaped-canonical/"+field, func(t *testing.T) {
+			key := `\u00` + fmt.Sprintf("%02x", field[0]) + field[1:]
+			escaped := bytes.Replace(row, []byte(`"`+field+`"`), []byte(`"`+key+`"`), 1)
+			want, got := parseAudit(row, time.Time{}), parseAudit(escaped, time.Time{})
+			if len(want) != 1 || len(got) != 1 {
+				t.Fatal("canonical unescaped field name was not recognized")
+			}
+			want[0].Raw, got[0].Raw = "", ""
+			if !reflect.DeepEqual(want, got) {
+				t.Fatal("JSON escaping changed safe native projection")
+			}
+		})
+	}
 	for _, action := range []string{`null`, `""`, `"future_action"`} {
 		for _, violation := range []string{"action", "body", "duplicate", "escaped-duplicate", "coerced", "marker-null", "escaped-marker"} {
 			t.Run(action+"/"+violation, func(t *testing.T) {

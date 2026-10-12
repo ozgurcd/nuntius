@@ -404,12 +404,19 @@ This is at-least-once delivery. Readers deduplicate valid native rows by event
 ID and show their identity, source, sequence and revision with a plain summary.
 External consumers must do the same; raw audit history is never rewritten.
 
-Readers recognize native rows from the reserved action or top-level
-`native_audit_version`, `event_id` or `goal_revision` fields, even when the
-action is null, empty or different. The complete closed schema must pass before
-any public entry or raw text is built. Extra body fields, duplicates, nulls and
-coerced values are rejected. Genuine legacy rows without native markers remain
-readable, including unknown actions and repeated legacy rows.
+Recognition and public decoding share an exact-key pre-pass over each row.
+After JSON unescaping, known public and native field names must match their
+lowercase schema names exactly; case variants, including Unicode case aliases,
+are rejected. Repeated decoded top-level keys are rejected, including escaped
+duplicates and mixed spellings such as `tool` plus `Tool`. Escapes that produce
+an exact schema name are allowed. Readers recognize native rows from the
+reserved action or top-level `native_audit_version`, `event_id` or
+`goal_revision` fields, even when the action is null, empty or different.
+The complete closed native schema must pass before any public entry or raw
+text is built. Extra body fields, nulls and coerced values are rejected.
+Genuine legacy rows with exact known field names and no native markers remain
+readable, including unknown actions and repeated legacy rows. Removing all
+native evidence is outside this recognition rule.
 Older audit rows retain their existing classification and presentation.
 An unfinished audit line blocks delivery for review; the mirror does not delete
 it or pretend the event was delivered. Offline crash tests certify process

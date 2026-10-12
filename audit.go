@@ -9,10 +9,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 )
 
 // AuditEntry is a bounded, redacted presentation of one complete audit record.
@@ -33,6 +35,77 @@ type AuditEntry struct {
 	Revision uint64    `json:"goal_revision,omitempty"`
 }
 
+type auditRecord struct {
+	Time   time.Time `json:"time"`
+	Tool   string    `json:"tool"`
+	Lane   string    `json:"lane"`
+	GoalID string    `json:"goal_id"`
+	SHA256 string    `json:"sha256"`
+	Result string    `json:"result"`
+	Reason string    `json:"reason"`
+}
+
+// Derive names from both decoding schemas so new fields receive the same guard.
+var auditRecordKeys = func() []string {
+	var keys []string
+	for _, schema := range []reflect.Type{reflect.TypeFor[auditRecord](), reflect.TypeFor[nativeAuditRow]()} {
+		for i := 0; i < schema.NumField(); i++ {
+			keys = append(keys, schema.Field(i).Tag.Get("json"))
+		}
+	}
+	return keys
+}()
+
+// Recognition and public decoding share one exact-key pass. Token unescapes
+// names; EqualFold covers the case aliases accepted by encoding/json, including
+// Unicode aliases. No entry or Raw text exists until this pass and, for native
+// rows, the closed schema validation have succeeded.
+func decodeAuditRecord(line []byte) (auditRecord, bool, error) {
+	var record auditRecord
+	if len(line) > 16384 || !utf8.Valid(line) {
+		return record, false, errNativeAuditLog
+	}
+	d := json.NewDecoder(bytes.NewReader(line))
+	if token, err := d.Token(); err != nil || token != json.Delim('{') {
+		return record, false, errNativeAuditLog
+	}
+	seen := make(map[string]bool)
+	isNative := false
+	for d.More() {
+		token, err := d.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || seen[key] {
+			return record, false, errNativeAuditLog
+		}
+		seen[key] = true
+		for _, canonical := range auditRecordKeys {
+			if key != canonical && strings.EqualFold(key, canonical) {
+				return record, false, errNativeAuditLog
+			}
+		}
+		var value json.RawMessage
+		if d.Decode(&value) != nil {
+			return record, false, errNativeAuditLog
+		}
+		switch key {
+		case "native_audit_version", "event_id", "goal_revision":
+			isNative = true
+		case "tool":
+			var tool string
+			if json.Unmarshal(value, &tool) == nil && tool == nativeAuditTool {
+				isNative = true
+			}
+		}
+	}
+	if token, err := d.Token(); err != nil || token != json.Delim('}') {
+		return record, false, errNativeAuditLog
+	}
+	if _, err := d.Token(); err != io.EOF || json.Unmarshal(line, &record) != nil {
+		return record, false, errNativeAuditLog
+	}
+	return record, isNative, nil
+}
+
 func parseAudit(b []byte, since time.Time) []AuditEntry {
 	out := []AuditEntry{}
 	seenNative := make(map[string]bool)
@@ -45,21 +118,12 @@ func parseAudit(b []byte, since time.Time) []AuditEntry {
 		if len(line) > 16384 {
 			continue
 		}
-		var native nativeAuditRow
-		isNative := hasNativeAuditEnvelope(line)
-		if isNative && (decodeLaneControlObject(line, &native) != nil || !validNativeAuditRow(native)) {
+		v, isNative, err := decodeAuditRecord(line)
+		if err != nil || v.Time.IsZero() || v.Time.Before(since) {
 			continue
 		}
-		var v struct {
-			Time   time.Time `json:"time"`
-			Tool   string    `json:"tool"`
-			Lane   string    `json:"lane"`
-			GoalID string    `json:"goal_id"`
-			SHA256 string    `json:"sha256"`
-			Result string    `json:"result"`
-			Reason string    `json:"reason"`
-		}
-		if json.Unmarshal(line, &v) != nil || v.Time.IsZero() || v.Time.Before(since) {
+		var native nativeAuditRow
+		if isNative && (decodeLaneControlObject(line, &native) != nil || !validNativeAuditRow(native)) {
 			continue
 		}
 		if isNative {

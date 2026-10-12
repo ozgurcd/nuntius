@@ -384,36 +384,6 @@ func observeNativeAuditLog(root *os.File, rows []nativeAuditRow, intent *nativeA
 	return delivered, nil
 }
 
-// Recognition precedes the closed decoder and public/Raw construction. Native
-// markers remain native even when their values or action are invalid. Inspect
-// decoded top-level keys so escaping and duplicate action fields cannot hide it.
-func hasNativeAuditEnvelope(line []byte) bool {
-	d := json.NewDecoder(bytes.NewReader(line))
-	if token, err := d.Token(); err != nil || token != json.Delim('{') {
-		return false
-	}
-	for d.More() {
-		key, err := d.Token()
-		if err != nil {
-			return false
-		}
-		if key == "native_audit_version" || key == "event_id" || key == "goal_revision" {
-			return true
-		}
-		var value json.RawMessage
-		if d.Decode(&value) != nil {
-			return false
-		}
-		if key == "tool" {
-			var tool string
-			if json.Unmarshal(value, &tool) == nil && tool == nativeAuditTool {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func validNativeAuditSource(source string) bool {
 	return source == "cli" || source == "web" || source == "mcp" || source == "native"
 }

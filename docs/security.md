@@ -18,11 +18,16 @@ acknowledged event against the journal and strict safe row schema; missing or
 damaged rows hold native work. Reconciliation appends only missing required
 events and preserves raw and legacy history. Oversized or incomplete files
 refuse readiness with a plain explanation instead of hiding unchecked data.
-Native envelope markers are recognized even with an invalid action. A malformed
-native envelope is rejected before public entry or raw-text construction, so an
-unexpected private body cannot enter the audit view. Genuine legacy rows without
-native markers stay readable. This is not authentication against hostile
-same-user file edits.
+Before decoding any audit row, readers unescape its top-level JSON keys. Known
+public and native fields must use their exact lowercase schema names. Case
+variants (including Unicode case aliases) and repeated decoded keys reject the
+row before any public entry or raw text is built. Escapes that decode to an exact
+name are allowed. The reserved action or any `native_audit_version`, `event_id`
+or `goal_revision` key then requires the complete closed native schema, even
+with an invalid action. Extra fields, including an unexpected private body,
+reject that row. Genuine legacy rows with exact known names and no native
+markers stay readable, including unknown actions. This is not authentication
+against hostile same-user file edits or protection after native evidence is removed.
 See [the delivery protocol](queue-format.md#native-audit-mirror-local-unpublished).
 
 ## Lane controls through judge MCP

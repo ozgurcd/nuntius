@@ -7,6 +7,14 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Audit readers now check field names before displaying a row. JSON escapes
+  are decoded first; known names must match the lowercase schema exactly.
+  Case variants and duplicate decoded keys hide that row. The reserved native
+  action or a native marker also requires the complete safe native schema, so
+  extra private body fields stay out of the audit view. Genuine older rows
+  with exact known names remain readable. Removing native evidence is outside
+  this rule.
+
 - Native goal decisions now retain why work was parked, cancelled or reviewed.
   A report alone cannot verify work, and a goal decision never stops a running
   agent. Approval explains that brief sealing is still unavailable. Full note
