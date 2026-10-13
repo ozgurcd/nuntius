@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
@@ -150,8 +151,24 @@ func goalRecordFingerprint(storage, record, mutation string) string {
 }
 
 func validGoalNote(n goalRecordNote) bool {
-	return queueText(n.Text, goalRecordNoteMaxBytes, false) && strings.TrimSpace(n.Text) == n.Text && !strings.ContainsAny(n.Text, "\r\n") &&
-		(n.Evidence == "" || (queueText(n.Evidence, 128, false) && strings.TrimSpace(n.Evidence) == n.Evidence && !strings.ContainsAny(n.Evidence, "\r\n")))
+	return goalNoteField(n.Text, goalRecordNoteMaxBytes, false) && goalNoteField(n.Evidence, 128, true)
+}
+
+// goalNoteField is shared by writers, candidate codecs and authoritative replay.
+// Keep this note-local: other queueText callers include multiline contracts.
+func goalNoteField(s string, limit int, emptyAllowed bool) bool {
+	if s == "" && emptyAllowed {
+		return true
+	}
+	if !queueText(s, limit, false) || strings.TrimSpace(s) != s {
+		return false
+	}
+	for _, r := range s {
+		if r == '\r' || r == '\n' || r == '\u0085' || r == '\u2028' || r == '\u2029' || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
+			return false
+		}
+	}
+	return true
 }
 
 func decodeGoalRecord(b []byte) (goalRecordData, error) {
