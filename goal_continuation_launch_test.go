@@ -509,17 +509,50 @@ func linkedDone(t *testing.T, m *Manager, lane string) <-chan struct{} {
 	return m.active[lane].done
 }
 
+func TestLinkedWaitDelayedCompletion(t *testing.T) {
+	t.Parallel()
+	done := make(chan struct{})
+	go func() {
+		time.Sleep(4250 * time.Millisecond)
+		close(done)
+	}()
+	linkedWait(t, done)
+}
+
 func linkedWait(t *testing.T, done <-chan struct{}) {
 	t.Helper()
+	// Real supervision also persists the end and any successor. Under race
+	// contention this can exceed four seconds; leave half the test budget
+	// for cleanup, and keep a finite bound when no test deadline is set.
+	bound := 30 * time.Second
+	if deadline, ok := t.Deadline(); ok {
+		bound = min(bound, time.Until(deadline)/2)
+	}
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
 	select {
 	case <-done:
-	case <-time.After(4 * time.Second):
+	case <-timer.C:
 		t.Fatal("fixture supervision event unavailable")
 	}
 }
 
 func linkedCleanup(t *testing.T, m *Manager) {
 	t.Helper()
+	// These fixtures exercise explicit ends and linked successors, not the
+	// runtime limit. Keep their child alive while the test checks its records;
+	// the original ten-second fixture limit can expire during race replay.
+	budget := time.Minute
+	if deadline, ok := t.Deadline(); ok {
+		budget = time.Until(deadline)
+	}
+	if budget <= 0 {
+		t.Fatal("fixture test deadline expired")
+	}
+	m.mu.Lock()
+	m.config.MaxRuntime = budget.String()
+	m.runtime = budget
+	m.mu.Unlock()
 	t.Cleanup(func() {
 		m.mu.Lock()
 		var done <-chan struct{}

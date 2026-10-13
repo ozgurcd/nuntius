@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -193,11 +195,79 @@ func coverageTransactionFixture(t *testing.T) (*Manager, goalCommitRequest) {
 	return m, goalCommitRequest{OperationID: "accept", ExpectedRevision: 1, Spec: b, Record: record, MutationSHA256: strings.Repeat("b", 64)}
 }
 
+// Each fault case receives the complete same private pre-commit history.
+// Build that history once; never share a writable store or request bytes.
+func coverageTransactionCopies(t *testing.T) func(*testing.T) (*Manager, goalCommitRequest) {
+	t.Helper()
+	base, request := coverageTransactionFixture(t)
+	before := goalCommitTree(t, base.store)
+	image := func(t *testing.T, dir string) map[string]string {
+		t.Helper()
+		result := map[string]string{}
+		for path, value := range goalCommitTree(t, dir) {
+			relative, err := filepath.Rel(dir, path)
+			if err != nil {
+				t.Fatal("coverage fixture path failed")
+			}
+			// Copies have fresh mtimes; inventory, bytes and modes must match.
+			result[relative] = value[:strings.LastIndexByte(value, ':')]
+		}
+		return result
+	}
+	source := image(t, base.store)
+	t.Cleanup(func() {
+		if !reflect.DeepEqual(before, goalCommitTree(t, base.store)) {
+			t.Error("shared coverage fixture changed")
+		}
+	})
+	return func(t *testing.T) (*Manager, goalCommitRequest) {
+		t.Helper()
+		dir := goalReplayDir(t)
+		err := filepath.WalkDir(base.store, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil || path == base.store {
+				return err
+			}
+			relative, err := filepath.Rel(base.store, path)
+			if err != nil {
+				return err
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			target := filepath.Join(dir, relative)
+			if entry.IsDir() {
+				return os.Mkdir(target, info.Mode().Perm())
+			}
+			if !info.Mode().IsRegular() {
+				return errors.New("coverage fixture contains a nonregular file")
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(target, data, info.Mode().Perm())
+		})
+		if err != nil {
+			t.Fatal("coverage fixture copy failed")
+		}
+		if !reflect.DeepEqual(source, image(t, dir)) {
+			t.Fatal("coverage fixture copy changed inventory, bytes or modes")
+		}
+		copy := request
+		copy.Spec = append([]byte(nil), request.Spec...)
+		copy.Record = append([]byte(nil), request.Record...)
+		copy.Seal = append([]byte(nil), request.Seal...)
+		return &Manager{store: dir}, copy
+	}
+}
+
 func TestCoveredClosureAtomic(t *testing.T) {
 	goalEndParallel(t)
+	fixture := coverageTransactionCopies(t)
 	for _, stage := range []string{"cascade_blob", "before_append", "partial_write", "journal_sync", "journal_directory_sync", "publication", "none"} {
 		t.Run(stage, func(t *testing.T) {
-			m, req := coverageTransactionFixture(t)
+			m, req := fixture(t)
 			before, err := replayGoalJournal(m.store)
 			if err != nil {
 				t.Fatal(err)
@@ -325,9 +395,10 @@ func coverageLastFrame(t *testing.T, m *Manager) (*os.File, []byte, uint64, goal
 
 func TestCoverageReplayIntegrity(t *testing.T) {
 	goalEndParallel(t)
+	fixture := coverageTransactionCopies(t)
 	for _, kind := range []string{"omitted", "partial", "forged", "duplicate", "revision", "cycle"} {
 		t.Run(kind, func(t *testing.T) {
-			m, req := coverageTransactionFixture(t)
+			m, req := fixture(t)
 			if _, _, err := m.commitGoal(req, goalCommitIO{}); err != nil {
 				t.Fatal(err)
 			}
