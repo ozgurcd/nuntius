@@ -317,7 +317,8 @@ the menu explains how to fix it. It never silently selects loopback instead.
 Each fresh known prerequisite refusal replaces an older send or browser error.
 A new attempt clears its previous error before rechecking readiness. A new
 click failure stays visible until a current known result or another attempt
-replaces it; unknown responses show only the fixed fallback remedy.
+replaces it. Unknown responses retain a click failure if there is no newer
+known result; otherwise they show the fixed fallback remedy.
 QR does not need an iMessage recipient or enabled notifications. Sending does:
 set your own `notify_imessage` recipient in the local configuration and turn
 on iMessage notifications. Menu sends use the latest configured recipient;

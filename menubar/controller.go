@@ -36,14 +36,17 @@ func (c *Controller) Refresh() {
 	lanes, err := c.client.Status()
 	if err != nil {
 		message := "Nuntius · dashboard stopped"
+		var actions map[string]ActionState
 		if failure, ok := err.(actionFailure); ok {
 			message = failure.Error()
+			current := safeAction(ActionState{Code: failure.code})
+			actions = map[string]ActionState{"phone": current, "qr": current}
 		}
 		if c.commandFailure != "" {
 			message = c.commandFailure
 		}
 		c.tray.Update("", message, nil, false)
-		c.updatePhoneActions(nil)
+		c.updatePhoneActions(actions)
 		return
 	}
 	running, attention := 0, 0

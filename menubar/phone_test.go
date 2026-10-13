@@ -87,6 +87,65 @@ func TestMenubarRefusalExactKeys(t *testing.T) {
 	}
 }
 
+func TestMenubarStatusRefusalSupersedesOld(t *testing.T) {
+	// Cover the complete fixed helper reason vocabulary, including the status
+	// endpoint's configuration and method refusals. Never display server text.
+	codes := []string{
+		"phone_access_off", "phone_restart_required", "tailnet_missing", "tailnet_not_running",
+		"tailnet_dns_missing", "tailnet_https_off", "serve_conflict", "funnel_enabled",
+		"readiness_unavailable", "setup_pending", "configuration_unavailable", "notifications_off",
+		"recipient_missing", "messages_unavailable", "messages_failed", "presentation_unavailable",
+		"presentation_open_failed", "method_refused", "action_unknown", "port_busy", "dashboard_stopped",
+	}
+	for _, code := range codes {
+		t.Run(code, func(t *testing.T) {
+			body := `{"code":"` + code + `","reason":"untrusted server text"}`
+			client := &socketClient{http: &http.Client{Transport: phoneTransport(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}}
+			tray := &phoneTray{}
+			c := Controller{tray: tray, client: client, phoneFailures: map[string]ActionState{
+				"phone": safeAction(ActionState{Code: "messages_failed"}), "qr": safeAction(ActionState{Code: "presentation_open_failed"}),
+			}}
+			for i := 0; i < 2; i++ {
+				c.Refresh()
+				for _, key := range []string{"phone", "qr"} {
+					if state := tray.actions[key]; state.Enabled || state.Code != code || state.Reason != actionReason(code) {
+						t.Errorf("%s row hides current %s refusal", key, code)
+					}
+				}
+				if len(c.phoneFailures) != 0 {
+					t.Error("superseded click failure retained")
+				}
+			}
+			// An unknown later result cannot resurrect a cleared click failure.
+			body = `{"code":"unknown","reason":"untrusted server text"}`
+			c.Refresh()
+			for _, key := range []string{"phone", "qr"} {
+				if state := tray.actions[key]; state.Enabled || state.Code != "" || state.Reason != actionReason("") {
+					t.Error("cleared click failure resurrected")
+				}
+			}
+		})
+	}
+	for _, body := range []string{`{"code":"unknown"}`, `{"CODE":"configuration_unavailable"}`, `{}`} {
+		t.Run(body, func(t *testing.T) {
+			client := &socketClient{http: &http.Client{Transport: phoneTransport(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}}
+			tray := &phoneTray{}
+			old := map[string]ActionState{"phone": safeAction(ActionState{Code: "messages_failed"}), "qr": safeAction(ActionState{Code: "presentation_open_failed"})}
+			c := Controller{tray: tray, client: client, phoneFailures: old}
+			c.Refresh()
+			for key, state := range old {
+				if tray.actions[key] != state || c.phoneFailures[key] != state {
+					t.Error("unknown status discarded a still-current click failure")
+				}
+			}
+		})
+	}
+}
+
 func TestMenubarCurrentRefusalSupersedesOld(t *testing.T) {
 	body := `{"lanes":[],"actions":{"phone":{"code":"notifications_off"},"qr":{"code":"tailnet_not_running"}}}`
 	client := &socketClient{http: &http.Client{Transport: phoneTransport(func(*http.Request) (*http.Response, error) {
