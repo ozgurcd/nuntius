@@ -16,10 +16,7 @@ var terminalPrivateText = []*regexp.Regexp{
 }
 
 func terminalMessage(text string) string {
-	for _, pattern := range terminalPrivateText {
-		text = pattern.ReplaceAllString(text, "[REDACTED]")
-	}
-	return bounded(text, 8192)
+	return bounded(approvePlain(text, true), 8192)
 }
 
 // terminalTurn reads a complete OpenCode stream, never a tail window. A stop
@@ -45,9 +42,9 @@ func (m *Manager) terminalTurn(r Run) (bool, string) {
 	reader := bufio.NewReaderSize(io.LimitReader(f, maxStream+1), maxEvent)
 	var read int64
 	active, stopped := false, false
-	final, session := "", ""
-	private := false
-	var privacy privateEventScanner
+	session := ""
+	finalIndex, eventIndex := -1, 0
+	var snapshot []byte
 	for {
 		line, err := reader.ReadSlice('\n')
 		if err == io.EOF && len(line) == 0 {
@@ -57,11 +54,10 @@ func (m *Manager) terminalTurn(r Run) (bool, string) {
 			return false, ""
 		}
 		read += int64(len(line))
-		begin, end, uncertain := privacy.markers(line)
-		private = private || begin || end || uncertain
 		if read > maxStream {
 			return false, ""
 		}
+		snapshot = append(snapshot, line...)
 		var v struct {
 			Type      string `json:"type"`
 			SessionID string `json:"sessionID"`
@@ -85,7 +81,7 @@ func (m *Manager) terminalTurn(r Run) (bool, string) {
 			if active || v.Part.Type != "step-start" {
 				return false, ""
 			}
-			active, stopped, final = true, false, ""
+			active, stopped, finalIndex = true, false, -1
 		case "step_finish":
 			if !active || v.Part.Type != "step-finish" {
 				return false, ""
@@ -99,19 +95,23 @@ func (m *Manager) terminalTurn(r Run) (bool, string) {
 				return false, ""
 			}
 			if v.Type == "text" && active {
-				if private {
-					final = "[REDACTED]"
-				} else {
-					final = terminalMessage(v.Part.Text)
-				}
+				finalIndex = eventIndex
 			}
 		default:
 			return false, ""
 		}
+		eventIndex++
 	}
 	after, err := f.Stat()
 	if err != nil || read != before.Size() || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) || active || !stopped {
 		return false, ""
 	}
-	return true, final
+	if finalIndex < 0 {
+		return true, ""
+	}
+	window := m.eventWindow(r.ID, snapshot, false)
+	if finalIndex != window.terminalIndex {
+		return true, redactionHidden
+	}
+	return true, window.terminalFinal
 }

@@ -222,9 +222,15 @@ func safeValue(v any) any {
 			x[i] = safeValue(x[i])
 		}
 	case map[string]any:
+		clean := make(map[string]any, len(x))
 		for k, a := range x {
-			x[k] = safeValue(a)
+			name := Redact(k)
+			if _, exists := clean[name]; exists {
+				return map[string]any{"redacted": redactionHidden}
+			}
+			clean[name] = safeValue(a)
 		}
+		return clean
 	}
 	return v
 }

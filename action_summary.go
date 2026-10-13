@@ -1,7 +1,6 @@
 package nuntius
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -85,7 +84,7 @@ func actionSummary(v map[string]any) string {
 			name = strings.Trim(server+"."+tool, ".")
 			args, _ = v["arguments"].(map[string]any)
 			if raw, ok := v["arguments"].(string); ok {
-				_ = json.Unmarshal([]byte(raw), &args)
+				args = approvedSourceArguments(raw)
 			}
 		} else if strings.HasPrefix(name, "mcp__") {
 			parts := strings.SplitN(strings.TrimPrefix(name, "mcp__"), "__", 2)
@@ -203,14 +202,13 @@ func stringField(v map[string]any, key string) string { s, _ := v[key].(string);
 
 func streamActions(b []byte) []actionEvent {
 	var out []actionEvent
-	lines := bytes.Split(b, []byte("\n"))
-	private := privateEventLines(b, lines)
-	for i, line := range lines {
-		if private != nil && private[i] {
+	projection := approveEvents(b, false)
+	for _, approved := range projection.events {
+		if approved.hidden {
 			out = append(out, actionEvent{Summary: "[REDACTED]"})
 			continue
 		}
-		for _, a := range eventActions(line) {
+		for _, a := range eventActions(approved.wire) {
 			a.Text = ""
 			out = append(out, a)
 		}

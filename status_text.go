@@ -237,8 +237,7 @@ func (m *Manager) writeStatus(out io.Writer, view any, long ...bool) error {
 			age = shortDuration(time.Duration(*s.LastEventAgeSeconds) * time.Second)
 		}
 		if s.RunID != "" {
-			b, _ := readWindow(filepath.Join(m.store, "runs", s.RunID, "events.jsonl"), true)
-			current = activity(b)
+			current = m.publicEventWindow(s.RunID).activity
 			if s.State == "running" && s.Started != nil {
 				r := Run{ID: s.RunID, Started: *s.Started}
 				eta = m.etaFromHistory(runs, r, m.agentKind(s.Lane), m.runSize(s.RunID), time.Duration(s.ElapsedSeconds)*time.Second)

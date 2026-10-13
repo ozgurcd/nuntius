@@ -28,7 +28,7 @@ func TestPrivateEOFReviewShapes(t *testing.T) {
 		{"code-fence-markers", []string{"```pem\n-----BEGIN PRIVATE KEY-----", body, "-----END PRIVATE KEY-----\n```"}, false},
 		{"oversized-physical-event", []string{strings.Repeat("x", (1<<20)+64) + "-----BEGIN PRIVATE KEY-----", body}, false},
 		{"one-character-events", many, false},
-		{"orphan-end-last-file-bytes", []string{body, "-----END EC PRIVATE KEY-----"}, true},
+		{"orphan-end-last-file-bytes", []string{"---", body, "-----END EC PRIVATE KEY-----"}, true},
 		{"unknown-alphabetic-label", []string{"-----BEGIN SYNTHPRIVATEKEY-----", body, "-----END SYNTHPRIVATEKEY-----"}, false},
 		{"mismatched-end-and-public-suffix", []string{"-----BEGIN EC PRIVATE KEY-----", "-----END RSA PRIVATE KEY-----", body, "public suffix"}, false},
 		{"fragment-with-metadata-and-crlf", []string{"--", "\r\n", "--", "public metadata", "-", "BEGIN RSA PRI", "VATE KEY", "-----", body}, false},
@@ -168,7 +168,7 @@ func TestPrivateEOFReviewLastMarkerTailData(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(c.ReportsDir, r.GoalID+".txt"), []byte("done"), 0600)
 	p := filepath.Join(store, "runs", r.ID, "events.jsonl")
 	body := "synthetic-last-marker-body"
-	data := append(privateMessage(body), bytes.TrimSuffix(privateMessage("-----END PRIVATE KEY-----"), []byte("\n"))...)
+	data := append(append(privateMessage("---"), privateMessage(body)...), bytes.TrimSuffix(privateMessage("-----END PRIVATE KEY-----"), []byte("\n"))...)
 	if e = os.WriteFile(p, data, 0600); e != nil {
 		t.Fatal("fixture")
 	}

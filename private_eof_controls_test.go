@@ -27,7 +27,7 @@ func TestPrivateEOFReviewEOFControls(t *testing.T) {
 				t.Fatal("report fixture")
 			}
 			p := filepath.Join(store, "runs", r.ID, "events.jsonl")
-			data := append(privateMessage(body), bytes.TrimSuffix(privateMessage("-----END PRIVATE KEY-----"), []byte("\n"))...)
+			data := append(append(privateMessage("---"), privateMessage(body)...), bytes.TrimSuffix(privateMessage("-----END PRIVATE KEY-----"), []byte("\n"))...)
 			if newline {
 				data = append(data, '\n')
 			}

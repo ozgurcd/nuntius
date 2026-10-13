@@ -324,7 +324,14 @@ func readDisplay(path string, limit int) string {
 	if e != nil {
 		return ""
 	}
-	return bounded(Redact(string(b)), limit)
+	if int64(len(b)) != fi.Size() {
+		return redactionHidden
+	}
+	after, err := f.Stat()
+	if err != nil || !os.SameFile(fi, after) || after.Size() != fi.Size() || !after.ModTime().Equal(fi.ModTime()) {
+		return redactionHidden
+	}
+	return bounded(approvePlain(string(b), false), limit)
 }
 
 func reportSections(report string) map[string]string {
@@ -422,8 +429,7 @@ func (w *Web) dataContext(parent context.Context) (any, error) {
 	for _, s := range status {
 		kind, eta, current := m.agentKind(s.Lane), "-", "-"
 		if s.RunID != "" {
-			b, _ := readWindow(filepath.Join(m.store, "runs", s.RunID, "events.jsonl"), true)
-			current = m.eventWindow(s.RunID, b, false).activity
+			current = m.publicEventWindow(s.RunID).activity
 			if s.State == "running" && s.Started != nil {
 				eta = m.etaFromHistory(runs, Run{ID: s.RunID, Started: *s.Started}, kind, m.runSize(s.RunID), time.Duration(s.ElapsedSeconds)*time.Second)
 			}

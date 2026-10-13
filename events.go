@@ -87,17 +87,18 @@ func (m *Manager) Tail(lane string, lines int) ([]string, error) {
 			return []string{final}, nil
 		}
 	}
-	b, e := readWindow(filepath.Join(m.store, "runs", r.ID, "events.jsonl"), true)
+	b, e := readSourceSnapshot(filepath.Join(m.store, "runs", r.ID, "events.jsonl"))
 	if e != nil {
 		return nil, e
 	}
+	window := m.eventWindow(r.ID, b, false)
 	if r.State != "running" && !m.reportExists(*r) {
-		final := m.eventWindow(r.ID, b, false).final
+		final := window.final
 		if final != "" {
 			return []string{bounded(final, 8192)}, nil
 		}
 	}
-	out = append(out, m.eventWindow(r.ID, b, false).tail...)
+	out = append(out, window.tail...)
 	if len(out) > lines {
 		out = out[len(out)-lines:]
 	}
@@ -248,5 +249,12 @@ func (m *Manager) Report(goal string) (string, error) {
 	if e != nil {
 		return "", errors.New("report cannot be read")
 	}
-	return bounded(string(b), 65536), nil
+	if len(b) > 65536 {
+		return redactionHidden, nil
+	}
+	after, err := f.Stat()
+	if err != nil || !os.SameFile(st, after) || st.Size() != int64(len(b)) || after.Size() != st.Size() || !after.ModTime().Equal(st.ModTime()) {
+		return redactionHidden, nil
+	}
+	return bounded(approvePlain(string(b), false), 65536), nil
 }

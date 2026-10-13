@@ -47,7 +47,7 @@ func TestEventCacheTailFreshnessAndGuards(t *testing.T) {
 	}
 	tail("go test ./bbb") // Same size and timestamp, different contents.
 	write(second + strings.TrimSuffix(first, "\n"))
-	tail("go test ./bbb") // Partial event must remain invisible.
+	tail("go test ./bbb\n[REDACTED]") // Unfinished scope supplies only a fixed indicator.
 	write(second + first)
 	tail("go test ./bbb\ngo test ./aaa")
 	write("")

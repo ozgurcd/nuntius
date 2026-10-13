@@ -239,22 +239,7 @@ func (l Lane) continuation() string {
 }
 
 func Redact(s string) string {
-	begin, end, uncertain := privateMarkers(s)
-	if uncertain || (end && !begin) || (begin && !secretPatterns[0].MatchString(s)) {
-		return "[REDACTED]"
-	}
-	// Every current pattern below needs one of these literal markers. Ordinary
-	// large reports can skip the regex scans; candidate text still runs through
-	// the complete, unchanged pattern set before any truncation.
-	if !strings.Contains(s, "-----BEGIN ") && !strings.Contains(s, "gh") &&
-		!strings.Contains(s, "github_pat_") && !strings.Contains(s, "sk-") &&
-		!strings.Contains(s, "xox") && !strings.Contains(s, "eyJ") && !strings.Contains(s, "=") {
-		return s
-	}
-	for _, p := range secretPatterns {
-		s = p.ReplaceAllString(s, "[REDACTED]")
-	}
-	return s
+	return approvePlain(s, false)
 }
 func bounded(s string, n int) string {
 	s = Redact(s)

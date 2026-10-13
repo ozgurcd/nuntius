@@ -1,5 +1,23 @@
 # Dashboard security notes
 
+## Shared source projection (v0.3.6 slice 1, local)
+
+Reports and event display readers inspect their complete bounded original
+source before clipping or formatting. One sealed event result feeds Tail,
+terminal fallback, action caches and dashboard data. Orphan, unmatched,
+nested, mismatched and out-of-order markers hide the whole event or plain
+segment; later markers cannot release it. A live trailing delimiter holds its
+contributing event and intervening range before publication. Decoded names and
+values, duplicate keys, source escapes and typed paths participate in approval.
+Original terminal lifecycle/session/file checks still decide whether a turn
+ended. Display approval cannot manufacture a stop.
+
+The no-key property covers recognized private/uncertain contexts and pending
+ranges. Earlier unrelated complete marker-free events remain public. This is
+not universal marker-free key detection or installed-service certification.
+See [the source contract and remaining proof scope](redaction.md) for exact
+grammar, limits, sink census, native fuzz/mutation recipe and slice-2 work.
+
 ## Native audit delivery (Unreleased)
 
 Native journal events remain authoritative. Audit rows are replayable copies

@@ -905,7 +905,7 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 			if s.DisplayState == s.State {
 				s.DisplayState = ""
 			}
-			if b, err := readWindow(filepath.Join(m.store, "runs", r.ID, "events.jsonl"), true); err == nil {
+			if b, err := readSourceSnapshot(filepath.Join(m.store, "runs", r.ID, "events.jsonl")); err == nil {
 				s.AskedInteractively = m.eventWindow(r.ID, b, false).asked
 				if s.State == "running" && s.LastEvent != nil {
 					s.CurrentAction = m.currentAction(r.ID, b, *s.LastEvent, time.Now())

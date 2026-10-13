@@ -8,7 +8,18 @@ RELEASE_VERSION ?= $(shell go run ./cmd/nuntius version | cut -d ' ' -f 2)
 RELEASE_NOTES_FILE ?= RELEASE_NOTES.md
 CHANGELOG_FILE ?= CHANGELOG.md
 
-verify: format-check build vet staticcheck test race govulncheck menubar-verify indicator-test
+verify: format-check build vet staticcheck test race govulncheck menubar-verify indicator-test redaction-proof
+
+.PHONY: redaction-proof
+# Deterministic recipes execute independently of coverage-guided seed selection.
+# Fuzz payloads are recipe bytes; disposable valid keys exist only in test memory.
+redaction-proof:
+	go test . -run '^(TestIndependentReview|TestRedaction|TestReview|TestRereview|TestRound3|TestHotfixReview|Fuzz)' -count=1 -v
+	go test . -run '^$$' -fuzz '^FuzzRedactionBytes$$' -fuzztime=60s -parallel=2
+	go test . -run '^$$' -fuzz '^FuzzRedactionEventTopology$$' -fuzztime=60s -parallel=2
+	go test . -run '^$$' -fuzz '^FuzzRedactionPrefixes$$' -fuzztime=60s -parallel=2
+	go test . -run '^$$' -fuzz '^FuzzRedactionCacheSchedule$$' -fuzztime=60s -parallel=2
+	go test . -run '^$$' -fuzz '^FuzzRedactionPublicSinks$$' -fuzztime=60s -parallel=2
 
 .PHONY: menubar-verify indicator-test
 menubar-verify:

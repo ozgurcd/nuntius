@@ -72,6 +72,13 @@ labels explain the state. See [the design note](menubar-design.md).
 make verify
 ```
 
+The local v0.3.6 slice adds `make redaction-proof` to that native gate. It runs
+permanent regression/property checks and semantic mutation overlays, then five
+coverage-guided fuzz campaigns, each for 60 seconds with two workers. The
+campaign recipes generate disposable keys only after decoding nonsecret inputs.
+Mutation failures must be semantic; compile failures never count as proof.
+See [the redaction contract](redaction.md) for scope and retained limits.
+
 Read [Release notes](../RELEASE_NOTES.md) for user-facing changes and upgrade
 actions, and [CHANGELOG](../CHANGELOG.md) for technical detail. Contributors must
 add a section to both files for each release. `make release-notes-test` checks

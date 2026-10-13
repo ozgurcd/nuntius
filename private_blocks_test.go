@@ -112,7 +112,7 @@ func TestPrivateMarkerVariants(t *testing.T) {
 		{"split-appends", [][]byte{privateMessage("-----BE"), privateMessage("GIN PRIVATE KEY-----"), privateMessage(body), privateMessage("-----END PRI"), privateMessage("VATE KEY-----")}},
 		{"whitespace", [][]byte{privateMessage("----- BEGIN\tRSA  PRIVATE\nKEY -----"), privateMessage(body), privateMessage("----- END RSA PRIVATE KEY -----")}},
 		{"json-string", [][]byte{[]byte(`{"type":"item.completed","item":{"type":"command_execution","command":"\u002d\u002d\u002d\u002d\u002dBEGIN PRIVATE KEY-----"}}` + "\n"), privateMessage(body), privateMessage("-----END PRIVATE KEY-----")}},
-		{"end-without-begin", [][]byte{privateMessage(body), privateMessage("-----END PRIVATE KEY-----")}},
+		{"end-without-begin", [][]byte{privateMessage("---"), privateMessage(body), privateMessage("-----END PRIVATE KEY-----")}},
 		{"begin-without-end", [][]byte{privateMessage("-----BEGIN PRIVATE KEY"), privateMessage(body)}},
 		{"partial-end", [][]byte{privateMessage("-----BEGIN PRIVATE KEY-----"), privateMessage("-----END PRIVATE KEY"), privateMessage(body)}},
 	} {

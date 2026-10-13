@@ -1,7 +1,6 @@
 package nuntius
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"strings"
 )
@@ -20,9 +19,11 @@ type cachedEventLine struct {
 	final           string
 	hasFinal, asked bool
 	activity        string
+	terminalFinal   string
 }
 
 type parsedEventWindow struct {
+	policy           string
 	digest           [32]byte
 	used             uint64
 	lines            map[[32]byte]cachedEventLine
@@ -32,6 +33,9 @@ type parsedEventWindow struct {
 	asked            bool
 	activity, effort string
 	tail             []string
+	terminalFinal    string
+	terminalIndex    int
+	lexical          map[[32]byte]sourceLexicalProof
 }
 
 // eventWindow is called with m.mu held. Callers still read through privateFile
@@ -47,7 +51,7 @@ func (m *Manager) eventWindow(runID string, b []byte, prefix bool) *parsedEventW
 	digest := sha256.Sum256(b)
 	m.eventCacheClock++
 	old := m.eventWindows[key]
-	if old != nil && old.digest == digest {
+	if old != nil && old.digest == digest && old.policy == redactionPolicy {
 		old.used = m.eventCacheClock
 		return old
 	}
@@ -61,19 +65,29 @@ func (m *Manager) eventWindow(runID string, b []byte, prefix bool) *parsedEventW
 		}
 		delete(m.eventWindows, oldest)
 	}
-	w := &parsedEventWindow{digest: digest, used: m.eventCacheClock, activity: "-"}
+	w := &parsedEventWindow{digest: digest, policy: redactionPolicy, used: m.eventCacheClock, activity: "-"}
 	if prefix {
 		w.effort = codexEffort(b)
 		m.eventWindows[key] = w
 		return w
 	}
-	lines := bytes.Split(b, []byte("\n"))
-	private := privateEventLines(b, lines)
+	var previous map[[32]byte]sourceLexicalProof
+	if old != nil && old.policy == redactionPolicy {
+		previous = old.lexical
+	}
+	projection := approveEventsWithCache(b, false, previous)
+	w.lexical = projection.lexical
+	lines := projection.events
+	w.terminalIndex = -1
 	w.lines = make(map[[32]byte]cachedEventLine, min(len(lines), 8192))
 	pending := map[string]actionEvent{}
 	var summaries []string
-	for i, line := range lines {
-		if private != nil && private[i] {
+	for index, approved := range lines {
+		line := approved.wire
+		if approved.terminal && approved.hidden {
+			w.terminalIndex, w.terminalFinal = index, redactionHidden
+		}
+		if approved.hidden {
 			w.final = "[REDACTED]"
 			w.latest = actionEvent{Summary: "[REDACTED]"}
 			pending = map[string]actionEvent{}
@@ -84,18 +98,26 @@ func (m *Manager) eventWindow(runID string, b []byte, prefix bool) *parsedEventW
 		}
 		hash := sha256.Sum256(line)
 		parsed, ok := w.lines[hash]
-		if !ok && old != nil {
+		// Formatting reuse follows this version's sealed approval. It never
+		// authorizes a raw body line or supplies privacy state.
+		if !ok && old != nil && old.policy == redactionPolicy {
 			parsed, ok = old.lines[hash]
 		}
 		if !ok {
 			parsed.activity = activity(line)
 			final, asked, hasFinal := questionEvent(line)
+			if approved.terminal {
+				parsed.terminalFinal = terminalMessage(final)
+			}
 			parsed.final, parsed.asked, parsed.hasFinal = bounded(final, 8192), asked, hasFinal
 			for _, a := range eventActions(line) {
 				a.Text = ""
 				a.Summary = strings.Clone(a.Summary)
 				parsed.actions = append(parsed.actions, cachedAction{a})
 			}
+		}
+		if approved.terminal {
+			w.terminalIndex, w.terminalFinal = index, parsed.terminalFinal
 		}
 		w.asked = w.asked || parsed.asked
 		if parsed.hasFinal {
