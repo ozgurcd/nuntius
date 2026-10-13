@@ -1,6 +1,6 @@
 # Dashboard security notes
 
-## Shared source projection (v0.3.6 slice 1, local)
+## Shared source projection (v0.3.5 candidate)
 
 Reports and event display readers inspect their complete bounded original
 source before clipping or formatting. One sealed event result feeds Tail,

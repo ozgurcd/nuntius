@@ -1,188 +1,54 @@
 # Changelog
 
-## Unreleased
+## v0.3.5 — 2026-10-14
 
-- Retain native resources before publishing an eligible pending message,
-  Claude acknowledgement or interrupted recovery end. Persist a closed safe
-  branch label, preserve paused recovery counts and refuse verification while
-  pending, including after a late report. Link message, acknowledgement,
-  recovery, explicit Reply and held Send successors before OS start under one
-  retained reservation. Reobserve trusted source/capabilities/claims and physical
-  scope twice; adopt exact uncertain children without resending. Append exact
-  held-message settlement without rewriting historical ends.
+- Approve complete bounded plain/event sources before clipping, field selection,
+  action summaries, terminal projection or cache reuse. Keep original-coordinate
+  spans, typed schema paths, ordered decoded keys/values, pending contributors
+  and whole-scope uncertainty. Preserve earlier unrelated approved events.
+  Retain the exact marker grammar, budgets and ordinary/terminal filters.
+- Close the nested string-argument decode boundary with reviewed source-pass-2
+  fail-closed behavior, permanent nested/Unicode/key/cache regressions and a
+  semantic guard mutation. No post-pass decoder may restore uninspected private
+  content. String-encoded MCP tool arguments without a proved source mapping
+  hide the affected event and generation suffix, even for public strings.
+- Shared source approval covers report text, data report/event projections,
+  MCP serialization, Tail, display caches and event-derived CLI summaries.
+  Notes/freeze/audit, lane names, history metadata, menu metadata and browser
+  DOM/accessibility proof remain slice 2 for v0.3.6. Existing filters still
+  apply to those entrances; this release does not certify their source-first
+  ordering or claim complete coverage of every display sink.
+- Add independent plain/event references, directed prefix/topology/cache
+  campaigns, parse/sign/verify controls for Ed25519/RSA/EC fixtures and
+  semantic mutation RED/restored GREEN checks. Retain previous review
+  regressions. Incremental checkpoint reuse, broader all-sink generators,
+  parsed DSA/OpenSSH/encrypted-envelope validity and browser proof remain
+  v0.3.6 obligations. Finite campaigns do not certify arbitrary inputs.
+- Ship inherited lane pause/admission/held-message transactions and durable
+  receipts with CLI/MCP/guarded dashboard controls, ended-process observation,
+  independent sign-out clearing and bounded receipt retention. Resume starts
+  no work and sends no held message; sending or discarding requires review.
+- Ship report overview/live tails, bounded foreground polling, Queue counts
+  and narrow-layout fixes, saved phone-access opt-in and current menu refusals.
+  Saving preferences sends nothing and restarts nothing.
+- Retain B01–B13 native schema/journal/receipt/audit/decision/dependency/seal/
+  admission/dispatch/end/reservation/continuation foundations internally.
+  Native continuations retain reservations and reobserve trusted source,
+  capabilities, claims and physical scope before launch. Reject invalid
+  Unicode note separators. Public native adapters, automatic scheduling,
+  grants, imports and cutover remain unavailable. Report observation does
+  not verify work.
+- Isolate compiled fake-agent start markers in private per-fixture
+  destinations. Repair race/deadline fixtures while preserving exact start,
+  argv, clone/adoption, lifetime, slot and timeout predicates and assertions.
 
-- Save opt-in phone access for normal and menu-bar startup. Preserve the
-  private recipient through verified recovery without a premature send.
-  Recheck phone readiness on clicks and show separate fixed QR/iMessage
-  refusal reasons in disabled menu items; keep private links off argv.
-
-- Bind each native reservation's canonical write to immutable, ordered
-  repository-root and ancestor evidence. Refuse substituted paths on save,
-  replay and end/release; preserve genuine aliases and historical scope when
-  roots disappear, and recheck physical identity before launch.
-
-- Record actual native attempt ends automatically, including immediate exits,
-  timeout and cancellation. Keep ended goals open for judge review, bind bounded
-  report digests to the current attempt, and repair saved ends after journal or
-  audit delivery failure. Audit views explain ends and available reports as
-  successful observations. Linked continuations retain the same approved scope.
-
-- Add internal dispatch of saved approved native goals with revision and retry
-  checks, durable full-ID reservations, exact brief delivery and running
-  receipts. Uncertain launch holds resources and adopts only the identified
-  child; native IDs refuse legacy text replacement. Public controls and
-  public native adapters remain assigned to later steps.
-
-- Add internal native goal admission with shared locked Ready/Startable checks,
-  current lane and source observations, canonical write/resource reservations,
-  fresh complete claim checks, and deterministic eligible selection. Required
-  lane bindings never fall back; refusal reasons remain visible in plain words.
-  This component adds no reservation, launch, public control or scheduler.
-
-- Prepare native brief delivery with exact wrapper-inclusive byte/code-point
-  limits and immutable private workspace artifacts for oversized prompts. Keep
-  full/pointer digests and sizes, preserve resume artifacts, and use one safety
-  predicate for new delivery, retained retries and saved descriptors. Native
-  public controls remain unavailable; internal dispatch revalidates delivery.
-
-- Refuse obsolete or unreviewed native approval in candidate saves and history replay, including unchanged seals and decision history.
-
-- Show the Queue tab count with the first dashboard snapshot. Say a missing idle
-  reason once and show lane model and effort settings in plain words, with exact
-  values kept in Evidence. Counts keep a short reminder and an accessible full
-  explanation that remembers its open or closed view preference. Phone and
-  zoomed narrow headers scroll with the page, with title and controls on separate
-  wrapping rows. Neutral card badges have stronger dark-mode text contrast.
-
-- Compile immutable native brief seals from exact body, declared separator and
-  shared standards bytes. Bind profile, source observation, spec, revision and
-  authority with separate body/standards/final/dispatch digests and byte/code-point
-  measurements, including wrapper overhead. Refuse invalid encoding, markers,
-  headers and size; changed sources need review without rewriting approved
-  bytes. Approval and history replay share the same seal checks; refresh removes
-  obsolete approval and exact grant binding. Launch and public native
-  controls remain unavailable.
-
-- Add verified-only native prerequisites and full combined dependency/coverage
-  cycle checks, including forward references. Structured coverage parks settled
-  sources and closes their transitive chain only from retained target acceptance.
-  One journal frame publishes every affected revision, with explicit closure
-  provenance and the same complete save/replay predicate. Coverage never invents
-  a run or report. Strict key and one-line rules apply to retained closure data.
-  Public native controls and launches remain unavailable.
-
-- Reapply native decision checks during candidate saves and journal replay.
-  Retained accounting must support the reviewed attempt and report; alternate
-  review still requires settled work. Park, cancel and approval share the
-  writer's prerequisites, and decisions cannot invent approval or batch binding.
-  Reject Unicode line and paragraph separators in decision reasons, including
-  retained evidence, without changing unrelated Queue text. Initial history
-  cannot invent a decision about a missing prior revision.
-
-- Share native recognition and public audit decoding through an exact-key
-  pre-pass. After JSON unescaping, known field names must match the lowercase
-  schema exactly; case aliases and duplicate decoded keys reject the row.
-  Native markers or the reserved action also require the closed safe schema
-  before entry or raw text is built. Exact escaped names and genuine legacy
-  unknown actions remain readable; removed native evidence is outside this rule.
-
-- Add internal native goal decisions with retained reasons and authority/review
-  references, exact transition checks and current-attempt report binding.
-  Running park/cancel refuses without stopping work; permanent results need
-  a new ID to reopen. Production approval explains that brief sealing is not
-  available yet. Encoded metadata capacity has a distinct plain refusal.
-  No public goal controls, native launch or scheduler is enabled.
-
-- Check acknowledged native audit events against the journal and intact safe
-  rows before reporting healthy delivery. Restore only missing required rows,
-  preserving raw history. Explain bounded-inspection refusals. Reject malformed
-  native envelopes before public or raw presentation, even with a missing or
-  invalid action; genuine legacy rows stay readable.
-
-- Add internal native goal record operations: drafted creation, typed revision
-  checks, append-only notes, permanent terminal results, and complete bounded
-  open lists with paginated terminal results. Scope or seal changes clear
-  approval and batch binding. Overflow refuses without dropping history.
-  This component exposes no public controls and starts no work.
-
-- Add an internal native journal audit mirror with durable delivery intent,
-  event IDs, pending state and fail-closed admission checks. Crash replay may
-  repeat safe rows; audit readers deduplicate their IDs and show plain summaries.
-  No native public operation or launcher is enabled.
-
-- Add an internal native goal commit component with revision checks, immutable
-  private blobs and operation receipts. A repeated operation returns its saved
-  result without another event; uncertain saves require lookup before retry.
-  No public native control or agent launch is enabled.
-
-- Add internal bounded, checksummed native goal journal replay with private
-  spec and seal references, detached metadata and fail-closed corruption checks.
-  Incomplete final appends remain uncommitted and reads preserve all files.
-  Reject unpaired escaped Unicode surrogates in native specs. No public writer or
-  native control is enabled.
-
-- Replace held-message receipt snapshots instead of accumulating old rows.
-  Keep only reviews still being read or acted on, within the server's row and
-  receipt ceilings, and explain when fewer latest receipts are shown.
-
-- Add the internal native goal schema and strict decoder, with explicit work
-  scope, engine/work-class separation, holds and bounded safe metadata. Creation
-  grants no approval. The schema component alone adds no storage; no native
-  launch or public operation is enabled.
-
-- Add identity-bound held-message review, explicit Send and Discard, durable
-  receipt explanations and retained removed-lane Resume. Resume never replays
-  messages. Unknown or timed-out results reread once without claiming delivery.
-- Show Running, Available, overlapping Paused and outcome-based Ended totals
-  from one operational snapshot. Keep missing-report attention independent of
-  holds and clear held rows, private selectors and drafts on sign-out.
-
-- Fail closed when fresh lane controls are unavailable, even at a lower
-  fallback revision. Explain newer changes after stale save replies and read
-  current state once without retrying the change. Say when a lane was already
-  paused or resumed instead of claiming a new saved change.
-
-- Add one guarded dashboard lane-control client with Pause lane, Pause after
-  current and Resume lane, revision checks, whole-save deadlines, uncertainty
-  rereads and sign-out ownership. Keep hold badges separate from run outcomes,
-  block new task messages on paused lanes, and preserve focus, tail and Cancel.
-- Explain Agents activity, ages, duration provenance and current/previous report
-  association. Sort attention before working lanes while keeping readers in
-  place, with selectable lane order and wrapping phone labels.
-
-- Add guarded revision-checked HTTP lane pause/resume and identity-bound held
-  send/discard, fixed plain errors, bounded requests and one shared dashboard
-  mutation limit. Make operational GETs observe controls and ended runs without
-  creating files, repairing intent or starting work.
-
-- Use safe process observation in every lane-control snapshot, including MCP
-  pause/resume results and refusal fallbacks. Ended runs no longer appear to be
-  draining; surviving and unverified processes keep their running blocker.
-
-- Observe ended processes in CLI status, agents and lane lists without changing
-  stored data or starting recovery. Restore missing-report attention and show
-  the local date and time zone for lane holds.
-
-- Add judge MCP lane pause/resume with required revision checks, strict closed
-  arguments and structured JSON plus identical text. Explain paused refusals
-  and preserve independent status/safety tools when lane controls are corrupt.
-  Require host Ask for both controls; avoid duplicate manager mutation audits.
-
-- Add CLI lane pause/resume/list and explicit held-message review/send/discard
-  with durable content receipts. Keep read-only CLI status/agents/list free of
-  file creation, intent repair and child launch. Expose versioned safe holds
-  separately from run state, failed outcomes, report presence and attention badges.
-
-- Reports & runs shows the report's summary, status, owner questions, commits
-  and next steps before its full redacted text. Missing or incomplete answers
-  stay visible, and a normal process exit does not prove the work is complete.
-- Open agent tails follow new output. Scrolling up pauses automatic scrolling
-  and shows a button to jump to new lines. The same refresh rate and private
-  output protection apply.
-- Bound dashboard, Queue and Settings GETs to ten seconds through body decoding;
-  explicitly settle timeouts, abort obsolete reads and discard superseded replies.
-  Refresh immediately on visible/focus/pageshow, preserve Settings drafts and
-  show last-success age after failed reads. Never retry mutation requests.
+Checks depend on recognizable private context. They do not detect every
+unmarked key or erase text exposed by an earlier version. Uncertain or
+oversized input may hide more text. This main-line candidate excludes the
+separate hotfix-branch implementation, slice 2, B14–B26, A12, History, C25
+and Local-Judge. Publication requires final-source native validation, accepted
+privacy review, exact-SHA CI and the existing artifact/cask checks. No owner
+configuration, installation or restart changes are automatic.
 
 ## v0.3.4 — 2026-10-11
 

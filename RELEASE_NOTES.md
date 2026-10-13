@@ -5,155 +5,50 @@ User-facing changes and upgrade actions are listed newest first. See the
 restart an existing server. Choose when to upgrade through the Homebrew tap
 and restart your MCP server or background dashboard to load the new binary.
 
-## Unreleased
+## v0.3.5 — 2026-10-14
 
-- Internal native work now stays reserved when a reply, acknowledgement or
-  recovery is pending. Paused interruptions remain ended and open for review;
-  Resume starts nothing, and a late report cannot release pending work.
-  Internal continuations now link the next run before it starts and keep the
-  same reviewed scope. Fresh trusted observations are required; stored hashes
-  cannot start work. Held text still needs exact Send or Discard review.
+Nuntius checks complete bounded private-text sources before shortening,
+summarizing or reusing them. This covers report text, data report/event
+projections, MCP serialization, Tail, display caches and event-derived CLI
+summaries. Recognized private-key blocks and uncertain or unfinished marker
+contexts hide the affected event or text segment. Later markers cannot make
+that text visible again. Earlier unrelated approved events stay readable.
 
-- Phone actions now explain what is missing in the menu. Save Phone access
-  through Tailscale in Settings, then stop and start locally. Recovery keeps
-  your private recipient, and sends only after it verifies the dashboard.
+Notes/freeze/audit, lane names, history metadata, menu metadata and browser
+DOM/accessibility proof are not yet covered by the new source-first contract.
+They retain existing filters. That wider slice-2 work belongs to v0.3.6.
 
-- Native reservations keep an exact saved mapping from reviewed writes to
-  their physical repository paths. Changed mappings refuse on save, restart
-  replay and end/release. Genuine path aliases remain supported; a changed
-  repository identity prevents launch.
+- Pause a lane while its current work finishes. Resume clears only the hold;
+  it starts no work and sends no held message. Review a held message before
+  explicitly sending or discarding it. CLI, judge tools and dashboard explain
+  saved holds and uncertain results.
+- Reports put the result, owner questions and next steps first. Live tails
+  follow new output; scrolling up lets you read at your own pace. Foreground
+  reads recover from stalled refreshes, Queue counts appear immediately, and
+  narrow headers and clearer badges improve the inherited dashboard views.
+- Save phone access through Tailscale for the next local start. Menu actions
+  show the current reason when phone access or message delivery is unavailable.
+  Saving a preference sends nothing and restarts nothing. These inherited menu
+  changes do not certify slice-2 privacy coverage.
+- Offline fixture repairs keep fake-agent start records inside their fixtures
+  and preserve assertions, deadlines and bounded child cleanup. Native goal
+  foundations remain internal; public native Queue controls, automatic
+  scheduling, grants and imports are not enabled.
 
-- Internal native goals now record when their agent ends, even without a report
-  or a separate tracking script. Ended work stays open until the judge reviews
-  it. Saved ends and report observations can be repaired after restart; uncertain
-  delivery keeps new work held. This local component adds no public controls.
+Limits: checks depend on recognizable private context. They do not detect
+every unmarked key or erase text an earlier version exposed. Uncertain or
+oversized input may hide more text than before. String-encoded nested tool
+arguments without a safe source mapping are hidden even when public. Finite
+native campaigns do not prove every possible input, installed service or phone
+session. Incremental checkpoint reuse, broader all-sink proof and additional
+envelope validity controls remain for v0.3.6. The macOS helper remains ad-hoc
+signed and unnotarized.
 
-- Internal native dispatch now starts the saved approved brief by goal ID.
-  A repeated request keeps its original run. If start is uncertain, the goal
-  stays held for review rather than starting another child. Public goal
-  controls are not enabled yet; internal successors use linked accounting.
-
-- Native admission now explains whether reviewed work is ready and whether a
-  lane can start it. Pauses, missing review, unavailable claims and overlapping
-  work remain visible reasons to wait. This internal check starts no agent and
-  adds no dashboard, CLI or MCP action.
-
-- Oversized native briefs can now use a short pointer to the complete reviewed
-  file in an explicitly selected workspace. Nuntius keeps the full text and
-  shared rules once, records their digests and sizes, and preserves the file for
-  resume. Unsafe or changed files need review. This internal delivery component
-  starts no work and adds no dashboard, CLI or MCP control.
-
-- Native history refuses outdated approval after scope changes and approval without a new reviewed decision; no work starts.
-
-- The dashboard shows the Queue count without opening Queue. Idle cards explain
-  a missing reason once, and lane settings use plain words. Open **What do these
-  counts mean?** for the full explanation; your browser remembers that choice.
-  At phone widths and in narrow zoomed windows, the header scrolls out of the
-  way and the title and buttons use separate rows. Idle badges are easier to
-  read in dark mode. No work starts because of these view changes.
-
-- Native briefs now retain the exact reviewed body and shared rules in an
-  immutable seal. Changed source observations need review before approval;
-  refreshing a brief removes its old approval and automatic grant. Invalid
-  headers, encoding, duplicate shared rules and oversized briefs explain why
-  review is needed. These internal operations start no work and remain
-  unavailable through the dashboard, CLI or MCP.
-
-- Native prerequisites now require verified work. Cancellation or an ended run
-  cannot unblock them. Explicit coverage holds related work until its target
-  review is accepted, then closes the covered chain together with visible review
-  references. It does not invent runs or reports. These internal operations
-  remain unavailable through the dashboard, CLI or MCP.
-
-- Native goal history now checks saved decisions against the work they reviewed,
-  using the same rules as a new decision. Old attempts, changed reports and
-  unsettled work cannot become verified through history replay. Reasons stay
-  on one line, including Unicode separators. This checks history consistency;
-  it does not prove who supplied a review reference. These internal controls
-  remain unavailable through the dashboard, CLI or MCP.
-
-- Audit readers now check field names before displaying a row. JSON escapes
-  are decoded first; known names must match the lowercase schema exactly.
-  Case variants and duplicate decoded keys hide that row. The reserved native
-  action or a native marker also requires the complete safe native schema, so
-  extra private body fields stay out of the audit view. Genuine older rows
-  with exact known names remain readable. Removing native evidence is outside
-  this rule.
-
-- Native goal decisions now retain why work was parked, cancelled or reviewed.
-  A report alone cannot verify work, and a goal decision never stops a running
-  agent. Approval explains that brief sealing is still unavailable. Full note
-  metadata explains its capacity limit without dropping earlier notes. These
-  internal controls are not yet exposed through the dashboard, CLI or MCP.
-
-- Native audit checks now detect missing or damaged delivered events. Native
-  work stays held until safe delivery is restored; retry adds only missing
-  events and preserves existing history. Files that cannot be checked safely
-  explain why. Malformed native rows never expose an unexpected private body
-  in the audit view. Genuine older audit rows remain readable.
-
-- Native records now have internal revision checks and retained notes. Creating
-  a record leaves it drafted. Permanent results accept notes and correction
-  evidence without changing the result. Oversized lists explain the failure
-  instead of hiding records. Native controls and launches remain unavailable.
-
-- Native audit delivery now has an internal replayable record. Safe rows show
-  which event and adapter they describe; repeated delivery appears once to audit
-  readers. Pending delivery keeps native work held. Native goal controls and
-  launches are still unavailable.
-
-- Document how native goal changes are saved safely and how to check an
-  uncertain save before retrying. Repeating the same operation cannot create
-  another history event. This internal component adds no controls or work.
-
-- Document how native goal history is read safely. Incomplete final records
-  stay uncommitted; damaged history requires review and is never silently
-  skipped or removed. This internal reader adds no controls and starts no work.
-
-- Document the native goal data format: separate work scope, engines and holds.
-  This internal component adds no controls and starts no work. Creating goal
-  data does not approve it; the portable Queue works as before.
-
-- Review held messages in Messages & notes before sending or discarding the
-  exact original message. Resume clears a lane hold and leaves the message
-  visible; it starts no work and never sends the message automatically.
-  Uncertain responses read the receipt again without claiming delivery.
-- Available now means a configured lane without running work or admission
-  blockers. Paused includes a running lane that is finishing its current work;
-  the header explains that overlap. Removed lanes have a retained-holds section
-  with Resume only, and private review rows and drafts clear when you sign out.
-
-- Pause or resume a lane from its Agents card. Pause blocks new work while
-  the current run finishes. Resume starts no work and explains remaining holds.
-  Unconfirmed saves read current state before you choose another action.
-- Agents now explain activity, silence, idle uncertainty and usual duration.
-  Attention appears first; cards stay in place while you read or use controls.
-  Report links distinguish the current attempt from a previous goal.
-
-- Dashboard reads now show saved lane holds without changing control state or
-  starting work. Guarded lane and reviewed-message APIs explain conflicts,
-  busy locks and uncertain saves. All dashboard changes share a bounded rate;
-  lane buttons use the same guarded API.
-
-- Ask the judge to pause or resume a lane, with your approval on each call.
-  Status shows the saved hold and remaining blockers. Pause lets the current
-  run finish; resume clears only the hold and starts no work. Failures explain
-  what happened and when a fresh status read is needed before trying again.
-
-- Pause a lane from the CLI while its current run finishes. Resume clears only
-  that hold and starts no work. List explains saved holds, including removed
-  lanes; status keeps failures and reports visible. Held messages stay for your
-  explicit review, send or discard. Reading lane state creates no files.
-
-- Reports now put what happened, owner decisions and next steps first.
-  Full redacted reports and goals expand below without a second scroll box.
-  Unclear answers stay marked as unknown; reported commits are not proof of a push.
-- Agent tails keep updating while open. Scroll up to read at your own pace,
-  then jump to the latest lines. Private output stays hidden.
-- Queue counts recover from stalled connections without a reload. Returning
-  to the dashboard refreshes it immediately, including browser history restore.
-  Failed refreshes keep the last data and show its age; Settings drafts stay intact.
+Upgrade through the Homebrew cask when you choose after publication. Restart
+the relevant MCP host, dashboard and helper when safe to load the new binary.
+Publication performs no automatic upgrade or restart. B14–B26, A12, History,
+C25 and Local-Judge remain deferred. This candidate uses the main-line repair;
+it includes no separate hotfix-branch transplant or new automatic launch authority.
 
 ## v0.3.4 — 2026-10-11
 

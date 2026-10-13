@@ -1,4 +1,12 @@
-# Source privacy contract (v0.3.6 slice 1)
+# Source privacy contract (v0.3.5 candidate)
+
+The v0.3.5 candidate combines reviewed slice 1 and FIX-1 with marker isolation
+and race/deadline fixture repairs. Shared source approval covers report text,
+data report/event projections, MCP serialization, Tail, display caches and
+event-derived CLI summaries. Notes/freeze/audit, lane names, history metadata,
+menu metadata and browser DOM/AX proof remain slice 2 for v0.3.6; existing
+filters still apply there. This is a release candidate, not publication or
+installed-service acceptance.
 
 Policy ID: source-pass-2. Q1 covers recognized private/uncertain contexts and
 contributing pending ranges. Marker-free key recognition is not promised.
@@ -105,8 +113,9 @@ test is outside this main-based slice; native main age controls remain unchanged
 Permanent independent-review regressions cover nested MCP arguments, Unicode
 separators/escaped and duplicate keys, and primed/reversed cache schedules.
 M14 bypasses the shared nested-argument guard and must fail the nested probe
-semantically; compilation failure does not count. Full acceptance and commit
-remain dependent on the separate marker and lifecycle race fixes (judge QH).
+semantically; compilation failure does not count. The combined candidate
+includes the marker and lifecycle race fixes. Full acceptance still requires
+the exact final candidate gate and the owner's later release approval (judge QH).
 
 The plain and event references use their own normalization, token traversal,
 path types and span/state code. Exact output, scope/frontier and original

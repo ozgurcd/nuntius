@@ -5,7 +5,7 @@
 
 # nuntius
 
-Nuntius v0.3.4 is a small local Go MCP server for a judge using Claude Desktop.
+Nuntius v0.3.5 is a small local Go MCP server for a judge using Claude Desktop.
 It starts and follows configured Claude Code, Codex and OpenCode agent pools on macOS or Linux.
 It contains no LLM and does not call model providers. Dashboard readiness
 uses loopback HTTP; agent programs and optional Tailscale/Messages integrations
@@ -72,7 +72,7 @@ labels explain the state. See [the design note](menubar-design.md).
 make verify
 ```
 
-The local v0.3.6 slice adds `make redaction-proof` to that native gate. It runs
+The v0.3.5 source privacy repair adds `make redaction-proof` to that native gate. It runs
 permanent regression/property checks and semantic mutation overlays, then five
 coverage-guided fuzz campaigns, each for 60 seconds with two workers. The
 campaign recipes generate disposable keys only after decoding nonsecret inputs.
