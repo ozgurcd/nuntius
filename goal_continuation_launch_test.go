@@ -64,6 +64,7 @@ func linkedPending(t *testing.T, base *Manager, parent Run, ctx goalDispatchCont
 	for i := range m.config.Lanes {
 		m.config.Lanes[i].Workdir = workdir
 	}
+	testAgentStartOptIn(t, m)
 	m.continuationResolver = linkedResolver(ctx)
 	linkedCleanup(t, m)
 	if err := goalEndPublish(t, m, &r, goalCommitIO{}); err != nil {
@@ -251,6 +252,7 @@ func TestNativeContinuationPausedRecoveryAndLimit(t *testing.T) {
 func linkedHeld(t *testing.T) (*Manager, Run, heldMessage, goalDispatchContext) {
 	t.Helper()
 	m, req, ctx := dispatchFixture(t)
+	testAgentStartOptIn(t, m)
 	m.continuationResolver = linkedResolver(ctx)
 	linkedCleanup(t, m)
 	result, err := m.dispatchGoal(req, ctx, goalCommitIO{})
@@ -550,7 +552,11 @@ func linkedCleanup(t *testing.T, m *Manager) {
 
 func linkedStarts(t *testing.T, m *Manager, want int) {
 	t.Helper()
-	entries, err := os.ReadDir(m.config.Lanes[0].Workdir)
+	dir, err := testAgentStartDir(m.config.Lanes[0].Workdir)
+	if err != nil {
+		t.Fatal("offline marker pointer unavailable")
+	}
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,7 +579,7 @@ func TestNativeLinkedContinuation(t *testing.T) {
 			var parent Run
 			if branch == "recovery" {
 				var ctx goalDispatchContext
-				base, r := goalEndSavedFixture(t, &ctx)
+				base, r := goalEndSavedFixtureSetup(t, func(m *Manager) { testAgentStartOptIn(t, m) }, &ctx)
 				m, parent = goalEndClone(t, base, r)
 				m.config.AutoResume = nil
 				m.continuationResolver = linkedResolver(ctx)
@@ -589,6 +595,7 @@ func TestNativeLinkedContinuation(t *testing.T) {
 				var req goalDispatchRequest
 				var ctx goalDispatchContext
 				m, req, ctx = dispatchFixtureBody(t, body, lane)
+				testAgentStartOptIn(t, m)
 				m.continuationResolver = linkedResolver(ctx)
 				if branch == "acknowledgement" {
 					m.config.Lanes[0].ContinueText = "wait"

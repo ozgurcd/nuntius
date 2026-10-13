@@ -243,9 +243,15 @@ func main() {
 	// Count actual agent invocations independently of prompt/header contents.
 	// Transport/bootstrap modes returned above; every remaining invocation is
 	// a test-owned agent. Never write its input or session to this marker.
-	{
-		cwd, err := os.Getwd()
-		if err != nil || os.WriteFile(filepath.Join(cwd, fmt.Sprintf("agent-start-%d-%d", os.Getpid(), time.Now().UnixNano())), nil, 0600) != nil {
+	if dir, configured := os.LookupEnv("NUNTIUS_TEST_AGENT_START_DIR"); configured {
+		if !filepath.IsAbs(dir) {
+			os.Exit(47)
+		}
+		marker, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("agent-start-%d-%d", os.Getpid(), time.Now().UnixNano())), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			os.Exit(47)
+		}
+		if marker.Close() != nil {
 			os.Exit(47)
 		}
 	}

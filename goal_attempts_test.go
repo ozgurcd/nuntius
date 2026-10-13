@@ -109,7 +109,15 @@ func TestGoalAutomaticEnd(t *testing.T) {
 // reservation and identity, rather than initial bookkeeping exceptions.
 func goalEndSavedFixture(t *testing.T, capture ...*goalDispatchContext) (*Manager, Run) {
 	t.Helper()
+	return goalEndSavedFixtureSetup(t, nil, capture...)
+}
+
+func goalEndSavedFixtureSetup(t *testing.T, setup func(*Manager), capture ...*goalDispatchContext) (*Manager, Run) {
+	t.Helper()
 	m, req, ctx := dispatchFixture(t)
+	if setup != nil {
+		setup(m)
+	}
 	if len(capture) == 1 {
 		*capture[0] = ctx
 	}

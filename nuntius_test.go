@@ -28,6 +28,9 @@ func TestMain(m *testing.M) {
 		fixtureWebServer()
 		os.Exit(0)
 	}
+	if err := testAgentStartBootstrap(os.Args[1:]); err != nil {
+		os.Exit(47)
+	}
 	if code, handled := launchEntry(os.Args[1:]); handled {
 		os.Exit(code)
 	}
