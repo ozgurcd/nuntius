@@ -53,14 +53,34 @@ func TestMain(m *testing.M) {
 			os.Exit(130)
 		}()
 	}
-	if binary := os.Getenv("NUNTIUS_LIFETIME_FAKE_BINARY"); binary != "" {
-		// The outer lifetime test already built this fake. Sharing it avoids
-		// spending the helper's unchanged timeout on redundant compilation.
+	binary := os.Getenv("NUNTIUS_LIFETIME_FAKE_BINARY")
+	if binary == "" {
+		binary = os.Getenv("NUNTIUS_TEST_FAKE_BINARY")
+	}
+	if binary != "" {
+		// Nested test helpers share the outer suite's already compiled programs
+		// and inherited offline PATH. They retain their own leases and stores.
 		fakeBinary = binary
+		cliBinary = os.Getenv("NUNTIUS_TEST_CLI_BINARY")
+		var child *exec.Cmd
+		if os.Args[len(os.Args)-1] == "fixture-lifetime-helper" {
+			child, err = fixtureLifetimeReady()
+			if err != nil {
+				fmt.Println("offline lifetime preparation failed")
+				if owner != nil {
+					_ = owner.Close()
+				}
+				_ = os.RemoveAll(dir)
+				os.Exit(1)
+			}
+		}
 		code := m.Run()
 		if owner != nil && owner.Close() != nil {
 			fmt.Println("offline final child cleanup failed")
 			code = 1
+		}
+		if child != nil {
+			_ = child.Wait()
 		}
 		_ = os.RemoveAll(dir)
 		os.Exit(code)
@@ -92,6 +112,8 @@ func TestMain(m *testing.M) {
 		}
 	}
 	tailscaleAppPath = filepath.Join(dir, "absent-app")
+	_ = os.Setenv("NUNTIUS_TEST_FAKE_BINARY", fakeBinary)
+	_ = os.Setenv("NUNTIUS_TEST_CLI_BINARY", cliBinary)
 	code := m.Run()
 	if owner != nil && owner.Close() != nil {
 		fmt.Println("offline final child cleanup failed")
@@ -335,6 +357,7 @@ func TestGoalIDAndSize(t *testing.T) {
 }
 
 func TestDispatchReplyArgvAndStore(t *testing.T) {
+	goalEndParallel(t)
 	// Keep the fake command's complete cwd below the 120-rune summary cap,
 	// independent of TMPDIR and testing's long per-test directory names.
 	workdir, err := os.MkdirTemp(".", ".tail-")

@@ -223,6 +223,7 @@ func TestCrashRecoveryExclusionsAndReadOnly(t *testing.T) {
 }
 
 func TestCrashRecoveryBusyLaneAndLimit(t *testing.T) {
+	goalEndParallel(t)
 	m, _, store := manager(t)
 	seedCrashRun(t, m, strings.Repeat("c", 32), "QUEUED-23", "")
 	if _, err := m.Dispatch("codex", "BUSY-23", "wait"); err != nil {

@@ -3,6 +3,7 @@ package nuntius
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,12 +21,18 @@ func TestFixtureLifetimeHelper(t *testing.T) {
 	if len(os.Args) < 2 || os.Args[len(os.Args)-1] != "fixture-lifetime-helper" {
 		return
 	}
-	cmd := exec.Command(fakeBinary)
+	// TestMain has already established and reported the exact child identity.
+	// m.Run now arms the real, unchanged testing timeout around this wait.
+	select {} // parent interrupts, kills or lets testing's timeout panic.
+}
+
+func fixtureLifetimeReady() (cmd *exec.Cmd, err error) {
+	cmd = exec.Command(fakeBinary)
 	webDir := os.Getenv("NUNTIUS_LIFETIME_WEB_DIR")
 	if webDir != "" {
-		exe, err := os.Executable()
-		if err != nil {
-			t.Fatal(err)
+		exe, e := os.Executable()
+		if e != nil {
+			return nil, e
 		}
 		cmd = exec.Command(fakeBinary, "__fixture_web", "-test.run=^TestFixtureWebServerHelper$", "--", "fixture-web-server")
 		cmd.Env = append(os.Environ(), "NUNTIUS_FIXTURE_WEB_BINARY="+exe, "NUNTIUS_FIXTURE_WEB_DIR="+webDir)
@@ -33,14 +40,19 @@ func TestFixtureLifetimeHelper(t *testing.T) {
 	cmd.Stdin = strings.NewReader("ignore-int wait")
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		t.Fatal("start offline lifetime child")
+	if err = cmd.Start(); err != nil {
+		return nil, errors.New("start offline lifetime child")
 	}
-	t.Cleanup(func() { _ = cmd.Wait() })
+	defer func() {
+		if err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
 		children, err := fixturelife.Children(os.Getenv(fixturelife.Environment), "")
 		if err != nil {
-			t.Fatal("read offline lifetime children")
+			return cmd, errors.New("read offline lifetime children")
 		}
 		for _, child := range children {
 			if child.PID == cmd.Process.Pid {
@@ -51,12 +63,12 @@ func TestFixtureLifetimeHelper(t *testing.T) {
 					}
 					var pid int
 					if _, err = fmt.Sscanf(string(b), "%d", &pid); err != nil || pid <= 1 {
-						t.Fatal("web child PID unavailable")
+						return cmd, errors.New("web child PID unavailable")
 					}
 					birth, err := processStart(pid)
 					group, groupErr := syscall.Getpgid(pid)
 					if err != nil || groupErr != nil || group == cmd.Process.Pid {
-						t.Fatal("web child separate-session identity missing")
+						return cmd, errors.New("web child separate-session identity missing")
 					}
 					if _, err = os.Stat(filepath.Join(webDir, "server-ready")); err != nil {
 						continue
@@ -68,12 +80,12 @@ func TestFixtureLifetimeHelper(t *testing.T) {
 					Lease string
 				}{child, os.Getenv(fixturelife.Environment)})
 				fmt.Println("child=" + string(b))
-				select {} // parent interrupts, kills or lets testing's timeout panic.
+				return cmd, nil
 			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("offline child registration deadline")
+	return cmd, errors.New("offline child registration deadline")
 }
 
 func TestFixtureLifetimeInterrupted(t *testing.T) {
@@ -89,7 +101,7 @@ func TestFixtureLifetimeInterrupted(t *testing.T) {
 					if mode == "timeout" {
 						timeout = "5s"
 					}
-					cmd := exec.Command(exe, "-test.run=^TestFixtureLifetimeHelper$", "-test.timeout="+timeout, "--", "fixture-lifetime-helper")
+					cmd := exec.Command(exe, "-test.v", "-test.run=^TestFixtureLifetimeHelper$", "-test.timeout="+timeout, "--", "fixture-lifetime-helper")
 					cmd.Env = append([]string{}, os.Environ()...)
 					cmd.Env = append(cmd.Env, "NUNTIUS_LIFETIME_FAKE_BINARY="+fakeBinary)
 					webDir := ""
@@ -111,7 +123,7 @@ func TestFixtureLifetimeInterrupted(t *testing.T) {
 						t.Fatal(err)
 					}
 					wait := make(chan error, 1)
-					go func() { wait <- cmd.Wait() }()
+					waitStarted := false
 					var child fixturelife.Child
 					var leaseDir string
 					waited := false
@@ -137,34 +149,48 @@ func TestFixtureLifetimeInterrupted(t *testing.T) {
 						}
 						_ = cmd.Process.Kill()
 						if !waited {
-							<-wait
+							if waitStarted {
+								<-wait
+							} else {
+								_ = cmd.Wait()
+							}
 						}
 					})
-					ready := make(chan bool, 1)
+					type readyReport struct {
+						Child fixturelife.Child
+						Lease string
+						Valid bool
+					}
+					ready := make(chan readyReport, 1)
 					go func() {
 						scanner := bufio.NewScanner(stdout)
+						clockStarted := false
 						for scanner.Scan() {
+							if strings.HasPrefix(scanner.Text(), "=== RUN   TestFixtureLifetimeHelper") {
+								clockStarted = true
+							}
 							if strings.HasPrefix(scanner.Text(), "child=") {
-								var report struct {
-									Child fixturelife.Child
-									Lease string
-								}
+								var report readyReport
 								err := json.Unmarshal([]byte(strings.TrimPrefix(scanner.Text(), "child=")), &report)
-								child, leaseDir = report.Child, report.Lease
-								ready <- err == nil
+								report.Valid = err == nil && !clockStarted
+								ready <- report
 								return
 							}
 						}
-						ready <- false
+						ready <- readyReport{}
 					}()
 					select {
-					case ok := <-ready:
-						if !ok || child.PID <= 1 || child.Start == "" {
+					case report := <-ready:
+						child, leaseDir = report.Child, report.Lease
+						if !report.Valid || child.PID <= 1 || child.Start == "" {
 							t.Fatal("offline child ready identity missing")
 						}
 					case <-time.After(15 * time.Second):
 						t.Fatal("offline helper ready deadline")
 					}
+					// Finish the readiness read before Wait can close StdoutPipe.
+					waitStarted = true
+					go func() { wait <- cmd.Wait() }()
 					var sig os.Signal
 					switch mode {
 					case "interrupt":

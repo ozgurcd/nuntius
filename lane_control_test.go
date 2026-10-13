@@ -117,6 +117,7 @@ func TestLaneAdmissionRefusals(t *testing.T) {
 }
 
 func TestLaneAdmissionDrainsAndIsolation(t *testing.T) {
+	goalEndParallel(t)
 	for _, after := range []bool{false, true} {
 		t.Run(fmt.Sprint(after), func(t *testing.T) {
 			m, store := laneControlCommitFixture(t)

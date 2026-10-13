@@ -515,7 +515,7 @@ func (m *Manager) dispatchGoal(req goalDispatchRequest, ctx goalDispatchContext,
 // Native operations serialize exact receipts. Reuse the existing validated
 // control inode without creating or replacing it. Public controls retain their
 // existing nonblocking policy.
-func (m *Manager) nativeDispatchControlLock() (*os.File, error) {
+func (m *Manager) nativeDispatchControlLock() (*controlFileLock, error) {
 	root, err := openLaneControlRoot(m.store)
 	if err != nil {
 		return nil, errLaneControlUnavailable

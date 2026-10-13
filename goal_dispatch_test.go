@@ -273,6 +273,7 @@ func TestDispatchGoalIDStaleRevision(t *testing.T) {
 }
 
 func TestDispatchGoalIDLaunchFailure(t *testing.T) {
+	goalEndParallel(t)
 	for _, stage := range []string{"prepare_before", "before_os"} {
 		t.Run(stage, func(t *testing.T) {
 			m, req, ctx := dispatchFixture(t)
@@ -412,6 +413,7 @@ func TestDispatchGoalIDPreparationFaults(t *testing.T) {
 }
 
 func TestDispatchGoalIDChildStartFaults(t *testing.T) {
+	goalEndParallel(t)
 	for _, stage := range []string{"before_os", "after_os", "child_identity"} {
 		t.Run(stage, func(t *testing.T) {
 			m, req, ctx := dispatchFixture(t)
@@ -665,6 +667,7 @@ func TestDispatchGoalIDRetainedScopeAndApproval(t *testing.T) {
 }
 
 func TestDispatchGoalIDDeliveryIdentity(t *testing.T) {
+	goalEndParallel(t)
 	for _, mode := range []string{"pointer", "replace", "mode", "digest", "symlink", "root-swap"} {
 		t.Run(mode, func(t *testing.T) {
 			m, req, ctx := dispatchFixtureBody(t, strings.Repeat("界", 5000)+"\nnative-dispatch wait\n", "codex")
@@ -996,6 +999,7 @@ func TestDispatchGoalIDFinalSourceObservation(t *testing.T) {
 }
 
 func TestDispatchGoalIDUnknownIdentity(t *testing.T) {
+	goalEndParallel(t)
 	for _, mode := range []string{"pid-only", "mismatch", "job-unavailable"} {
 		t.Run(mode, func(t *testing.T) {
 			m, req, ctx := dispatchFixture(t)
@@ -1062,6 +1066,7 @@ func TestDispatchGoalIDUnknownIdentity(t *testing.T) {
 }
 
 func TestDispatchGoalIDDuplicateProcesses(t *testing.T) {
+	goalEndParallel(t)
 	m, req, ctx := dispatchFixture(t)
 	f := dispatchProcessFixture{Config: m.config, Store: m.store, Request: req, Root: ctx.Profile.Root}
 	path := filepath.Join(t.TempDir(), "dispatch-fixture.json")

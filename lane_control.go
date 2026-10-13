@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -390,7 +391,26 @@ func laneControlExplanation(v laneControlView) string {
 // NewManager creates locks/. Use the same lock inode as existing mutations,
 // opened relative to the verified root; never call the legacy path opener.
 // Creating this private coordination file does not create control state.
-func laneControlReadLock(root *os.File) (*os.File, error) {
+// A fork inherits the open-file description even with CLOEXEC. Release the
+// operation's lock explicitly before Close, so an unrelated pre-exec child
+// cannot keep a completed operation locked.
+type controlFileLock struct {
+	*os.File
+	mu     sync.Mutex
+	closed bool
+}
+
+func (lock *controlFileLock) Close() error {
+	lock.mu.Lock()
+	defer lock.mu.Unlock()
+	if lock.closed {
+		return os.ErrClosed
+	}
+	lock.closed = true
+	return errors.Join(unix.Flock(int(lock.File.Fd()), unix.LOCK_UN), lock.File.Close())
+}
+
+func laneControlReadLock(root *os.File) (*controlFileLock, error) {
 	lock, err := openLaneControlLock(root, unix.LOCK_SH, false)
 	if err != nil {
 		return nil, errLaneControlUnavailable
@@ -398,14 +418,14 @@ func laneControlReadLock(root *os.File) (*os.File, error) {
 	return lock, nil
 }
 
-func laneControlLock(root *os.File, mode int) (*os.File, error) {
+func laneControlLock(root *os.File, mode int) (*controlFileLock, error) {
 	return openLaneControlLock(root, mode, true)
 }
 
 // Admission opens the permanent coordination inode, never creates it. Startup
 // and control mutations prepare it using laneControlLock. The caller holds the
 // manager mutex first. No lane lifetime lock is acquired here.
-func (m *Manager) admissionControlLock() (*os.File, error) {
+func (m *Manager) admissionControlLock() (*controlFileLock, error) {
 	root, err := openLaneControlRoot(m.store)
 	if err != nil {
 		return nil, errLaneControlUnavailable
@@ -418,7 +438,7 @@ func (m *Manager) admissionControlLock() (*os.File, error) {
 	return lock, nil
 }
 
-func openLaneControlLock(root *os.File, mode int, create bool) (*os.File, error) {
+func openLaneControlLock(root *os.File, mode int, create bool) (*controlFileLock, error) {
 	lock, err := openLaneControlLockFile(root, create)
 	if err != nil {
 		return nil, err
@@ -433,7 +453,7 @@ func openLaneControlLock(root *os.File, mode int, create bool) (*os.File, error)
 	return lock, nil
 }
 
-func openLaneControlLockFile(root *os.File, create bool) (*os.File, error) {
+func openLaneControlLockFile(root *os.File, create bool) (*controlFileLock, error) {
 	fd, err := unix.Openat(int(root.Fd()), "locks", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, errLaneControlUnavailable
@@ -457,7 +477,7 @@ func openLaneControlLockFile(root *os.File, create bool) (*os.File, error) {
 		lock.Close()
 		return nil, errLaneControlUnavailable
 	}
-	return lock, nil
+	return &controlFileLock{File: lock}, nil
 }
 
 // laneAdmissionFault stays internal until the later adapter steps. It carries

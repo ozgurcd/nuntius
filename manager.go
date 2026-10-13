@@ -681,7 +681,7 @@ func (m *Manager) Status() ([]Status, error) {
 func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]Status, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var guard *os.File
+	var guard *controlFileLock
 	var e error
 	if m.readOnly {
 		if root, err := openLaneControlRoot(m.store); err == nil {

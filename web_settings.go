@@ -119,7 +119,7 @@ func (m *Manager) recoverSettings() error {
 	if m.config.SourcePath == "" {
 		return nil
 	}
-	guard, err := privateFile(filepath.Join(m.store, "locks", "control.lock"), os.O_CREATE|os.O_RDWR)
+	guard, err := privateControlFile(m.store)
 	if err != nil {
 		return err
 	}
@@ -468,7 +468,7 @@ func (w *Web) settings(out http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer m.mu.Unlock()
-	guard, err := privateFile(filepath.Join(m.store, "locks", "control.lock"), os.O_CREATE|os.O_RDWR)
+	guard, err := privateControlFile(m.store)
 	if err != nil {
 		fail(err)
 		return

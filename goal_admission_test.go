@@ -715,6 +715,7 @@ func admissionPauseProcess(t *testing.T, store, mode string) {
 }
 
 func TestGoalAdmissionPauseProcesses(t *testing.T) {
+	goalEndParallel(t)
 	m, s, env := admissionGoalFixture(t)
 	admissionApproved(t, m, s)
 	if v := admissionObserved(t, m, env); v.SelectedGoal != s.ID {

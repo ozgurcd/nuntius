@@ -114,6 +114,23 @@ Prelaunch fixture saves also share Go's fork barrier until their lock descriptor
 close. This excludes temporary descriptor inheritance by unrelated test launches;
 it adds no retry and does not alter the production nonblocking store lock.
 
+Coordination locks now explicitly unlock their open-file description before
+closing it. CLOEXEC alone cannot release a description inherited by a forked
+child before exec. Native readers/writers, admission, dispatch, legacy controls
+and Settings retain the same lock modes and genuine contention refusals. The
+regression keeps a duplicated descriptor open while checking both active-owner
+refusal and release after owner Close; the fork barrier remains in place.
+
+Nested test helpers reuse the suite's compiled fake and CLI with its offline
+PATH, while keeping their own stores and lifetime leases. Independent process,
+admission and dispatch matrices use the existing four-slot scheduler through
+cleanup. Fault groups that already own separate stores remain parallel; explicit
+lock release prevents cross-fixture inheritance rather than serializing them.
+Lifetime helpers establish the exact child identity before m.Run arms the real
+five-second testing timeout. Registration, parent readiness and teardown bounds
+are unchanged. The parent finishes reading readiness before Wait can close its
+stdout pipe, and transfers the identity through a channel for safe cleanup.
+
 
 ## Menu-bar Settings
 

@@ -76,8 +76,16 @@ func (c Config) poolConfig() (Config, error) {
 }
 
 // The store lock serializes dispatch, freeze and pool edits across instances.
-func (m *Manager) controlLock() (*os.File, error) {
-	f, e := privateFile(filepath.Join(m.store, "locks", "control.lock"), os.O_RDWR|os.O_CREATE)
+func privateControlFile(store string) (*controlFileLock, error) {
+	f, e := privateFile(filepath.Join(store, "locks", "control.lock"), os.O_RDWR|os.O_CREATE)
+	if e != nil {
+		return nil, e
+	}
+	return &controlFileLock{File: f}, nil
+}
+
+func (m *Manager) controlLock() (*controlFileLock, error) {
+	f, e := privateControlFile(m.store)
 	if e != nil {
 		return nil, e
 	}
