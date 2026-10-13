@@ -7,6 +7,13 @@ and restart your MCP server or background dashboard to load the new binary.
 
 ## Unreleased
 
+- Internal native work now stays reserved when a reply, acknowledgement or
+  recovery is pending. Paused interruptions remain ended and open for review;
+  Resume starts nothing, and a late report cannot release pending work.
+  Internal continuations now link the next run before it starts and keep the
+  same reviewed scope. Fresh trusted observations are required; stored hashes
+  cannot start work. Held text still needs exact Send or Discard review.
+
 - Phone actions now explain what is missing in the menu. Save Phone access
   through Tailscale in Settings, then stop and start locally. Recovery keeps
   your private recipient, and sends only after it verifies the dashboard.
@@ -24,7 +31,7 @@ and restart your MCP server or background dashboard to load the new binary.
 - Internal native dispatch now starts the saved approved brief by goal ID.
   A repeated request keeps its original run. If start is uncertain, the goal
   stays held for review rather than starting another child. Public goal
-  controls and successor handling are not enabled yet.
+  controls are not enabled yet; internal successors use linked accounting.
 
 - Native admission now explains whether reviewed work is ready and whether a
   lane can start it. Pauses, missing review, unavailable claims and overlapping

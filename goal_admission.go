@@ -304,7 +304,7 @@ func goalAdmissionReservations(p *goalProjection, runs []Run, root *os.File, env
 			data, err := goalRecordMetadata(record)
 			if err == nil {
 				for _, d := range data.Dispatches {
-					if d.Phase != "failed" && d.RunID == run.ID && d.Request.Lane == run.Lane && string(d.Delivery.Engine) == run.Kind && d.Delivery.PromptSHA256 == run.SHA256 {
+					if d.Phase != "failed" && goalDispatchRunMatches(d, run) {
 						linked = true
 					}
 				}

@@ -25,9 +25,9 @@ Once invocation is possible, an error or an absent process is insufficient
 evidence to release the reservation. Journal and audit sync failures retain the
 same operation. Ordinary legacy recovery cannot launch a replacement native ID.
 
-Native automatic end accounting now repairs the original full run identity,
-including an immediate exit before running publication. Linked successors and
-native continuation launches remain a later component.
+Native automatic end accounting repairs the original full run identity,
+including an immediate exit before running publication. Internal linked
+successors use the continuation contract below.
 Cancel, Freeze, report and tail remain separate safety/read operations. Lane
 pause changes no timeout or signal policy. Offline killed-caller tests prove
 conservative adoption or hold; they do not certify physical power loss or an
@@ -50,7 +50,34 @@ bounded full-file digest to the current attempt without changing that outcome
 or verifying work. Held messages, recovery pending, successor links, surviving
 unverified process identity and failed delivery keep work reserved. Lane pause
 does not stop or extend the current run; its end is recorded while paused.
-Legacy native-ID recovery remains refused until linked launch accounting exists.
+Legacy free-text dispatch cannot replace a stored native goal.
+
+An eligible native interruption now records `recovery_pending` before its end
+can release resources. It remains ended and open while paused or awaiting fresh
+trusted admission context. Its recovery count does not change. An eligible
+Claude acknowledgement or accepted owner text likewise retains a named pending
+hold; accepted text has priority. Ordinary and alternate judge verification both
+refuse pending work, even when a report arrives later. Writable repair preserves
+the first observation and passive reads change no files. Resume starts nothing.
+An in-process trusted continuation resolver must supply fresh source,
+capability, repository-root and claim observations at selection and immediately
+before OS invocation. Each observation must agree with the retained approval,
+delivery profile and canonical inode evidence. Stored digests alone cannot
+satisfy this contract. A reopened manager needs the resolver again; there is
+no new public native adapter or configuration switch.
+
+Accepted text, eligible Claude acknowledgement, normal interrupted recovery,
+explicit ended Reply and exact held Send use the same linked accounting.
+One durable full child ID and input/session digests bind each parent before
+start. The child retains the original approved brief and scope separately from
+its private execution input. A proven chain owns one reservation; historical
+ends and reports cannot release its current child. Uncertain preparation or
+invocation retains that same intent for adoption or review and never resends.
+Exact held Discard appends settlement only when no child is possible; an
+already-started or uncertain child stays reserved. Resume sends no held text.
+Automatic recovery starts at most twice, uses the original brief and honest
+unknown-exit note, and does not spend a count while paused or refused admission.
+Writable status repairs/adopts existing work but starts no new successor.
 
 A failed native repair does not prevent manager startup, report access or
 identity-checked cancellation. Writable status carries a plain `native_attention`

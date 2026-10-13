@@ -224,6 +224,9 @@ func (m *Manager) identifiedMessageChild(r Run, receipt messageReceipt) bool {
 	if err != nil || child == nil || r.ContinueRunID != receipt.ChildID || child.ParentRunID != r.ID || child.Lane != r.Lane || child.GoalID != r.GoalID || child.Kind != r.Kind || child.SessionID != receipt.Binding.SessionID || child.SHA256 != receipt.Binding.ContentSHA256 || !child.Resumed || child.PID <= 1 || child.ProcessStart == "" {
 		return false
 	}
+	if known, e := m.nativeGoalLocked(r.GoalID); e != nil || known && !m.nativeSupervisionAllowed(*child) {
+		return false
+	}
 	root, err := openLaneControlRoot(m.store)
 	if err != nil {
 		return false
@@ -430,6 +433,15 @@ func (m *Manager) sendHeldLocked(h heldMessage, ops *laneControlIO) (string, err
 	if err = laneControlCheckpoint(ops, "review-validated"); err != nil {
 		return "", err
 	}
+	known, e := m.nativeGoalLocked(r.GoalID)
+	if e != nil {
+		return "", e
+	}
+	if known {
+		id, e := m.launchGoalContinuationLocked(lane, text, h.SessionID, lock, &r, &h, ops, &owned, goalCommitIO{}, "message")
+		owned = owned || m.active[h.Lane] != nil
+		return id, e
+	}
 	id, err := m.launchMessage(lane, r.GoalID, text, h.SessionID, lock, &r, &h, ops, &owned)
 	return id, err
 }
@@ -487,13 +499,18 @@ func (m *Manager) discardHeld(h heldMessage, ops *laneControlIO) error {
 }
 
 func (m *Manager) discardHeldLocked(h heldMessage, ops *laneControlIO) error {
-	dir, _, _, receipt, err := m.reviewedMessage(h)
+	dir, run, _, receipt, err := m.reviewedMessage(h)
 	if err != nil {
 		return err
 	}
 	defer dir.Close()
 	if receipt != nil {
 		if receipt.Discarded || receipt.State == "discarded" {
+			if receipt.ChildID == "" {
+				if e := m.settleGoalMessageLocked(run, h); e != nil {
+					return e
+				}
+			}
 			return m.finishReviewedMessage(dir, *receipt, ops)
 		}
 		// Discard removes only the reviewed content. A possible child remains
@@ -511,6 +528,9 @@ func (m *Manager) discardHeldLocked(h heldMessage, ops *laneControlIO) error {
 		return err
 	}
 	if err = writeMessageReceipt(dir, messageReceipt{Version: 1, Binding: h, State: "discarded", Discarded: true}, ops); err != nil {
+		return err
+	}
+	if err = m.settleGoalMessageLocked(run, h); err != nil {
 		return err
 	}
 	return m.finishReviewedMessage(dir, messageReceipt{Version: 1, Binding: h, State: "discarded", Discarded: true}, ops)

@@ -60,9 +60,50 @@ func admissionCall(m *Manager, op string) error {
 
 func admissionPause(t *testing.T, m *Manager, after bool) {
 	t.Helper()
-	result, err := m.setLaneControl(laneControlChange{Lane: "codex", Paused: true, AfterCurrent: after}, "cli")
+	// Fixture setup establishes the pause winner. The public operation remains
+	// nonblocking and may correctly refuse while another supervisor owns the
+	// shared inode. Wait at the existing lock, rather than retrying that API or
+	// making a background tick decide whether this fixture can be constructed.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	guard, err := m.controlLock()
+	if err != nil {
+		t.Fatal("pause coordination unavailable", err)
+	}
+	defer guard.Close()
+	root, err := openLaneControlRoot(m.store)
+	if err != nil {
+		t.Fatal("pause root unavailable", err)
+	}
+	defer root.Close()
+	result, err := m.setLaneControlLocked(root, laneControlChange{Lane: "codex", Paused: true, AfterCurrent: after}, "cli", nil)
 	if err != nil || !result.Available || !result.Paused {
 		t.Fatal("pause failed")
+	}
+}
+
+func TestLaneAdmissionFixtureContention(t *testing.T) {
+	goalEndParallel(t)
+	m, store := laneControlCommitFixture(t)
+	control := &Manager{config: m.config, store: store}
+	guard, err := m.controlLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := admissionArtifacts(t, store)
+	// This is the exact shared-inode interval a running supervisor can own.
+	result, err := control.setLaneControl(laneControlChange{Lane: "codex", Paused: true}, "cli")
+	if laneControlCode(err) != "locked" || result.Available || !reflect.DeepEqual(before, admissionArtifacts(t, store)) {
+		guard.Close()
+		t.Fatal("public pause did not preserve genuine contention refusal")
+	}
+	if err := guard.Close(); err != nil {
+		t.Fatal(err)
+	}
+	admissionPause(t, control, true)
+	state := laneControlRaw(t, store)
+	if !state.Lanes["codex"].Paused || !state.Lanes["codex"].RequestedAfterCurrent {
+		t.Fatal("fixture did not establish pause winner")
 	}
 }
 

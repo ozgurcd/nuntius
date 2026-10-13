@@ -37,6 +37,13 @@ func (m *Manager) Recover() error {
 		if r.ParentRunID == "" {
 			continue
 		}
+		known, e := m.nativeGoalLocked(r.GoalID)
+		if e != nil {
+			return e
+		}
+		if known {
+			continue
+		} // journal-bound repair only; raw GoalID is not authority
 		parent, err := loadRun(filepath.Join(m.store, "runs", r.ParentRunID), r.ParentRunID)
 		if err != nil {
 			return err
@@ -177,6 +184,9 @@ func (m *Manager) Recover() error {
 			return nativeErr
 		}
 		if native {
+			if err = m.recoverGoalContinuationLocked(r); err != nil {
+				return err
+			}
 			continue
 		}
 		if r.State != "interrupted" || r.ResumeCount >= 2 || r.ContinueRunID != "" || m.reportExists(r) {

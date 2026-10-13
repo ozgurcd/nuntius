@@ -45,9 +45,25 @@ and offline repair tests do not certify physical power-loss durability.
 Failed native repair leaves independent reports and safety controls available;
 its bounded status warning confers no admission or approval authority.
 
+Native pending-end labels retain ownership but confer no continuation consent.
+Accepted text, eligible acknowledgement and interrupted recovery are classified
+before an end releases resources, under the shared manager/control interval.
+The saved end and approval/scope remain immutable on candidate save and replay.
+No raw accepted text, prompt or session value is added to the journal by this
+classification. Follow/restart cannot turn stored approval evidence into fresh
+source or claim observations. Native successor launch requires a trusted
+in-process resolver invoked at selection and before OS start. Current source,
+capabilities, complete claims, physical scope and delivery must agree with the
+retained approval. Missing, cached or changed observations retain the hold.
+Full parent/child IDs, closed branch/input/session bindings and bounded recovery
+ordinals share one complete-result predicate on candidate save and replay.
+Exact held Discard appends a settlement; it never rewrites an old end or releases
+a possible child. Digests and private receipts do not authenticate a human.
+
 Internal dispatch accepts only a saved approved goal ID, current revision,
 retry key and eligible lane. It reads the approved bytes; native IDs cannot
-use legacy free-text dispatch, reply or recovery to replace them. The trusted
+use legacy free-text dispatch to replace them. Replies and recovery use linked
+native accounting with fresh observations. The trusted
 adapter supplies source/profile and source/claim observations. JSON fields
 cannot impersonate that adapter or clear an approval/owner hold.
 No public native adapter, host registration or automatic grant is exposed.

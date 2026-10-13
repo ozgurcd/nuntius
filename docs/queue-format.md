@@ -553,7 +553,8 @@ but it must still match the committed accounting observation. Missing
 accounting, active successors and uncertain launches refuse verification.
 The internal end observer now supplies attempt-bound observations from native
 dispatches. It records an actual process end without a judge decision. Public
-goal surfaces and linked continuation launches remain later components.
+goal surfaces remain later components; internal continuations use the linked
+accounting described below.
 
 Park and goal cancel are bookkeeping. They never signal or stop a process,
 change a lane hold, freeze work, run recovery or schedule a launch. A running
@@ -762,8 +763,8 @@ does not reserve unlimited terminal/report headroom: an end that cannot yet
 publish retains its private run observation for reconstruction and delivery
 remains held. Capacity refusal requires owner review.
 
-Native ends now use the observer below. Linked successors remain a later
-component; legacy reply and recovery cannot launch them for a stored native ID.
+Native ends and internal linked successors use the accounting below. Legacy
+free-text dispatch cannot replace a stored native ID.
 Physical power-loss durability, real lane sandbox visibility and atomic
 external repository claims are outside these offline proofs.
 
@@ -795,8 +796,41 @@ messages, pending recovery, linked successors or unresolved process/publication
 identity retain the reservation and block judge verification. Required pending
 audit delivery blocks new native admission even after an execution end. A
 surviving PID, failed identity inspection, report or terminal event alone does
-not prove process death. Linked launch/transfer remains assigned to the next
-component; this observer creates no successor or recovery child.
+not prove process death. Proven native successors transfer this same reservation
+without an admission gap, while unrelated lane/write/resource conflicts remain
+strict. Historical held ends remain immutable.
+
+Before the first end is saved, the same locked observer classifies accepted
+owner text, an eligible first Claude acknowledgement, or an eligible unreported
+interruption. Its immutable `pending` discriminator is `message_pending`,
+`acknowledgement_pending`, or `recovery_pending`. Accepted text wins over an
+acknowledgement. Every pending observation retains the canonical reservation
+and blocks both report-based and alternate-evidence verification. A paused
+interruption stays ended in Open with recovery pending and spends no recovery
+attempt. Resume clears only lane control; a late report cannot clear this hold.
+The discriminator contains no message, prompt or session material and grants
+no launch authority. Accepted message evidence retains only its exact content
+and session digests plus the held-review revision when already latched.
+
+Internal follow/recovery and explicit Reply/held Send require an in-process
+trusted resolver. It supplies newly observed capabilities, source state,
+physical roots and complete unclaimed repositories at selection and again
+before OS start. Both observations must agree with the retained approval,
+profile and ordered canonical inode evidence. A cached context or stored
+digest is insufficient; reopening does not reconstruct the resolver.
+
+Each successor adds a closed `continuation` binding to the permanent dispatch
+receipt: full parent ID, branch, private input/session digests, recovery ordinal
+and exact accepted-message digest/revision. Original approved brief/delivery
+and scope remain separate and unchanged. Candidate save and independent replay
+apply one complete-result transition predicate. One proven chain transfers
+one reservation without exposing unrelated admission; old ends remain held
+historical facts and cannot clear a current child. Exact held Discard appends
+a closed settlement only when no child is possible. Uncertain preparation or
+start retains the same child ID for adoption or review, never a second launch.
+Successor capacity is checked for start, end and later report before allocation;
+the existing eight-row and journal limits are neither raised nor trimmed.
+Writable status repairs/adopts existing children but creates no successor.
 
 Report observation reads at most 65536 complete bytes from a current regular
 file. It checks the same inode, size and modification time before and after

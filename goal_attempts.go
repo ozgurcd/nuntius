@@ -40,6 +40,10 @@ type goalAttemptEnd struct {
 	Held         bool               `json:"held"`
 	Successor    string             `json:"successor,omitempty"`
 	Report       *goalAttemptReport `json:"report,omitempty"`
+	// Pending is an observation, never authority to launch. It keeps the
+	// original reservation while a trusted continuation context is unavailable.
+	Pending string                     `json:"pending,omitempty"`
+	Message *goalPendingMessageBinding `json:"message,omitempty"`
 }
 
 func validGoalAttemptOutcome(outcome nativeGoalOutcome) bool {
@@ -55,6 +59,15 @@ func validGoalAttemptReport(r goalAttemptReport) bool {
 }
 
 func validGoalAttemptEnd(e goalAttemptEnd) bool {
+	if e.Message != nil && (e.Pending != "message_pending" || !continuationDigest(e.Message.Digest) || !continuationDigest(e.Message.SessionSHA256)) {
+		return false
+	}
+	if e.Pending == "message_pending" && e.Message == nil {
+		return false
+	}
+	if e.Pending != "" && (!e.Held || e.Successor != "" || e.Pending != "message_pending" && e.Pending != "acknowledgement_pending" && e.Pending != "recovery_pending") {
+		return false
+	}
 	return runPattern.MatchString(e.RunID) && namePattern.MatchString(e.Lane) && e.PID > 1 && e.ProcessStart != "" && goalBriefLine(e.ProcessStart) && (e.Job == "" || goalBriefLine(e.Job)) && !e.Started.IsZero() && !e.Ended.Before(e.Started) && validGoalAttemptOutcome(e.Outcome) && (e.Successor == "" || runPattern.MatchString(e.Successor) && e.Successor != e.RunID && e.Held) && (e.Report == nil || validGoalAttemptReport(*e.Report) && e.Report.RunID == e.RunID && !e.Report.Modified.Before(e.Started))
 }
 
@@ -63,7 +76,7 @@ func validGoalRunEndJSON(b []byte) bool {
 	// match text in a value, but cannot miss an accepted spelling of the ASCII
 	// native_end key: literal case variants fold here, and any Unicode escape
 	// takes the full decoded-key path. strictJSON already checks the envelope.
-	if !bytes.Contains(bytes.ToLower(b), []byte("native_end")) && !bytes.Contains(b, []byte(`\u`)) {
+	if !bytes.Contains(bytes.ToLower(b), []byte("native_end")) && !bytes.Contains(bytes.ToLower(b), []byte("native_session_sha256")) && !bytes.Contains(b, []byte(`\u`)) {
 		return true
 	}
 	if !utf8.Valid(b) || !nativeJSONScalars(b) {
@@ -80,6 +93,12 @@ func validGoalRunEndJSON(b []byte) bool {
 		return false
 	}
 	for key, value := range object {
+		if strings.EqualFold(key, "native_session_sha256") {
+			digest, ok := value.(string)
+			if key != "native_session_sha256" || !ok || !continuationDigest(digest) {
+				return false
+			}
+		}
 		if !strings.EqualFold(key, "native_end") {
 			continue
 		}
@@ -138,6 +157,21 @@ func goalAttemptReleased(data goalRecordData, id string) bool {
 	if !goalDispatchScopesValid(data) {
 		return false
 	}
+	for i := range data.Dispatches {
+		if !goalContinuationRowValid(data.Dispatches, i) {
+			return false
+		}
+	}
+	for i, d := range data.Dispatches {
+		if d.RunID == id && i+1 < len(data.Dispatches) && data.Dispatches[i+1].Continuation != nil && data.Dispatches[i+1].Continuation.Parent == id {
+			return true // transferred only within the proven chain
+		}
+	}
+	for _, s := range data.Settlements {
+		if s.Parent == id {
+			return true
+		}
+	}
 	for _, e := range data.Ends {
 		if e.RunID == id {
 			return !e.Held
@@ -175,7 +209,10 @@ func applyGoalAttemptEnd(data goalRecordData, e goalAttemptEnd) (goalRecordData,
 			return data, errGoalEndPending
 		}
 	} else {
-		if data.Attempt != nil && data.Attempt.ID != e.RunID || data.State != nativeGoalRunning && data.State != nativeGoalApproved {
+		d := data.Dispatches[index]
+		current := data.Attempt == nil || data.Attempt.ID == e.RunID
+		immediate := d.Continuation != nil && d.Phase == "starting" && data.State == nativeGoalEnded && data.Attempt != nil && data.Attempt.ID == d.Continuation.Parent && data.Attempt.Ended && data.Attempt.ActiveSuccessor
+		if !current && !immediate || data.State != nativeGoalRunning && data.State != nativeGoalApproved && !immediate {
 			return data, errGoalEndPending
 		}
 		data.State, data.Outcome = nativeGoalEnded, e.Outcome
@@ -224,8 +261,23 @@ func goalAttemptsHistoryValid(old, next goalReplayRecord, a, b goalRecordData) b
 // proves an end. Require retained full identity and definite process absence.
 func (m *Manager) goalAttemptRun(d goalDispatchRecord) *Run {
 	r, err := loadRun(filepath.Join(m.store, "runs", d.RunID), d.RunID)
-	if err != nil || r == nil || r.Integrity == "" || r.GoalID != d.Request.GoalID || r.Lane != d.Request.Lane || r.Kind != string(d.Delivery.Engine) || r.SHA256 != d.Delivery.PromptSHA256 || r.Brief != d.Delivery.Prompt || r.ParentRunID != "" || r.PID <= 1 || r.ProcessStart == "" {
+	if err != nil || r == nil || !goalDispatchRunMatches(d, *r) || r.PID <= 1 || r.ProcessStart == "" {
 		return nil
+	}
+	file, e := privateFile(filepath.Join(m.store, "runs", d.RunID, "goal.txt"), os.O_RDONLY)
+	if e != nil {
+		return nil
+	}
+	input, e := readBrief(file)
+	file.Close()
+	if e != nil || goalBriefDigest(input) != r.SHA256 {
+		return nil
+	}
+	if c := d.Continuation; c != nil {
+		parent, e := loadRun(filepath.Join(m.store, "runs", c.Parent), c.Parent)
+		if e != nil || parent == nil || parent.Integrity == "" || parent.GoalID != r.GoalID || parent.Lane != r.Lane || parent.Kind != r.Kind || parent.Brief != r.Brief || parent.NativeEnd == nil || parent.NativeEnd.PID != parent.PID || parent.NativeEnd.ProcessStart != parent.ProcessStart || parent.ContinueRunID != "" && parent.ContinueRunID != r.ID {
+			return nil
+		}
 	}
 	if d.Phase == "running" && (r.PID != d.PID || r.ProcessStart != d.ProcessStart || r.LaunchdLabel != d.Job) {
 		return nil
@@ -349,14 +401,21 @@ func (m *Manager) publishGoalAttemptEndLocked(r *Run, fault goalCommitIO) error 
 			return errGoalEndPending
 		}
 		pending, e := m.pendingMessage(r.ID)
-		if e != nil {
+		if e != nil && !held {
 			return errGoalEndPending
 		}
 		outcome := nativeGoalOutcome(r.StopReason)
 		if !validGoalAttemptOutcome(outcome) {
 			outcome = nativeOutcomeUnknownExit
 		}
-		end := goalAttemptEnd{RunID: r.ID, Lane: r.Lane, PID: r.PID, ProcessStart: r.ProcessStart, Job: r.LaunchdLabel, Started: r.Started, Ended: *r.Ended, Outcome: outcome, Held: held || pending != "" || r.WaitingToResume || r.ContinueRunID != "", Successor: r.ContinueRunID, Report: m.observeGoalAttemptReport(*r, nil)}
+		branch := m.goalContinuationPendingLocked(r, pending, held)
+		end := goalAttemptEnd{RunID: r.ID, Lane: r.Lane, PID: r.PID, ProcessStart: r.ProcessStart, Job: r.LaunchdLabel, Started: r.Started, Ended: *r.Ended, Outcome: outcome, Held: held || pending != "" || r.WaitingToResume || r.ContinueRunID != "" || branch != "", Successor: r.ContinueRunID, Report: m.observeGoalAttemptReport(*r, nil), Pending: branch}
+		if branch == "message_pending" {
+			end.Message, e = m.goalPendingMessageLocked(root, *r, pending)
+			if e != nil {
+				return errGoalEndPending
+			}
+		}
 		if !validGoalAttemptEnd(end) {
 			return errGoalEndPending
 		}
@@ -378,6 +437,46 @@ func (m *Manager) publishGoalAttemptEndLocked(r *Run, fault goalCommitIO) error 
 	}
 	_, err = mirrorNativeAuditLocked(root, "native", fault)
 	return err
+}
+
+// Classify before the first immutable end can release its reservation. The
+// caller holds manager/control and has proved the exact native process ended.
+// Follow, startup and writable maintenance all reach this same observer. None
+// of them may infer fresh source/claim approval from stored digests or metadata.
+func (m *Manager) goalContinuationPendingLocked(r *Run, message string, held bool) string {
+	if r.ContinueRunID != "" {
+		return ""
+	}
+	// Accepted owner text has priority and retains its separate A receipt.
+	if message != "" || held {
+		return "message_pending"
+	}
+	if r.WaitingToResume {
+		return "recovery_pending"
+	}
+	if r.StopAt != nil || r.StopReason != "ended_no_report" && r.StopReason != "completed" && r.StopReason != "interrupted" || r.Exit != nil && *r.Exit != 0 {
+		return ""
+	}
+	lane, err := m.lane(r.Lane)
+	if err != nil || lane.Kind != r.Kind {
+		return ""
+	}
+	if r.SessionID == "" {
+		r.SessionID = m.session(r.ID)
+	}
+	ack := m.noWork(r.ID)
+	if ack && !r.Resumed && sessionPattern.MatchString(r.SessionID) && lane.Kind == "claude" && lane.mode() == "goal_then_continue" {
+		return "acknowledgement_pending"
+	}
+	if r.StopReason == "completed" || m.reportExists(*r) || ack || r.ResumeCount >= 2 || m.config.AutoResume != nil && !*m.config.AutoResume {
+		return ""
+	}
+	if terminal, _ := m.terminalTurn(*r); terminal {
+		return ""
+	}
+	r.WaitingToResume = true
+	r.ResumeBlockedReason = "Native continuation needs a fresh trusted admission context."
+	return "recovery_pending"
 }
 
 func (m *Manager) reconcileGoalAttemptsLocked(fault goalCommitIO) error {
@@ -420,8 +519,30 @@ func (m *Manager) reconcileGoalAttemptsLocked(fault goalCommitIO) error {
 			if r == nil {
 				continue
 			} // Uncertainty remains reserved.
+			if err := m.repairGoalContinuationLocked(d, *r); err != nil {
+				return err
+			}
 			if !goalAttemptDefinitelyGone(*r) {
 				if sameProcess(*r) {
+					if d.Continuation != nil && d.Phase == "starting" {
+						root, e := openLaneControlRoot(m.store)
+						if e != nil {
+							return e
+						}
+						fresh, e := replayGoalJournalRoot(root)
+						if e == nil {
+							current := fresh.records[r.GoalID]
+							var saved goalRecordData
+							saved, e = goalRecordMetadata(current)
+							if e == nil {
+								_, e = m.reconcileGoalDispatchLocked(root, current, saved, len(saved.Dispatches)-1, goalDispatchContext{Source: d.Source, Profile: goalDeliveryProfile{Engine: d.Delivery.Engine, CodePointCap: d.Delivery.CodePointCap, Root: d.Root}}, fault)
+							}
+						}
+						root.Close()
+						if e != nil {
+							return e
+						}
+					}
 					_ = m.superviseGoalDispatch(*r, nil)
 				}
 				continue

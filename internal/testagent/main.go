@@ -240,6 +240,15 @@ func main() {
 		}
 		return
 	}
+	// Count actual agent invocations independently of prompt/header contents.
+	// Transport/bootstrap modes returned above; every remaining invocation is
+	// a test-owned agent. Never write its input or session to this marker.
+	{
+		cwd, err := os.Getwd()
+		if err != nil || os.WriteFile(filepath.Join(cwd, fmt.Sprintf("agent-start-%d-%d", os.Getpid(), time.Now().UnixNano())), nil, 0600) != nil {
+			os.Exit(47)
+		}
+	}
 	if len(os.Args) > 1 && os.Args[1] == "run" {
 		opencode()
 		return

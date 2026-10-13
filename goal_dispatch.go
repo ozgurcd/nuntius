@@ -44,20 +44,21 @@ type goalDispatchResult struct {
 
 // Permanent receipts live in the authoritative journal, never a second index.
 type goalDispatchRecord struct {
-	Request          goalDispatchRequest `json:"request"`
-	RunID            string              `json:"run_id"`
-	Phase            string              `json:"phase"`
-	Source           string              `json:"source"`
-	Root             string              `json:"root"`
-	Spec             string              `json:"approved_spec"`
-	SealRef          string              `json:"seal_ref"`
-	ApprovalRevision uint64              `json:"approval_revision"`
-	Delivery         goalBriefDelivery   `json:"delivery"`
-	Writes           []string            `json:"canonical_writes"`
-	Scope            []goalWriteEvidence `json:"scope_evidence"`
-	PID              int                 `json:"pid"`
-	ProcessStart     string              `json:"process_start"`
-	Job              string              `json:"job"`
+	Request          goalDispatchRequest      `json:"request"`
+	RunID            string                   `json:"run_id"`
+	Phase            string                   `json:"phase"`
+	Source           string                   `json:"source"`
+	Root             string                   `json:"root"`
+	Spec             string                   `json:"approved_spec"`
+	SealRef          string                   `json:"seal_ref"`
+	ApprovalRevision uint64                   `json:"approval_revision"`
+	Delivery         goalBriefDelivery        `json:"delivery"`
+	Writes           []string                 `json:"canonical_writes"`
+	Scope            []goalWriteEvidence      `json:"scope_evidence"`
+	PID              int                      `json:"pid"`
+	ProcessStart     string                   `json:"process_start"`
+	Job              string                   `json:"job"`
+	Continuation     *goalContinuationBinding `json:"continuation,omitempty"`
 }
 
 func decodeGoalDispatchRequest(b []byte) (goalDispatchRequest, error) {
@@ -116,7 +117,7 @@ func validGoalDispatchJSON(m map[string]any) bool {
 			return false
 		}
 		keys[d.Request.Key], ids[d.RunID] = true, true
-		if i < len(rows)-1 && d.Phase != "failed" {
+		if !goalContinuationRowValid(rows, i) {
 			return false
 		}
 		switch d.Phase {
@@ -153,6 +154,9 @@ func goalDispatchScopeChanged(a, b string) bool {
 // One predicate for the writer, low-level candidate commit and saved replay.
 // Retained approval cannot invent, release or rebind a held launch.
 func goalDispatchHistoryValid(old, next goalReplayRecord, a, b goalRecordData, seals [][]byte) bool {
+	if goalContinuationChanged(a, b) {
+		return goalContinuationHistoryValid(old, next, a, b, seals)
+	}
 	if !goalDispatchScopesValid(a) || !goalDispatchScopesValid(b) {
 		return false
 	}
@@ -533,10 +537,11 @@ func (m *Manager) nativeDispatchControlLock() (*controlFileLock, error) {
 }
 
 type goalLaunchContext struct {
-	id          string
-	fault       goalCommitIO
-	beforeStart func() error
-	supervised  bool
+	id           string
+	fault        goalCommitIO
+	beforeStart  func() error
+	supervised   bool
+	continuation *goalContinuationBinding
 }
 
 func (m *Manager) reconcileGoalDispatchLocked(root *os.File, old goalReplayRecord, data goalRecordData, index int, ctx goalDispatchContext, fault goalCommitIO) (goalDispatchResult, error) {
@@ -594,6 +599,9 @@ func (m *Manager) reconcileGoalDispatchLocked(root *os.File, old goalReplayRecor
 	data.Dispatches[index].ProcessStart = r.ProcessStart
 	data.Dispatches[index].Job = r.LaunchdLabel
 	data.State = nativeGoalRunning
+	if d.Continuation != nil {
+		data.Outcome = ""
+	}
 	data.Attempt = &goalDecisionAttempt{ID: r.ID}
 	if fault.check("running_publication") != nil {
 		return result, errGoalLaunchHeld
@@ -612,8 +620,8 @@ func (m *Manager) reconcileGoalDispatchLocked(root *os.File, old goalReplayRecor
 }
 
 func (m *Manager) goalDispatchChild(d goalDispatchRecord) *Run {
-	r, err := loadRun(filepath.Join(m.store, "runs", d.RunID), d.RunID)
-	if err != nil || r == nil || r.Integrity == "" || r.GoalID != d.Request.GoalID || r.Lane != d.Request.Lane || r.Kind != string(d.Delivery.Engine) || r.SHA256 != d.Delivery.PromptSHA256 || r.Brief != d.Delivery.Prompt || r.ParentRunID != "" || r.PID <= 1 || r.ProcessStart == "" || !sameProcess(*r) {
+	r := m.goalAttemptRun(d)
+	if r == nil || !sameProcess(*r) {
 		return nil
 	}
 	if r.LaunchdLabel != "" && !r.LaunchFallback {
@@ -737,6 +745,9 @@ func (m *Manager) nativeSupervisionAllowed(r Run) bool {
 	for _, d := range data.Dispatches {
 		if d.RunID != r.ID || d.Phase != "starting" && d.Phase != "running" {
 			continue
+		}
+		if m.goalAttemptRun(d) == nil {
+			return false
 		}
 		if d.Phase == "running" && (r.PID != d.PID || r.ProcessStart != d.ProcessStart || r.LaunchdLabel != d.Job) {
 			return false

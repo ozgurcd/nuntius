@@ -48,6 +48,7 @@ type Run struct {
 	LaunchFallback       bool            `json:"launch_fallback,omitempty"`
 	LaunchdCleaned       bool            `json:"launchd_cleaned,omitempty"`
 	NativeEnd            *goalAttemptEnd `json:"native_end,omitempty"`
+	NativeSessionSHA256  string          `json:"native_session_sha256,omitempty"`
 }
 type Status struct {
 	NativeAttention     string          `json:"native_attention,omitempty"`
@@ -81,31 +82,38 @@ type activeRun struct {
 	stop chan string
 }
 type Manager struct {
-	readOnly        bool // CLI observation never initializes, reconciles or supervises.
-	eventWindows    map[eventWindowID]*parsedEventWindow
-	eventCacheClock uint64
-	settingsIO      *settingsIO
-	actionClocks    map[string]actionObservation
-	mu              sync.Mutex
-	config          Config
-	store           string
-	runtime         time.Duration
-	Grace           time.Duration
-	active          map[string]*activeRun
-	closed          bool
-	closing         chan struct{}
-	watcher         sync.WaitGroup
-	recovery        bool
-	launcher        *jobLauncher
-	webEnsure       *webEnsureRuntime // nil uses owner-process adapters; tests use offline fakes.
+	readOnly             bool // CLI observation never initializes, reconciles or supervises.
+	eventWindows         map[eventWindowID]*parsedEventWindow
+	eventCacheClock      uint64
+	settingsIO           *settingsIO
+	actionClocks         map[string]actionObservation
+	mu                   sync.Mutex
+	config               Config
+	store                string
+	runtime              time.Duration
+	Grace                time.Duration
+	active               map[string]*activeRun
+	closed               bool
+	closing              chan struct{}
+	watcher              sync.WaitGroup
+	recovery             bool
+	launcher             *jobLauncher
+	webEnsure            *webEnsureRuntime // nil uses owner-process adapters; tests use offline fakes.
+	continuationResolver goalContinuationResolver
 }
 
-func NewManager(c Config, store string) (*Manager, error) {
+func NewManager(c Config, store string, resolver ...goalContinuationResolver) (*Manager, error) {
+	if len(resolver) > 1 {
+		return nil, errors.New("native continuation context is invalid")
+	}
 	m, e := newReadManager(c, store)
 	if e != nil {
 		return nil, e
 	}
 	m.readOnly = false
+	if len(resolver) == 1 {
+		m.continuationResolver = resolver[0]
+	}
 	if e = m.prepareControlStore(); e != nil {
 		return nil, e
 	}
@@ -252,6 +260,7 @@ func (m *Manager) start(name, goal, text string, resume bool) (id string, err er
 			return "", errors.New("lane has a surviving process")
 		}
 	}
+	var nativeParent *Run
 	if resume {
 		last, e := m.latest(name)
 		if e != nil || last == nil {
@@ -267,6 +276,18 @@ func (m *Manager) start(name, goal, text string, resume bool) (id string, err er
 		}
 		goal = last.GoalID
 		session = last.SessionID
+		known, e := m.nativeGoalLocked(goal)
+		if e != nil {
+			return "", e
+		}
+		if known {
+			nativeParent = last
+		}
+	}
+	if nativeParent != nil {
+		id, err = m.launchGoalContinuationLocked(lane, text, session, lock, nativeParent, nil, nil, nil, goalCommitIO{}, "reply")
+		keep = m.active[name] != nil
+		return id, err
 	}
 	id, err = m.launch(lane, goal, text, session, lock, nil)
 	keep = err == nil
@@ -286,6 +307,15 @@ func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, p
 			if err != nil {
 				return "", err
 			}
+		}
+	}
+	if parent != nil {
+		known, err := m.nativeGoalLocked(goal)
+		if err != nil {
+			return "", err
+		}
+		if known {
+			return m.launchGoalContinuationLocked(lane, text, session, lock, parent, message, nil, nil, goalCommitIO{}, "")
 		}
 	}
 	return m.launchMessage(lane, goal, text, session, lock, parent, message, nil, nil)
@@ -377,6 +407,13 @@ func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.
 			r.RecoveryRun = true
 			r.Resumed = true
 		}
+	}
+	if launch != nil && launch.continuation != nil {
+		c := launch.continuation
+		r.NativeSessionSHA256 = c.SessionSHA256
+		r.ResumeCount = c.RecoveryCount
+		r.RecoveryRun = c.Branch == "recovery"
+		r.Resumed = session != "" || r.RecoveryRun
 	}
 	if e := putPrivate(filepath.Join(dir, "goal.txt"), []byte(text)); e != nil {
 		return "", e
@@ -633,7 +670,7 @@ func (m *Manager) follow(r Run, lock, supervisor *os.File, a *activeRun, grace t
 			childID, launchErr := m.launch(lane, r.GoalID, text, r.SessionID, lock, &r)
 			// A known child retains supervision even if receipt consumption is
 			// uncertain. Its reservation continues to block another launch.
-			continued = launchErr == nil || childID != ""
+			continued = (launchErr == nil || childID != "") && m.active[r.Lane] != nil && m.active[r.Lane] != a
 		}
 	}
 	if !continued {

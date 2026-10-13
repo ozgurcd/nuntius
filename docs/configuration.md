@@ -310,4 +310,14 @@ configuration switch or public adapter in this local component.
 Native dispatch ends are now recorded automatically and repaired by writable
 startup/maintenance after failed journal or audit delivery. No new profile,
 poll setting or automatic grant is required. Ended work stays open for judge
-review, and native linked continuation launches remain unavailable.
+review. Internal native linked continuations retain that approval and scope.
+
+Internal native end observation honors `start_mode`/`continue_text` when
+classifying an eligible first Claude acknowledgement and `auto_resume` when
+classifying a new interrupted recovery hold. These classifications alone start
+no work. Disabling recovery later does not clear an already saved pending hold.
+Internal successor launch also requires an in-process trusted resolver with
+fresh source, capability, physical root and complete claim observations at
+selection and before start. No setting or stored digest supplies that authority.
+The same path accounts explicit Reply and exact held Send/Discard without
+adding a public native adapter.

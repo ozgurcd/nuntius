@@ -372,9 +372,16 @@ func canonicalBindingRefuse(t *testing.T, m *Manager, old goalReplayRecord, data
 	canonicalBindingReplay(t, m, "DISPATCH", old, record)
 }
 
-func canonicalEndedFixture(t *testing.T) (*Manager, Run) {
+func canonicalEndedFixture(t *testing.T, capture ...*goalDispatchContext) (*Manager, Run) {
 	t.Helper()
 	m, req, ctx := canonicalBindingFixture(t, []string{"sample/approved"}, map[string]string{"sample": t.TempDir()})
+	if len(capture) == 1 {
+		*capture[0] = ctx
+	}
+	// These correspondence controls model settled ends. Pending native
+	// recovery is separately enabled by B13 on a private ended clone.
+	noRecovery := false
+	m.config.AutoResume = &noRecovery
 	result, err := m.dispatchGoal(req, ctx, goalCommitIO{})
 	if err != nil {
 		t.Fatal(err)

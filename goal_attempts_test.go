@@ -107,9 +107,16 @@ func TestGoalAutomaticEnd(t *testing.T) {
 // Detach only this fixture's supervisor, then wait for this exact child to
 // disappear. Keep its records so faults and fresh managers use the real B11
 // reservation and identity, rather than initial bookkeeping exceptions.
-func goalEndSavedFixture(t *testing.T) (*Manager, Run) {
+func goalEndSavedFixture(t *testing.T, capture ...*goalDispatchContext) (*Manager, Run) {
 	t.Helper()
 	m, req, ctx := dispatchFixture(t)
+	if len(capture) == 1 {
+		*capture[0] = ctx
+	}
+	// These B12 cases test settled ends. B13 interruption cases explicitly
+	// enable recovery on their own isolated clone before first publication.
+	noRecovery := false
+	m.config.AutoResume = &noRecovery
 	result, err := m.dispatchGoal(req, ctx, goalCommitIO{})
 	if err != nil {
 		t.Fatal(err)

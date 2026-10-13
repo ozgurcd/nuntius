@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Retain native resources before publishing an eligible pending message,
+  Claude acknowledgement or interrupted recovery end. Persist a closed safe
+  branch label, preserve paused recovery counts and refuse verification while
+  pending, including after a late report. Link message, acknowledgement,
+  recovery, explicit Reply and held Send successors before OS start under one
+  retained reservation. Reobserve trusted source/capabilities/claims and physical
+  scope twice; adopt exact uncertain children without resending. Append exact
+  held-message settlement without rewriting historical ends.
+
 - Save opt-in phone access for normal and menu-bar startup. Preserve the
   private recipient through verified recovery without a premature send.
   Recheck phone readiness on clicks and show separate fixed QR/iMessage
@@ -16,13 +25,13 @@
   timeout and cancellation. Keep ended goals open for judge review, bind bounded
   report digests to the current attempt, and repair saved ends after journal or
   audit delivery failure. Audit views explain ends and available reports as
-  successful observations. Linked continuation launches remain unavailable.
+  successful observations. Linked continuations retain the same approved scope.
 
 - Add internal dispatch of saved approved native goals with revision and retry
   checks, durable full-ID reservations, exact brief delivery and running
   receipts. Uncertain launch holds resources and adopts only the identified
   child; native IDs refuse legacy text replacement. Public controls and
-  successors remain assigned to later steps.
+  public native adapters remain assigned to later steps.
 
 - Add internal native goal admission with shared locked Ready/Startable checks,
   current lane and source observations, canonical write/resource reservations,
