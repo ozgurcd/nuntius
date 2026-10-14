@@ -115,8 +115,8 @@ do not resolve it or earn grace; a notification acknowledgement cannot resolve
 an ongoing violation. Readers copy journal bytes under a shared lock and parse
 after unlocking. A writer lock timeout reports `reader_contention` and skips
 that sample; the observer retries on its next tick and marks the gap unknown.
-Failed or uncertain persistence stops sampling and
-keeps the daemon alive with a fixed local fault diagnostic. Readers report
+A terminal persistence or `storage_limit` fault stops sampling and ends
+`observe` with exit status 1 and a fixed local cause line. Readers report
 stale/missing coverage and never repair records. The process epoch and UTC
 heartbeat survive in the journal; cross-process boot/clock continuity is not
 asserted. The first restart gap is unknown, even when short. Within a process,
