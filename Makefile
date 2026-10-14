@@ -72,7 +72,14 @@ test:
 	go test ./... -count=1
 
 race:
-	go test -race ./... -count=1
+	# Sequential root families retain the default timeout for every invocation.
+	go test -race -count=1 -run '^TestNative.*$$' .
+	go test -race -count=1 -run '^Test(Goal|DispatchGoalID|Brief|LinkedWait|VerifiedDependencies|CoveredClosure|Coverage|DependencyCycles).*$$' .
+	go test -race -count=1 -run '^(Test(Redaction|IndependentReview|Review|Rereview|Round3|HotfixReview|Private|ReleasePrivate|ReleaseSplit|ReleasePublic)|Fuzz).*$$' .
+	# The complement also runs new tests and fuzz seeds outside those families.
+	go test -race -count=1 -run '.' -skip '^(Test(Native|Goal|DispatchGoalID|Brief|LinkedWait|VerifiedDependencies|CoveredClosure|Coverage|DependencyCycles|Redaction|IndependentReview|Review|Rereview|Round3|HotfixReview|Private|ReleasePrivate|ReleaseSplit|ReleasePublic)|Fuzz).*$$' .
+	# Keep every other package from ./... in the race gate, without root repeats.
+	go test -race -count=1 $(filter-out $(shell go list .),$(shell go list ./...))
 
 govulncheck:
 	govulncheck ./...

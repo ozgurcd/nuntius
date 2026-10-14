@@ -72,6 +72,14 @@ labels explain the state. See [the design note](menubar-design.md).
 make verify
 ```
 
+The `race` target runs the root package in sequential native, goal/history,
+privacy/review and remaining-test families. Each invocation keeps Go's default
+timeout and runs its selected tests once with the race detector. The final root
+invocation skips only the earlier families, so new tests are retained. Fuzz
+targets run their seed corpus in the privacy family. All other packages selected
+by `go list ./...` retain a complete race run; the separate menu-bar race gate
+is unchanged.
+
 The v0.3.5 source privacy repair adds `make redaction-proof` to that native gate. It runs
 permanent regression/property checks and semantic mutation overlays, then five
 coverage-guided fuzz campaigns, each for 60 seconds with two workers. The
