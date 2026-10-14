@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add the passive B14 native goal snapshot: one observation binding, complete
+  open-state counts, Ready/Startable subsets, per-lane candidates, uncertainty
+  and manual attention. Preserve draining reservations and run outcomes.
+  Reads do not repair, sync, fetch or launch. Native adapters and automation
+  grant authority remain separate future work.
+
 ## v0.3.5 — 2026-10-14
 
 - Approve complete bounded plain/event sources before clipping, field selection,

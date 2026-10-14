@@ -213,6 +213,9 @@ func (m *Manager) writeStatus(out io.Writer, view any, long ...bool) error {
 		h := rows[0].Monitoring
 		fmt.Fprintf(out, "alert_only monitoring: coverage=%s open-incidents=%d fault=%s; use monitoring for time partitions; no execution compliance or complete project-health claim\n", cell(h.Coverage), h.OpenIncidents, cell(h.Fault))
 	}
+	if projection, ok := v["native_queue"].(goalQueueSnapshot); ok {
+		fmt.Fprintf(out, "native revision=%s open=%d ready=%d startable=%d complete=%t attention=%t\n", projection.Revision, projection.Counts.Open, projection.Counts.Ready, projection.Counts.Startable, projection.Complete, projection.Attention)
+	}
 	if len(long) > 0 && long[0] {
 		fmt.Fprintln(out, webStatusLine(m.webDashboard()))
 	}
@@ -261,7 +264,11 @@ func (m *Manager) writeStatus(out io.Writer, view any, long ...bool) error {
 				fmt.Fprintf(w, " · %s", s.ETA.Explanation)
 			}
 		}
-		fmt.Fprintf(w, "\t%s\n", cell(s.LaneControl.Explanation))
+		explanation := s.LaneControl.Explanation
+		if s.ComputedIdle != nil {
+			explanation += " · " + s.ComputedIdle.Explanation
+		}
+		fmt.Fprintf(w, "\t%s\n", cell(explanation))
 	}
 	return w.Flush()
 }

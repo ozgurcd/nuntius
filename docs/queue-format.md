@@ -4,6 +4,10 @@ The separate [internal integration log](integration-log.md) references native
 goal/review revisions. It adds no frames to this goal journal and exposes no
 new queue, launch or acceptance operation.
 
+The separate internal [passive native projection](goal-projection.md) defines
+B14 snapshot identity, complete native counts, observations and lane reasons.
+It does not change this portable coordinator format or add a public adapter.
+
 Any coordinator can publish a complete JSON snapshot. Nuntius displays the
 coordinator's plan; it does not approve, plan, resolve dependencies, execute
 briefs or dispatch. Readiness does not prove an idle agent, a cleared freeze,

@@ -5,6 +5,13 @@ User-facing changes and upgrade actions are listed newest first. See the
 restart an existing server. Choose when to upgrade through the Homebrew tap
 and restart your MCP server or background dashboard to load the new binary.
 
+## Unreleased
+
+Internal native queue reads now distinguish reviewed work from work that can
+start, show why a lane is held and keep manual-ready work visible for review.
+These reads start nothing and change no owner files. Public native queue
+adapters and automation are not enabled by this foundation.
+
 ## v0.3.5 — 2026-10-14
 
 Nuntius checks complete bounded private-text sources before shortening,
