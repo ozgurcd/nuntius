@@ -7,9 +7,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 )
+
+// An exec bootstrap must replace itself from its startup thread. On Linux, an
+// execve from any other thread leaves the thread-group leader a zombie until
+// the kernel swaps thread IDs, so a concurrent identity check reads the live
+// child as ended. LockOSThread in init keeps main on the startup thread.
+func init() {
+	if len(os.Args) > 1 && (os.Args[1] == "__nuntius_exec" || os.Args[1] == "__nuntius_launchd_exec") {
+		runtime.LockOSThread()
+	}
+}
 
 // These two bootstrap stages exist only during launch. The intermediate exits;
 // the orphaned, session-leading grandchild becomes the agent with exec. No

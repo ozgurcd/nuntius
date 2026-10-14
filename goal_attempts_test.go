@@ -125,8 +125,10 @@ func goalEndSavedFixtureSetup(t *testing.T, setup func(*Manager), capture ...*go
 	// enable recovery on their own isolated clone before first publication.
 	noRecovery := false
 	m.config.AutoResume = &noRecovery
-	result, err := m.dispatchGoal(req, ctx, goalCommitIO{})
+	stages := &dispatchStages{}
+	result, err := m.dispatchGoal(req, ctx, stages.io())
 	if err != nil {
+		goalDispatchDiagnosis(t, m, req, result, stages, err)
 		t.Fatal(err)
 	}
 	waitReady(t, m, req.Lane)
