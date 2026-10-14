@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -128,6 +129,9 @@ func classifyIdleGuard(s idleGuardSnapshot) []idleGuardPoint {
 							continue
 						}
 						rank := idleGuardProofRank(proof, s.At)
+						if rank == -2 { // Fresh evidence establishes that load does not excuse this work.
+							continue
+						}
 						if rank < 0 {
 							bad = true
 							continue
@@ -173,7 +177,10 @@ func idleGuardProofRank(p idleGuardProof, at time.Time) int {
 			return 0
 		}
 	case "LOAD_ABOVE_LIMIT":
-		if p.heavy && p.loadSamples >= 3 && !math.IsInf(p.loadPerCPU, 0) && !math.IsNaN(p.loadPerCPU) && p.loadPerCPU > 0.90 {
+		if p.loadSamples >= 3 && !math.IsInf(p.loadPerCPU, 0) && !math.IsNaN(p.loadPerCPU) {
+			if !p.heavy || p.loadPerCPU <= 0.90 {
+				return -2
+			}
 			return 1
 		}
 	case "CLAIM_HELD":
@@ -251,8 +258,9 @@ func (o *idleGuardObserver) sample(ctx context.Context, s idleGuardSnapshot) err
 		stage = "incident"
 	}
 	if err := o.store.append(frame, stage, o.ops); err != nil {
-		o.failed = true
-		return errIdleGuard
+		o.failed = !errors.Is(err, errIdleGuardBusy)
+		o.last = time.Time{} // Recovery must not count the missed sample as known grace.
+		return err
 	}
 	o.frame, o.last = frame, s.At
 	// Persistence precedes any call. No production transport is installed in S1.
@@ -273,8 +281,9 @@ func (o *idleGuardObserver) sample(ctx context.Context, s idleGuardSnapshot) err
 		receipt.GapUnknown = false
 		receipt.Lanes[i].Delivered = true
 		if err := o.store.append(receipt, "receipt", o.ops); err != nil {
-			o.failed = true
-			return errIdleGuard
+			o.failed = !errors.Is(err, errIdleGuardBusy)
+			o.last = time.Time{}
+			return err
 		}
 		o.frame = receipt
 	}

@@ -3,6 +3,8 @@ package nuntius
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -270,6 +272,186 @@ func TestIdleGuardBoundedReaderContention(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("observer blocked after reader release")
+	}
+}
+
+// RV3: hold a passive reader past the writer's entire lock budget. The
+// failed sample must not earn grace, notify, or stop the next sample.
+func TestIdleGuardLongReaderRecovery(t *testing.T) {
+	store := igStore(t)
+	n := &igTransport{}
+	o := igOpen(t, store, n, idleGuardIO{})
+	igSample(t, o, igSnapshot(igStart))
+	interval := o.frame.Lanes[0].IntervalID
+	f, err := os.Open(filepath.Join(store, idleGuardJournal))
+	if err != nil {
+		t.Fatal("reader fixture")
+	}
+	defer f.Close()
+	if unix.Flock(int(f.Fd()), unix.LOCK_SH|unix.LOCK_NB) != nil {
+		t.Fatal("reader lock")
+	}
+	defer unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	start := time.Now()
+	err = o.sample(context.Background(), igSnapshot(igStart.Add(time.Minute)))
+	if err == nil || time.Since(start) < time.Second {
+		t.Fatal("fixture did not hold the reader past the lock budget")
+	}
+	if unix.Flock(int(f.Fd()), unix.LOCK_UN) != nil {
+		t.Fatal("reader release")
+	}
+	if err = o.sample(context.Background(), igSnapshot(igStart.Add(2*time.Minute))); err != nil {
+		t.Fatal("RV3: observer permanently failed after passive reader released")
+	}
+	if o.failed || !o.frame.GapUnknown || o.frame.Sequence != 2 || o.frame.Lanes[0].IdleNanos != 0 || o.frame.Lanes[0].IntervalID != interval || len(n.notices) != 0 {
+		t.Fatal("contention gap was counted or changed incident delivery")
+	}
+	igSample(t, o, igSnapshot(igStart.Add(3*time.Minute)))
+	if o.frame.GapUnknown || o.frame.Lanes[0].IdleNanos != int64(time.Minute) {
+		t.Fatal("normal observation did not resume after unknown gap")
+	}
+	r := readIdleGuard(store, []string{"codex-1"}, igStart, igStart.Add(3*time.Minute))
+	if r.Lanes[0].UnknownSeconds != 120 || r.Lanes[0].UnexplainedIdleSeconds != 60 {
+		t.Fatal("reader timeout gap was not reported as unknown")
+	}
+}
+
+func TestIdleGuardDaemonReaderTimeoutRecovery(t *testing.T) {
+	c, _ := fixture(t)
+	c.IdleGuard = "alert_only"
+	store := igStore(t)
+	m, err := newReadManager(c, store)
+	if err != nil {
+		t.Fatal("manager")
+	}
+	defer m.Close()
+	ticks := make(chan time.Time)
+	faults := make(chan struct{}, 1)
+	blockedSample := make(chan struct{})
+	proceed := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if m.startIdleGuard(ctx, idleGuardHost{now: func() time.Time { return igStart }, ticks: ticks, snapshot: func(at time.Time) idleGuardSnapshot {
+		if at.Equal(igStart.Add(2 * time.Minute)) {
+			close(blockedSample)
+			<-proceed
+		}
+		return igSnapshot(at)
+	}, onFault: func() { faults <- struct{}{} }}) != nil {
+		t.Fatal("daemon")
+	}
+	// Acceptance of the next tick establishes completion of the first append.
+	select {
+	case ticks <- igStart.Add(time.Minute):
+	case <-time.After(3 * time.Second):
+		t.Fatal("first sample did not complete")
+	}
+	select {
+	case ticks <- igStart.Add(2 * time.Minute):
+	case <-time.After(3 * time.Second):
+		t.Fatal("second sample did not complete")
+	}
+	<-blockedSample
+	f, err := os.Open(filepath.Join(store, idleGuardJournal))
+	if err != nil {
+		t.Fatal("reader")
+	}
+	defer f.Close()
+	if unix.Flock(int(f.Fd()), unix.LOCK_SH) != nil {
+		t.Fatal("reader lock")
+	}
+	defer unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	close(proceed)
+	select {
+	case <-faults:
+	case <-time.After(3 * time.Second):
+		t.Fatal("contention fault hidden")
+	}
+	m.mu.Lock()
+	fault := m.idleGuardFault
+	m.mu.Unlock()
+	if fault != "reader_contention" {
+		t.Errorf("reader timeout fault = %s, want reader_contention", fault)
+	}
+	if unix.Flock(int(f.Fd()), unix.LOCK_UN) != nil {
+		t.Fatal("reader release")
+	}
+	select {
+	case ticks <- igStart.Add(3 * time.Minute):
+	case <-time.After(3 * time.Second):
+		t.Fatal("daemon stopped permanently after reader timeout")
+	}
+	// The following accepted tick proves recovery completed, without polling.
+	select {
+	case ticks <- igStart.Add(4 * time.Minute):
+	case <-time.After(3 * time.Second):
+		t.Fatal("daemon failed to finish recovery")
+	}
+	m.mu.Lock()
+	fault = m.idleGuardFault
+	m.mu.Unlock()
+	if fault != "" {
+		t.Fatal("transient contention fault did not clear")
+	}
+}
+
+func TestIdleGuardByteLimitStatus(t *testing.T) {
+	store := igStore(t)
+	var journal bytes.Buffer
+	frame := idleGuardFrame{Version: 1, Epoch: "boot-" + strings.Repeat("0", 32)}
+	for i := 0; i < 6; i++ {
+		frame.Lanes = append(frame.Lanes, idleGuardPoint{Lane: "codex-" + string(rune('1'+i)), Category: idleGuardUnexplained, Candidates: 1, IntervalID: "ig-" + strings.Repeat("b", 64), IncidentID: "ig-" + strings.Repeat("b", 64), OpenedAt: igStart, Open: true})
+	}
+	for seq := 1; seq <= idleGuardMaxFrames; seq++ {
+		frame.Sequence, frame.At = uint64(seq), igStart.Add(time.Duration(seq)*time.Minute)
+		payload, err := json.Marshal(frame)
+		if err != nil {
+			t.Fatal("frame fixture")
+		}
+		if journal.Len()+36+len(payload) > idleGuardMaxBytes-512 {
+			break
+		}
+		hdr := make([]byte, 36)
+		binary.BigEndian.PutUint32(hdr, uint32(len(payload)))
+		digest := sha256.Sum256(payload)
+		copy(hdr[4:], digest[:])
+		journal.Write(hdr)
+		journal.Write(payload)
+	}
+	if os.WriteFile(filepath.Join(store, idleGuardJournal), journal.Bytes(), 0600) != nil {
+		t.Fatal("journal fixture")
+	}
+	o := igOpen(t, store, nil, idleGuardIO{})
+	at := o.frame.At
+	limited := false
+	for i := 1; i <= 20; i++ {
+		at = at.Add(time.Minute)
+		if o.sample(context.Background(), igSnapshot(at)) != nil {
+			limited = true
+			break
+		}
+	}
+	if !limited {
+		t.Fatal("fixture never reached byte saturation")
+	}
+	_ = o.close()
+	h := readIdleGuardHealth(store, at.Add(time.Hour))
+	if h.Coverage != "unknown" || h.Fault != "storage_limit" || h.OpenIncidents == 0 {
+		t.Fatalf("byte cap fault = %s, want storage_limit", h.Fault)
+	}
+	r := readIdleGuard(store, []string{"codex-1"}, at.Add(-time.Minute), at.Add(time.Hour))
+	if r.Fault != "storage_limit" || r.Coverage != "unknown" {
+		t.Fatal("monitoring report hid byte saturation")
+	}
+	st, err := os.Stat(filepath.Join(store, idleGuardJournal))
+	if err != nil || st.Size() > idleGuardMaxBytes {
+		t.Fatal("journal exceeded byte cap")
+	}
+	if other, err := newIdleGuard(store, nil, idleGuardIO{}); err != errIdleGuardLimit {
+		if other != nil {
+			_ = other.close()
+		}
+		t.Fatal("restart lost durable storage-limit cause")
 	}
 }
 

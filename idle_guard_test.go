@@ -167,8 +167,12 @@ func TestIdleGuardClosedReasons(t *testing.T) {
 						return
 					}
 					s.Proofs = []idleGuardProof{v}
-					if p := classifyIdleGuard(s); p[0].Category == idleGuardPermitted {
-						t.Fatal("invalid proof excused idle")
+					want := idleGuardUnknown
+					if bad == "wrong-candidate" || bad == "light" || bad == "load-low" {
+						want = idleGuardUnexplained
+					}
+					if p := classifyIdleGuard(s); p[0].Category != want {
+						t.Fatalf("proof disposition = %s, want %s", p[0].Category, want)
 					}
 				})
 			}

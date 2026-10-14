@@ -36,6 +36,9 @@ func (m *Manager) startIdleGuard(ctx context.Context, host idleGuardHost) error 
 	o, err := newIdleGuard(m.store, host.notifier, idleGuardIO{})
 	if err != nil {
 		m.idleGuardFault = "observer_unavailable"
+		if errors.Is(err, errIdleGuardLimit) {
+			m.idleGuardFault = "storage_limit"
+		}
 		return errIdleGuard
 	}
 	m.idleGuardStarted = true
@@ -57,12 +60,20 @@ func (m *Manager) startIdleGuard(ctx context.Context, host idleGuardHost) error 
 			if err := o.sample(ctx, host.snapshot(at)); err != nil {
 				m.mu.Lock()
 				m.idleGuardFault = "persistence_unavailable"
+				if errors.Is(err, errIdleGuardBusy) {
+					m.idleGuardFault = "reader_contention"
+				} else if errors.Is(err, errIdleGuardLimit) {
+					m.idleGuardFault = "storage_limit"
+				}
 				m.mu.Unlock()
 				if host.onFault != nil {
 					host.onFault()
 				}
-				return false
+				return errors.Is(err, errIdleGuardBusy)
 			}
+			m.mu.Lock()
+			m.idleGuardFault = ""
+			m.mu.Unlock()
 			return true
 		}
 		if !sample(host.now()) {
@@ -236,7 +247,11 @@ func readIdleGuardHealth(store string, at time.Time) idleGuardHealth {
 	if f.Sequence >= idleGuardMaxFrames {
 		h.Coverage, h.Fault = "unknown", "storage_limit"
 	}
-	for _, p := range f.Lanes {
+	points := f.Lanes
+	if f.Fault == "storage_limit" && len(frames) > 1 {
+		points = frames[len(frames)-2].Lanes
+	}
+	for _, p := range points {
 		if p.Category == idleGuardUnknown || len(p.UnknownCandidates) > 0 {
 			h.Coverage = "unknown"
 		}

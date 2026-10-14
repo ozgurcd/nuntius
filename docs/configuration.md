@@ -98,6 +98,12 @@ any partial exemption. No host-load or claim authority is guessed from hints.
 
 `idle-guard.lock` fences one observer per private store. `idle-guard.journal`
 retains checksummed bounded frames (16 MiB, 20,160 frames, 256 KiB per frame).
+The first limit reached stops observation; 20,160 frames is not a retention
+guarantee. At one frame per minute, a representative six-lane frame of
+1,963 bytes including its checksum header fills the byte budget in about
+8,546 frames (5.9 days). Actual lifetime depends on lane/proof metadata and
+extra incident/delivery frames. The byte budget reserves 512 bytes for a
+durable `storage_limit` marker, which passive readers retain after restart.
 It refuses saturation, truncation, corruption, links and replaced controller
 inodes without evicting or repairing history. Interval and incident commits
 sync before a notification attempt. The notifier is an offline injectable
@@ -106,7 +112,10 @@ interface; S1 installs no transport and never sends to a phone.
 One incident names each continuous violation after five known unexplained
 minutes. Restart preserves its identity and accumulated grace. Unknown gaps
 do not resolve it or earn grace; a notification acknowledgement cannot resolve
-an ongoing violation. Failed or uncertain persistence stops sampling and
+an ongoing violation. Readers copy journal bytes under a shared lock and parse
+after unlocking. A writer lock timeout reports `reader_contention` and skips
+that sample; the observer retries on its next tick and marks the gap unknown.
+Failed or uncertain persistence stops sampling and
 keeps the daemon alive with a fixed local fault diagnostic. Readers report
 stale/missing coverage and never repair records. The process epoch and UTC
 heartbeat survive in the journal; cross-process boot/clock continuity is not

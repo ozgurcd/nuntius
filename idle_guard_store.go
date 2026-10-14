@@ -21,8 +21,11 @@ const idleGuardJournal = "idle-guard.journal"
 const idleGuardMaxBytes = 16 << 20
 const idleGuardMaxFrames = 20160 // Bounded; never evict monitoring history to turn health green.
 const idleGuardMaxFrame = 256 << 10
+const idleGuardLimitReserve = 512 // Includes the checksum header of a lane-free terminal frame.
 
 var errIdleGuard = errors.New("idle monitoring unavailable; observation coverage is unknown")
+var errIdleGuardBusy = errors.New("idle monitoring reader contention; sample is unknown")
+var errIdleGuardLimit = errors.New("idle monitoring storage limit; observation coverage is unknown")
 
 type idleGuardFrame struct {
 	Version    int
@@ -76,6 +79,10 @@ func newIdleGuard(path string, notifier idleGuardNotifier, ops idleGuardIO) (*id
 	frames, err := idleGuardReadFile(s.journal)
 	if err != nil {
 		return fail()
+	}
+	if len(frames) > 0 && frames[len(frames)-1].Fault == "storage_limit" {
+		_ = s.close()
+		return nil, errIdleGuardLimit
 	}
 	st, err := s.journal.Stat()
 	if err != nil || st.Size() >= idleGuardMaxBytes || len(frames) >= idleGuardMaxFrames {
@@ -154,23 +161,34 @@ func (s *idleGuardStore) append(frame idleGuardFrame, stage string, ops idleGuar
 	if err != nil || len(b) > idleGuardMaxFrame {
 		return errIdleGuard
 	}
+	limit := frame.Sequence == idleGuardMaxFrames || s.size+int64(36+len(b))+idleGuardLimitReserve > idleGuardMaxBytes
+	if limit {
+		// Keep a small durable cause for passive readers, even after restart.
+		// No lane/incident is resolved and no notification follows saturation.
+		frame.Fault, frame.GapUnknown, frame.Lanes = "storage_limit", true, nil
+		b, err = json.Marshal(frame)
+		if err != nil || 36+len(b) > idleGuardLimitReserve || s.size+int64(36+len(b)) > idleGuardMaxBytes {
+			return errIdleGuardLimit
+		}
+	}
 	digest := sha256.Sum256(b)
 	buf := make([]byte, 36, 36+len(b))
 	binary.BigEndian.PutUint32(buf, uint32(len(b)))
 	copy(buf[4:], digest[:])
 	buf = append(buf, b...)
-	if s.size+int64(len(buf)) > idleGuardMaxBytes {
-		return errIdleGuard
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+	var lockErr error
 	if settingsReadLock(ctx, func() (bool, error) {
-		err := unix.Flock(int(s.journal.Fd()), unix.LOCK_EX|unix.LOCK_NB)
-		if errors.Is(err, unix.EWOULDBLOCK) {
+		lockErr = unix.Flock(int(s.journal.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if errors.Is(lockErr, unix.EWOULDBLOCK) {
 			return false, nil
 		}
-		return err == nil, err
+		return lockErr == nil, lockErr
 	}) != nil {
+		if ctx.Err() != nil && errors.Is(lockErr, unix.EWOULDBLOCK) {
+			return errIdleGuardBusy // No bytes written; the next sample may retry.
+		}
 		return errIdleGuard
 	}
 	defer unix.Flock(int(s.journal.Fd()), unix.LOCK_UN)
@@ -186,6 +204,9 @@ func (s *idleGuardStore) append(frame idleGuardFrame, stage string, ops idleGuar
 	if ops.fault != nil && ops.fault(stage+"_synced") != nil {
 		return errIdleGuard
 	}
+	if limit {
+		return errIdleGuardLimit
+	}
 	return nil
 }
 
@@ -193,15 +214,23 @@ func idleGuardReadFile(f *os.File) ([]idleGuardFrame, error) {
 	if unix.Flock(int(f.Fd()), unix.LOCK_SH|unix.LOCK_NB) != nil {
 		return nil, errIdleGuard
 	}
-	defer unix.Flock(int(f.Fd()), unix.LOCK_UN)
-	st, err := f.Stat()
-	if err != nil || st.Size() > idleGuardMaxBytes {
-		return nil, errIdleGuard
-	}
-	b, err := io.ReadAll(io.NewSectionReader(f, 0, idleGuardMaxBytes+1))
-	after, e := f.Stat()
-	if err != nil || e != nil || st.Size() != after.Size() || !st.ModTime().Equal(after.ModTime()) || int64(len(b)) != after.Size() {
-		return nil, errIdleGuard
+	// Snapshot bounded bytes while locked; checksums/JSON validation run only
+	// after releasing the reader so slow parsing cannot starve the observer.
+	b, err := func() ([]byte, error) {
+		defer unix.Flock(int(f.Fd()), unix.LOCK_UN)
+		st, err := f.Stat()
+		if err != nil || st.Size() > idleGuardMaxBytes {
+			return nil, errIdleGuard
+		}
+		b, err := io.ReadAll(io.NewSectionReader(f, 0, idleGuardMaxBytes+1))
+		after, e := f.Stat()
+		if err != nil || e != nil || st.Size() != after.Size() || !st.ModTime().Equal(after.ModTime()) || int64(len(b)) != after.Size() {
+			return nil, errIdleGuard
+		}
+		return b, nil
+	}()
+	if err != nil {
+		return nil, err
 	}
 	var out []idleGuardFrame
 	for len(b) > 0 {
@@ -238,7 +267,10 @@ func idleGuardFrameValid(f idleGuardFrame, seq uint64) bool {
 	if f.Version != 1 || f.Sequence != seq || f.At.IsZero() || len(f.Epoch) != 37 || len(f.Lanes) > 32 {
 		return false
 	}
-	if f.Fault != "" && f.Fault != "clock_rollback" && f.Fault != "sampling_gap" {
+	if f.Fault != "" && f.Fault != "clock_rollback" && f.Fault != "sampling_gap" && f.Fault != "storage_limit" {
+		return false
+	}
+	if f.Fault == "storage_limit" && (!f.GapUnknown || len(f.Lanes) != 0) {
 		return false
 	}
 	seen := map[string]bool{}
@@ -357,6 +389,9 @@ func readIdleGuard(store string, lanes []string, from, until time.Time) idleGuar
 	}
 	if err != nil || len(frames) == 0 {
 		r.Coverage = "unknown"
+	}
+	if len(frames) > 0 && frames[len(frames)-1].Fault == "storage_limit" {
+		r.Coverage, r.Fault = "unknown", "storage_limit"
 	}
 	return r
 }
