@@ -186,16 +186,26 @@ func commitIntegration(path, sourcePath string, req integrationRequest, fault in
 	if err != nil {
 		return integrationOperation{}, err
 	}
-	entry := before.Entries[req.EntryID].Entry
+	record := before.Entries[req.EntryID]
+	entry := record.Entry
 	if req.Entry != nil {
 		entry = *req.Entry
 	}
-	snapshot, err := captureIntegrationSource(sourcePath, entry.Source.GoalID, entry.Source.ReviewID)
-	if err != nil {
-		return integrationOperation{}, err
-	}
-	if snapshot != entry.Source {
-		return integrationOperation{}, errIntegrationStale
+	saved, retry := before.Operations[req.OperationID]
+	// Results belong to the already-started intent, even if its sources moved.
+	// Locked replay still enforces CAS and exact intent binding. Exact retries
+	// remain confirmable after settlement clears the pending ownership.
+	pendingResult := (req.Kind == "observe" || (req.Kind == "hold" && req.State == "uncertain")) &&
+		(record.Pending != "" || (retry && saved.Input == integrationDigestJSON(req)))
+	var snapshot integrationSource
+	if !pendingResult {
+		snapshot, err = captureIntegrationSource(sourcePath, entry.Source.GoalID, entry.Source.ReviewID)
+		if err != nil {
+			return integrationOperation{}, err
+		}
+		if snapshot != entry.Source {
+			return integrationOperation{}, errIntegrationStale
+		}
 	}
 	if fault.check("snapshot") != nil {
 		return integrationOperation{}, errIntegration
@@ -209,9 +219,11 @@ func commitIntegration(path, sourcePath string, req integrationRequest, fault in
 	if fault.check("ack") != nil {
 		return integrationOperation{}, errIntegrationUnconfirmed
 	}
-	fresh, err := captureIntegrationSource(sourcePath, entry.Source.GoalID, entry.Source.ReviewID)
-	if err != nil || fresh != snapshot {
-		return integrationOperation{}, errIntegrationUnconfirmed
+	if !pendingResult {
+		fresh, err := captureIntegrationSource(sourcePath, entry.Source.GoalID, entry.Source.ReviewID)
+		if err != nil || fresh != snapshot {
+			return integrationOperation{}, errIntegrationUnconfirmed
+		}
 	}
 	return result, nil
 }

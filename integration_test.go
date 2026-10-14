@@ -205,6 +205,86 @@ func TestIntegrationIntentObservation(t *testing.T) {
 	}
 }
 
+func TestIntegrationPendingSourceChange(t *testing.T) {
+	for _, source := range []string{"goal", "review"} {
+		for _, outcome := range []string{"settled", "failed", "uncertain", "hold-uncertain"} {
+			t.Run(source+"/"+outcome, func(t *testing.T) {
+				m, path, e := integrationFixture(t)
+				integrationSave(t, m, path, integrationSubmit(e))
+				integrationSave(t, m, path, integrationSealRequest(e, 1))
+				intent := integrationSave(t, m, path, integrationRequest{Version: 1, OperationID: "pending-effect", EntryID: e.ID, ExpectedRevision: 2, Kind: "intent", Effect: "prepare"})
+				id := e.Source.GoalID
+				if source == "review" {
+					id = e.Source.ReviewID
+				}
+				if _, err := m.noteGoal(goalNoteRequest{OperationID: "source-change", ExpectedRevision: 1, GoalID: id, Note: goalRecordNote{Text: "Changed while effect pending"}}); err != nil {
+					t.Fatal("source update failed")
+				}
+				r := integrationRequest{Version: 1, OperationID: "pending-result", EntryID: e.ID, ExpectedRevision: 3, Kind: "observe", Observation: &integrationObservation{OperationID: "pending-effect", IntentDigest: intent.IntentDigest, ResultDigest: integrationTestDigest("result"), Outcome: outcome}}
+				if outcome == "hold-uncertain" {
+					r.Kind, r.State, r.Observation = "hold", "uncertain", nil
+				}
+				// Source independence must not bypass exact intent binding or CAS.
+				bad := r
+				bad.ExpectedRevision = 2
+				if _, err := commitIntegration(path, m.store, bad, integrationIO{}); !errors.Is(err, errIntegrationStale) {
+					t.Fatal("stale result CAS accepted")
+				}
+				if r.Observation != nil {
+					foreign := *r.Observation
+					foreign.IntentDigest = integrationTestDigest("foreign intent")
+					bad = r
+					bad.Observation = &foreign
+					if _, err := commitIntegration(path, m.store, bad, integrationIO{}); err == nil {
+						t.Fatal("foreign result accepted")
+					}
+				}
+				result, err := commitIntegration(path, m.store, r, integrationIO{})
+				if err != nil {
+					t.Fatalf("pending result refused after source change: %v", err)
+				}
+				p, err := readIntegration(path)
+				if err != nil || p.Sequence != 4 || p.Entries[e.ID].Entry.Source != e.Source {
+					t.Fatal("result lost history or changed source binding")
+				}
+				if outcome == "uncertain" || outcome == "hold-uncertain" {
+					if p.Entries[e.ID].State != "uncertain" || p.Entries[e.ID].Pending != "pending-effect" || p.Operations["pending-effect"].Observation != nil {
+						t.Fatal("uncertain result lost pending ownership")
+					}
+				} else {
+					state := "reviewed"
+					if outcome == "failed" {
+						state = "parked"
+					}
+					if p.Entries[e.ID].State != state || p.Entries[e.ID].Pending != "" || p.Operations["pending-effect"].Observation == nil || p.Operations["pending-effect"].Observation.Outcome != outcome {
+						t.Fatal("terminal result not retained")
+					}
+				}
+				if retry := integrationSave(t, m, path, r); retry != result {
+					t.Fatal("result retry changed journal identity")
+				}
+				if outcome == "uncertain" || outcome == "hold-uncertain" {
+					integrationSave(t, m, path, integrationRequest{Version: 1, OperationID: "later-result", EntryID: e.ID, ExpectedRevision: 4, Kind: "observe", Observation: &integrationObservation{OperationID: "pending-effect", IntentDigest: intent.IntentDigest, ResultDigest: integrationTestDigest("later result"), Outcome: "settled"}})
+					p, err = readIntegration(path)
+					if err != nil || p.Entries[e.ID].Pending != "" || p.Entries[e.ID].State != "reviewed" {
+						t.Fatal("later exact observation did not settle")
+					}
+				}
+				revision := p.Entries[e.ID].Revision
+				for _, next := range []integrationRequest{
+					{Version: 1, OperationID: "next-effect", EntryID: e.ID, ExpectedRevision: revision, Kind: "intent", Effect: "gate"},
+					integrationSealRequest(e, revision),
+					{Version: 1, OperationID: "hold-without-pending", EntryID: e.ID, ExpectedRevision: revision, Kind: "hold", State: "uncertain"},
+				} {
+					if _, err := commitIntegration(path, m.store, next, integrationIO{}); !errors.Is(err, errIntegrationStale) {
+						t.Fatal("fresh-source guard bypassed without pending result")
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestIntegrationLineageAndDependencies(t *testing.T) {
 	m, path, e := integrationFixture(t)
 	bad := e

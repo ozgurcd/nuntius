@@ -61,7 +61,7 @@ can establish them. There is no acceptance operation in this version.
 A review seal binds the complete entry, review and reviewer digests. Submitted
 work is ineligible. Reviewed work without dependencies or pending effects is
 structurally eligible. This internal predicate is not a live execution permit:
-every mutation revalidates source/review state, and the later bridge must perform
+new work revalidates source/review state, and the later bridge must perform
 its own fresh policy, authority, resource and source checks before effects.
 
 ## Durable intent, observation and locks
@@ -81,6 +81,12 @@ settled, failed or uncertain. Uncertain retains operation ownership and state;
 only a later exact observation may settle it. Failed parks the entry. Settlement
 permits further reviewed work but never means acceptance, publication or closure.
 Holds retain parked, rejected or uncertain state and attempt history.
+
+An observation of an existing pending intent, or an uncertain hold of that
+intent, does not require the source or review to remain unchanged. Locked replay
+still checks entry CAS and exact observation binding. Exact result retries remain
+confirmable after settlement. This exception records started work; it grants no
+new effect or seal. Those operations still require fresh source/review state.
 
 Full stores, stale CAS or source snapshots and duplicate/corrupt operations refuse.
 Partial append, fsync failure, directory-fsync failure, lost acknowledgement or a
@@ -102,6 +108,8 @@ compiled fake agents and compiled test children. It checks CAS and duplicate
 identity, stale goal/review snapshots, seal invalidation, missing predecessor,
 dependency holds, uncertain intent settlement, acknowledgement/fsync failures,
 strict replay, capacity, private-file safety and two-controller/process contention.
+Pending-result tests change both goal and review revisions, retain terminal and
+uncertain results, settle uncertainty later, and retain stale-source guards.
 The source-lock test changes a native revision after snapshot while independently
 acquiring the integration lock; final acknowledgement refuses the stale snapshot.
 
