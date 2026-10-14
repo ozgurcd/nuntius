@@ -24,6 +24,13 @@ var fakeBinary string
 var cliBinary string
 
 func TestMain(m *testing.M) {
+	// Darwin's default /tmp is a symlink. Fixtures need one physical spelling
+	// for no-follow store opens and workdir-keyed child lifetime records.
+	tempRoot, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil || os.Setenv("TMPDIR", tempRoot) != nil {
+		fmt.Println("offline temporary root unavailable")
+		os.Exit(1)
+	}
 	lifetimeHelper := os.Args[len(os.Args)-1] == "fixture-lifetime-helper"
 	if lifetimeHelper {
 		fmt.Println("fixture-stage=1")

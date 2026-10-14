@@ -19,6 +19,27 @@ import (
 	"github.com/ozgurcd/nuntius/internal/fixturelife"
 )
 
+func TestFixtureTemporaryRootCanonical(t *testing.T) {
+	if os.Args[len(os.Args)-1] == "fixture-temp-root-helper" {
+		root := os.TempDir()
+		canonical, err := filepath.EvalSymlinks(root)
+		if err != nil || root != canonical {
+			t.Fatal("test temporary root is not canonical")
+		}
+		return
+	}
+	dir := t.TempDir()
+	alias := filepath.Join(dir, "temporary-root")
+	if err := os.Symlink(dir, alias); err != nil {
+		t.Fatal("temporary root alias failed")
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestFixtureTemporaryRootCanonical$", "-test.timeout=10s", "--", "fixture-temp-root-helper")
+	cmd.Env = append(os.Environ(), "TMPDIR="+alias)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("symlinked temporary-root helper failed: %s", out)
+	}
+}
+
 func TestFixtureLifetimeHelper(t *testing.T) {
 	if len(os.Args) < 2 || os.Args[len(os.Args)-1] != "fixture-lifetime-helper" {
 		return
