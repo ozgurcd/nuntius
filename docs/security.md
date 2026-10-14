@@ -339,3 +339,27 @@ processes lose the running/draining projection; uncertain live identities remain
 conservative. Holds and run outcomes remain separate. Dashboard access still
 uses the same owner-selected store and OS authority; this adds no caller role,
 new grant, service, registration or permission bypass.
+
+## Alert-only monitoring boundary
+
+The opt-in `observe` daemon writes monitoring records only. It cannot approve
+goals, acquire/release repository claims, clear pause/freeze, issue grants,
+dispatch agents or perform outward actions. A portable Queue identifier is
+display provenance, never scope or launch authority. S1 has no production
+claim/scope/owner-hold/load proof adapter; unprovable exemptions remain unknown.
+
+Monitoring records contain typed lane IDs, counts, interval/incident IDs,
+candidate/evidence digests and closed codes. They omit titles, free-text
+reasons, prompts, reports, recipients, paths and execution data. The fakeable
+notifier sees only an incident ID and candidate count. No production transport
+is installed; acknowledgement records delivery acceptance only, never resolution
+or owner receipt. A crash after delivery but before its receipt may redeliver
+the same incident ID; no exactly-once transport promise is made.
+
+Private rooted no-follow opens, owner/mode checks, a lifetime controller lock,
+brief journal locks, checksums and fixed storage bounds protect cooperating
+processes and detect damaged history. They do not authenticate a malicious
+same-user rewrite or prove physical power-loss durability. Corruption and
+capacity refusal require owner review; no reader repairs or discards records.
+Installed supervision, trusted native evidence adapters, independent review,
+exact-commit CI and any phone activation remain separate acceptance work.

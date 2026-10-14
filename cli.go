@@ -241,6 +241,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	if len(rest) == 1 && rest[0] == "help" {
+		fmt.Fprintln(out, "Idle monitoring: observe runs the opt-in alert_only daemon; monitoring [--since 24h] [--json] reads its five time partitions. Phone delivery is disabled. Observation is not execution compliance or complete project health.")
 		fmt.Fprintln(out, "Lane holds: lane pause LANE [--after-current] | lane resume LANE | lane list [--json]. A pause blocks new work and lets the current run finish; resume starts no work. Held messages: lane held review LANE RUN | lane held send|discard LANE RUN --revision N --digest SHA256; use the values from review.")
 		fmt.Fprintln(out, "Version: version | --version | -v. Settings: set [--json] lists display values; set notify-imessage on|off toggles an existing recipient; set phone-access on|off saves strict Tailscale startup for the next local start. Menu-bar Settings… opens the running local dashboard Settings tab; sign in there to save pool sizes, iMessage preference and phone access. Restart locally to apply phone access; saving sends no link.")
 		fmt.Fprintln(out, "Audit: nuntius audit [--since 1h] [--json] lists recent redacted actions, newest first.")
@@ -259,7 +260,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 			return 2
 		}
 	}
-	if rest[0] != "lane" && command != "recover" && command != "config check" && command != "config convert" && command != "mcp" && rest[0] != "status" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && rest[0] != "history" && rest[0] != "audit" && rest[0] != "menubar" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(rest[0] == "set" && (len(rest) == 1 || (len(rest) <= 3 && (poolSetting(rest[1]) || rest[1] == "notify-imessage" || rest[1] == "phone-access")) || command == "set --json")) {
+	if rest[0] != "lane" && command != "recover" && command != "config check" && command != "config convert" && command != "mcp" && rest[0] != "status" && command != "paths" && command != "unfreeze" && command != "agents" && command != "agents --json" && rest[0] != "history" && rest[0] != "audit" && rest[0] != "menubar" && rest[0] != "monitoring" && command != "observe" && !(len(rest) == 2 && rest[0] == "watch") && !(rest[0] == "web") && !(rest[0] == "set" && (len(rest) == 1 || (len(rest) <= 3 && (poolSetting(rest[1]) || rest[1] == "notify-imessage" || rest[1] == "phone-access")) || command == "set --json")) {
 		fmt.Fprintln(errOut, "unknown command; use nuntius help")
 		return 2
 	}
@@ -316,7 +317,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	var m *Manager
-	if rest[0] == "lane" || rest[0] == "status" || rest[0] == "agents" {
+	if rest[0] == "lane" || rest[0] == "status" || rest[0] == "agents" || rest[0] == "monitoring" || command == "observe" {
 		m, e = newReadManager(c, *store)
 	} else {
 		m, e = NewManager(c, *store)
@@ -330,6 +331,42 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	}
 	defer m.Close()
 	switch rest[0] {
+	case "observe":
+		fault := make(chan struct{}, 1)
+		if m.startIdleGuard(ctx, idleGuardHost{onFault: func() { fault <- struct{}{} }}) != nil {
+			fmt.Fprintln(errOut, "idle observer unavailable; select alert_only locally and check the private store and controller owner")
+			return 1
+		}
+		fmt.Fprintln(out, "alert_only observer running; phone delivery disabled; no execution or project-health claim")
+		select {
+		case <-fault:
+			fmt.Fprintln(errOut, "idle monitoring persistence unavailable; coverage is unknown; preserve records for owner review")
+			<-ctx.Done()
+		case <-ctx.Done():
+		}
+	case "monitoring":
+		mf := flag.NewFlagSet("monitoring", flag.ContinueOnError)
+		mf.SetOutput(io.Discard)
+		machine := mf.Bool("json", false, "machine output")
+		since := mf.Duration("since", 24*time.Hour, "report window up to 31 days")
+		if mf.Parse(rest[1:]) != nil || len(mf.Args()) != 0 || *since <= 0 || *since > 31*24*time.Hour {
+			fmt.Fprintln(errOut, "invalid monitoring flags")
+			return 2
+		}
+		until := time.Now()
+		lanes := make([]string, 0, len(c.Lanes))
+		for _, lane := range c.Lanes {
+			lanes = append(lanes, lane.Name)
+		}
+		r := readIdleGuard(m.store, lanes, until.Add(-*since), until)
+		if *machine {
+			fmt.Fprintln(out, toolText(r))
+		} else {
+			fmt.Fprintf(out, "alert_only observation; coverage=%s; phone delivery disabled; no execution compliance or complete project-health claim\n", r.Coverage)
+			for _, lane := range r.Lanes {
+				fmt.Fprintf(out, "%s running=%.0fs permitted-idle=%.0fs unexplained-idle=%.0fs blocked/no-demand=%.0fs unknown=%.0fs O=%.0fs U=%.0fs ratio=%s\n", cell(lane.Lane), lane.RunningSeconds, lane.PermittedIdleSeconds, lane.UnexplainedIdleSeconds, lane.BlockedNoDemandSeconds, lane.UnknownSeconds, lane.OpportunitySeconds, lane.UnexplainedSeconds, lane.RatioDisplay)
+			}
+		}
 	case "lane":
 		return m.laneCommand(laneRequest, out, errOut)
 	case "audit":

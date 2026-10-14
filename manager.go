@@ -51,37 +51,40 @@ type Run struct {
 	NativeSessionSHA256  string          `json:"native_session_sha256,omitempty"`
 }
 type Status struct {
-	NativeAttention     string          `json:"native_attention,omitempty"`
-	LaneControlVersion  int             `json:"lane_control_version"`
-	LaneControl         laneControlView `json:"lane_control"`
-	Kind                string          `json:"kind,omitempty"`
-	Model               string          `json:"model,omitempty"`
-	Effort              string          `json:"effort"`
-	CurrentAction       *CurrentAction  `json:"current_action,omitempty"`
-	LaunchFallback      bool            `json:"launch_fallback,omitempty"`
-	LaunchdLabel        string          `json:"launchd_label,omitempty"`
-	Freeze              *FreezeState    `json:"freeze,omitempty"`
-	LastEventAgeSeconds *int64          `json:"last_event_age_seconds,omitempty"`
-	Lane                string          `json:"lane"`
-	State               string          `json:"state"`
-	RunID               string          `json:"run_id,omitempty"`
-	GoalID              string          `json:"goal_id,omitempty"`
-	Started             *time.Time      `json:"started,omitempty"`
-	ElapsedSeconds      int64           `json:"elapsed_seconds"`
-	LastEvent           *time.Time      `json:"last_event,omitempty"`
-	Exit                *int            `json:"exit,omitempty"`
-	ReportExists        bool            `json:"report_exists"`
-	AskedInteractively  bool            `json:"asked_interactively"`
-	Outcome             string          `json:"outcome,omitempty"`
-	DisplayState        string          `json:"display_state,omitempty"`
-	Badge               string          `json:"badge,omitempty"`
-	ETA                 *ETAEstimate    `json:"eta_details,omitempty"`
+	Monitoring          *idleGuardHealth `json:"monitoring,omitempty"`
+	NativeAttention     string           `json:"native_attention,omitempty"`
+	LaneControlVersion  int              `json:"lane_control_version"`
+	LaneControl         laneControlView  `json:"lane_control"`
+	Kind                string           `json:"kind,omitempty"`
+	Model               string           `json:"model,omitempty"`
+	Effort              string           `json:"effort"`
+	CurrentAction       *CurrentAction   `json:"current_action,omitempty"`
+	LaunchFallback      bool             `json:"launch_fallback,omitempty"`
+	LaunchdLabel        string           `json:"launchd_label,omitempty"`
+	Freeze              *FreezeState     `json:"freeze,omitempty"`
+	LastEventAgeSeconds *int64           `json:"last_event_age_seconds,omitempty"`
+	Lane                string           `json:"lane"`
+	State               string           `json:"state"`
+	RunID               string           `json:"run_id,omitempty"`
+	GoalID              string           `json:"goal_id,omitempty"`
+	Started             *time.Time       `json:"started,omitempty"`
+	ElapsedSeconds      int64            `json:"elapsed_seconds"`
+	LastEvent           *time.Time       `json:"last_event,omitempty"`
+	Exit                *int             `json:"exit,omitempty"`
+	ReportExists        bool             `json:"report_exists"`
+	AskedInteractively  bool             `json:"asked_interactively"`
+	Outcome             string           `json:"outcome,omitempty"`
+	DisplayState        string           `json:"display_state,omitempty"`
+	Badge               string           `json:"badge,omitempty"`
+	ETA                 *ETAEstimate     `json:"eta_details,omitempty"`
 }
 type activeRun struct {
 	done chan struct{}
 	stop chan string
 }
 type Manager struct {
+	idleGuardStarted     bool
+	idleGuardFault       string
 	readOnly             bool // CLI observation never initializes, reconciles or supervises.
 	eventWindows         map[eventWindowID]*parsedEventWindow
 	eventCacheClock      uint64
@@ -799,9 +802,18 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 		*controlsOut[0] = controls
 	}
 	out := make([]Status, 0, len(m.config.Lanes))
+	var monitoring *idleGuardHealth
+	if details && m.config.IdleGuard == "alert_only" {
+		health := readIdleGuardHealth(m.store, time.Now())
+		if m.idleGuardFault != "" {
+			health.Coverage, health.Fault = "unknown", m.idleGuardFault
+		}
+		monitoring = &health
+	}
 	for _, l := range m.config.Lanes {
 		model, effort := effectiveIdentity(l)
 		s := Status{Lane: l.Name, Kind: l.Kind, Model: model, Effort: effort, State: "idle", Freeze: frozen, LaneControlVersion: 1, NativeAttention: nativeAttention}
+		s.Monitoring = monitoring
 		for _, control := range controls.Lanes {
 			if control.Name == l.Name {
 				s.LaneControl = control

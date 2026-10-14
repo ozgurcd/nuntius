@@ -233,3 +233,25 @@ Running status JSON/MCP/dashboard lanes include eta_details when an estimate
 is available: median_seconds, samples, kind, size, label and explanation.
 The dashboard keeps the short label; hover or tap for its explanation.
 `status --long` also prints the explanation.
+
+## Idle observation and morning view
+
+With local `idle_guard` set to `alert_only`, `nuntius observe` runs a separate
+long-lived observer without starting a model or requiring an open browser.
+Stop this explicitly started process normally to end observation. Temporary
+MCP/CLI managers and dashboard reads never start it. No installed service,
+automatic dispatch, authority grant or phone transport is enabled.
+
+`nuntius monitoring --since 24h` reads the bounded monitoring journal. Add
+`--json` for raw seconds. Windows are half-open UTC, up to 31 days. Each current
+configured lane partitions the requested window into running, permitted idle,
+unexplained idle, blocked/no-demand and unknown time. Before the first sample,
+after the last sample, on restart gaps, sleep gaps, rollback or unreadable
+storage, time stays unknown. Reads append nothing and make no repairs.
+
+The view prints O (known running plus unexplained opportunity seconds), U
+(unexplained seconds within O), all five partitions and an observation ratio
+`(O-U)/O`. O=0 prints N/A. Unknown seconds remain explicit and fail coverage;
+they cannot improve the ratio. This is alert-only observation, not native
+execution compliance or complete project health. Status shows monitoring
+coverage, fixed faults and open-incident count when the mode is configured.

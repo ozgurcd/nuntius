@@ -26,6 +26,7 @@ type Lane struct {
 }
 
 type Config struct {
+	IdleGuard     string               `json:"idle_guard,omitempty"`
 	QueueFile     *string              `json:"queue_file,omitempty"`
 	Lanes         []Lane               `json:"lanes,omitempty"`
 	Pools         map[string]AgentPool `json:"pools,omitempty"`
@@ -77,6 +78,9 @@ func LoadConfig(path string) (Config, error) {
 	if !uniquePhoneAccess(b) {
 		return c, errors.New("phone_access must be one JSON boolean")
 	}
+	if !uniqueIdleGuardMode(b) {
+		return c, errors.New("idle_guard must be one exact alert_only mode or an empty string")
+	}
 	if e = strictJSON(b, &c); e != nil {
 		return c, e
 	}
@@ -120,6 +124,9 @@ func uniquePhoneAccess(b []byte) bool {
 	return err == nil && end == json.Delim('}')
 }
 func (c Config) Validate() (time.Duration, error) {
+	if c.IdleGuard != "" && c.IdleGuard != "alert_only" {
+		return 0, errors.New("idle_guard supports alert_only only")
+	}
 	if c.QueueFile != nil && *c.QueueFile != "" && !queuePathValid(*c.QueueFile) {
 		return 0, errors.New("queue_file must be a clean absolute local file path")
 	}

@@ -209,6 +209,10 @@ func (m *Manager) writeStatus(out io.Writer, view any, long ...bool) error {
 		freeze = "yes"
 	}
 	fmt.Fprintf(out, "frozen=%s  data=%s\n", freeze, cell(m.store))
+	if len(rows) > 0 && rows[0].Monitoring != nil {
+		h := rows[0].Monitoring
+		fmt.Fprintf(out, "alert_only monitoring: coverage=%s open-incidents=%d fault=%s; use monitoring for time partitions; no execution compliance or complete project-health claim\n", cell(h.Coverage), h.OpenIncidents, cell(h.Fault))
+	}
 	if len(long) > 0 && long[0] {
 		fmt.Fprintln(out, webStatusLine(m.webDashboard()))
 	}

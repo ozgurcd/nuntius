@@ -67,6 +67,53 @@ This also closes indirect bypasses through Codex `-c` and Claude `--settings`.
 The child inherits the server environment unchanged. The owner must start
 Desktop with the intended normal environment and agent settings.
 
+## Idle observation (opt-in, alert_only)
+
+`idle_guard` accepts only `"alert_only"` or an empty string. Omission and the
+empty string disable the observer. Duplicate keys, case aliases, null and
+execution modes are refused. The owner edits this local field; no Settings,
+MCP or browser operation enables it. After independent review, an explicitly
+started `nuntius observe` process owns observation until that process stops.
+No service is installed, restarted or activated by saving configuration.
+
+The observer samples at startup and every 60 seconds, independently of model
+responses and browser activity. It opens the existing bounded portable Queue
+snapshot read-only and treats its ready rows as conservative hints, never as
+native readiness, approval, write scope, work class or permission to start.
+Missing, invalid, stale (over two minutes), future-dated or incomplete input
+produces unknown coverage. A complete empty queue is blocked/no-demand time.
+Goal-local owner holds do not hide unrelated ready rows. Uncertain native
+reservations, held successors, pending recovery and incomplete run inventory
+retain capacity; a confirmed ended run without such holds may be free.
+
+Only fresh candidate-complete OWNER_HOLD_ALL, LOAD_ABOVE_LIMIT, CLAIM_HELD or
+FILE_CONFLICT proofs can permit idle time. S1 has no installed trusted proof
+producer: Queue text cannot supply these proofs, claims, canonical scopes or
+heavy-work classification. Unattributed lane pauses/freezes remain unknown;
+the observer never clears them. The internal proof seam requires trusted
+capture, policy revision, exact lane/candidate mapping, evidence digest,
+unexpired proof and observation no older than 30 seconds. Load proof applies
+only to heavy work with consecutive high samples; lower safe work defeats
+any partial exemption. No host-load or claim authority is guessed from hints.
+
+`idle-guard.lock` fences one observer per private store. `idle-guard.journal`
+retains checksummed bounded frames (16 MiB, 20,160 frames, 256 KiB per frame).
+It refuses saturation, truncation, corruption, links and replaced controller
+inodes without evicting or repairing history. Interval and incident commits
+sync before a notification attempt. The notifier is an offline injectable
+interface; S1 installs no transport and never sends to a phone.
+
+One incident names each continuous violation after five known unexplained
+minutes. Restart preserves its identity and accumulated grace. Unknown gaps
+do not resolve it or earn grace; a notification acknowledgement cannot resolve
+an ongoing violation. Failed or uncertain persistence stops sampling and
+keeps the daemon alive with a fixed local fault diagnostic. Readers report
+stale/missing coverage and never repair records. The process epoch and UTC
+heartbeat survive in the journal; cross-process boot/clock continuity is not
+asserted. The first restart gap is unknown, even when short. Within a process,
+grace uses monotonic elapsed time. Sampling gaps over two periods and rollback
+are unknown; rollback cannot create overlapping report intervals.
+
 ## opencode lanes
 
 Install [OpenCode](https://opencode.ai/docs/) separately and log in using its
