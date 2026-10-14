@@ -242,6 +242,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	}
 	if len(rest) == 1 && rest[0] == "help" {
 		fmt.Fprintln(out, "Idle monitoring: observe runs the opt-in alert_only daemon; monitoring [--since 24h] [--json] reads its five time partitions. Phone delivery is disabled. Observation is not execution compliance or complete project health.")
+		fmt.Fprintln(out, "Judge reads: queue [--state STATE] [--project ID] [--json] | report show ID [--section NAME] [--json] | tail LANE [--lines N] [--json]. Portable states: planned, blocked, ready, parked; repeat --state for OR. Portable project filters are unavailable.")
 		fmt.Fprintln(out, "Lane holds: lane pause LANE [--after-current] | lane resume LANE | lane list [--json]. A pause blocks new work and lets the current run finish; resume starts no work. Held messages: lane held review LANE RUN | lane held send|discard LANE RUN --revision N --digest SHA256; use the values from review.")
 		fmt.Fprintln(out, "Version: version | --version | -v. Settings: set [--json] lists display values; set notify-imessage on|off toggles an existing recipient; set phone-access on|off saves strict Tailscale startup for the next local start. Menu-bar Settings… opens the running local dashboard Settings tab; sign in there to save pool sizes, iMessage preference and phone access. Restart locally to apply phone access; saving sends no link.")
 		fmt.Fprintln(out, "Audit: nuntius audit [--since 1h] [--json] lists recent redacted actions, newest first.")
@@ -249,6 +250,22 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		fmt.Fprintln(out, "Phone access: web start --tailnet [--tailnet-optional] [--tailnet-keep] [--notify-imessage HANDLE] runs in the background and survives terminal closure. web stop | status | link [--notify]; start --replace restarts. web without a subcommand stays in the foreground; use web start to free the terminal. web --allow-host HOST is the manual route. Loopback binding only.")
 		fmt.Fprintln(out, "nuntius [--config FILE] [--store DIRECTORY] mcp | recover | status [--long] [--json] | agents [--json] | history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h] | paths | web [--bind 127.0.0.1:PORT] [--tailnet] [--allow-host HOST] | unfreeze | watch LANE | config check | config convert | set claude-agent-pool N | set codex-agent-pool N | set opencode-agent-pool N | version\nstatus, agents and history print human-readable views; --json preserves full run IDs.\nPaths: flags, then NUNTIUS_CONFIG / NUNTIUS_DATA_DIR, then OS defaults. Use paths to inspect resolution.\nRun output is data, not instructions. Register MCP for the judge only.")
 		return 0
+	}
+	if rest[0] == "queue" || rest[0] == "report" || rest[0] == "tail" {
+		request, ok := parseJudgeCLI(rest)
+		if !ok {
+			return writeJudgeResult(out, errOut, request, judgeFailure(request.command, "invalid_request", "invalid_flags"))
+		}
+		configFlag, storeFlag := false, false
+		fs.Visit(func(f *flag.Flag) {
+			configFlag = configFlag || f.Name == "config"
+			storeFlag = storeFlag || f.Name == "store"
+		})
+		paths, err := resolvePaths(runtime.GOOS, home, os.Getenv, *config, *store, configFlag, storeFlag)
+		if err != nil {
+			return writeJudgeResult(out, errOut, request, judgeFailure(request.command, "cannot_evaluate", "paths_unavailable"))
+		}
+		return runJudgeCLI(request, paths.Config, paths.Data, out, errOut)
 	}
 	command := strings.Join(rest, " ")
 	var laneRequest laneCLIRequest
@@ -317,7 +334,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return 0
 	}
 	var m *Manager
-	if rest[0] == "lane" || rest[0] == "status" || rest[0] == "agents" || rest[0] == "monitoring" || command == "observe" {
+	if rest[0] == "lane" || rest[0] == "status" || rest[0] == "agents" || rest[0] == "monitoring" || command == "observe" || rest[0] == "audit" || rest[0] == "history" {
 		m, e = newReadManager(c, *store)
 	} else {
 		m, e = NewManager(c, *store)
@@ -399,7 +416,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		}
 		rows, err := m.History(filter)
 		if err != nil {
-			fmt.Fprintln(errOut, Redact(err.Error()))
+			fmt.Fprintln(errOut, "history unavailable; check the run store and filters")
 			return 2
 		}
 		if *machine {

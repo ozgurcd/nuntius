@@ -1,3 +1,68 @@
+## Finite judge reads
+
+```
+nuntius queue [--state STATE] [--project ID] [--json]
+nuntius report show ID [--section NAME] [--json]
+nuntius tail LANE [--lines N] [--json]
+nuntius status [--long] [--json]
+```
+
+Global `--config FILE` and `--store DIRECTORY` precede these commands.
+`queue` reads the existing portable v1 snapshot. States are `planned`,
+`blocked`, `ready` and `parked`; repeat `--state` for OR filtering. Rows keep
+their original order and full ID. `total` and disjoint `counts` describe the
+whole pending population; `matched` and `returned` describe the filtered set.
+This display has `authority: false`. It makes no native scheduling claim.
+`--project ID` returns `cannot_evaluate` / `unsupported_filter`: portable v1
+has no project identity. No other design-stage filter is shipped.
+
+`report show` reads the bounded redacted report through the existing reader
+and overview parser. Section names are the exact §G names: `PLAIN SUMMARY`,
+`STATUS`, `ITEMS`, `QUESTIONS`, `DECISIONS`, `IDS`, `HEADS`, `BRIEF'S ERRORS`,
+`DENIALS`, `WIKI-DELTA`, `OPEN`, plus `CONSENSUS`. Quote names containing spaces.
+Without a selector it returns the safe text and parsed sections. Duplicates
+retain individual blocks and one-based inclusive line spans, with diagnostics.
+The title and end marker must name the requested ID. CONSENSUS is exactly one
+outer terminal `CONSENSUS: AGREE` or `CONSENSUS: DISAGREE R01 R02` line after
+the closing report marker (and after an optional outer text fence). Fenced,
+quoted, indented, duplicate, malformed or nonterminal lines are not verdicts.
+Missing consensus stays missing. Redacted, unstable, oversized or conflicting
+reports cannot provide a complete interpretation. Reading a verdict grants
+no approval and does not certify a review loop.
+Nonterminal `CONSENSUS:` lines stay in their original body section with a
+diagnostic and an incomplete interpretation. Missing selectors return
+`section_absent`; a missing verdict returns `consensus_missing`. These known
+absences leave `data.incomplete` false when the source parse is complete.
+
+`tail` returns one bounded action-summary window, then exits. `--lines` is
+1..200, default 50. It uses the existing safe parser and ended-run fallback;
+coverage is `bounded_window`, not a complete transcript. Missing store/run
+evidence is unavailable; a known empty run set returns an empty window.
+
+The three new reads emit one complete object with `--json`: schema
+`nuntius.judge.v1`, command, mode, state_domain, result, observed_at, complete,
+source {kind, revision, sequence, validity}, data, warnings and error.
+Mode and state_domain are `portable` for queue, `report` for report show and
+`run` for tail, including invalid-request and unavailable-source responses.
+Unknown sequence/revision is null. A report revision hashes only the complete
+accepted redacted text, never raw source. A queue revision hashes the complete
+safe portable projection before filtering, including its publication time.
+Both identify displayed evidence, not native store revisions. Links and private
+text are excluded. The response ceiling is 1 MiB; overflow refuses rather than
+trimming JSON. Exit 0 means a known complete read; 2 means invalid syntax or
+unavailable/incomplete evidence; 1 means output could not be written.
+Empty filtered results are successful. Errors use fixed codes without argv,
+paths or source text. Flags and enums are closed; only `--state` repeats.
+
+These reads, `audit`, `history`, `status` and `agents` use passive construction
+and Close. They create no store, directories, control locks or audit entries,
+and run no recovery, export, scheduler or agent. Independent report and tail
+reads remain available when the optional Queue source fails. Existing
+`status --json`, audit and history JSON retain their established formats.
+History errors use a fixed diagnostic, without filesystem paths.
+The shared overview now retains every recognised §G and legacy section in
+source order; its duplicate-section diagnostics apply to all retained names.
+
 ## Lane holds and held messages
 
 Phone startup uses the saved `phone_access` boolean when no network flag is

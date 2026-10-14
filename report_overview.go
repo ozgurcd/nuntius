@@ -2,6 +2,7 @@ package nuntius
 
 import (
 	"crypto/sha256"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -20,6 +21,33 @@ type reportOverview struct {
 	StatusConflict bool                `json:"status_conflict"`
 	Attention      bool                `json:"attention"`
 	Warnings       []string            `json:"warnings"`
+	ReportID       string              `json:"report_id"`
+	EndID          string              `json:"end_id"`
+	Sections       []reportSection     `json:"sections"`
+	Consensus      reportConsensus     `json:"consensus"`
+}
+
+type reportSection struct {
+	Name      string `json:"name"`
+	Text      string `json:"text"`
+	StartLine int    `json:"start_line"`
+	EndLine   int    `json:"end_line"`
+}
+
+type reportConsensus struct {
+	State    string   `json:"state"`
+	Findings []string `json:"findings"`
+	Line     int      `json:"line"`
+}
+
+func (p reportOverview) sectionSpans(name string) []reportSection {
+	rows := []reportSection{}
+	for _, s := range p.Sections {
+		if s.Name == name {
+			rows = append(rows, s)
+		}
+	}
+	return rows
 }
 
 type reportProjectionCache struct {
@@ -108,7 +136,7 @@ func reportFence(line string) string {
 }
 
 func projectReport(redacted string) reportOverview {
-	p := reportOverview{Blocks: make(map[string][]string), OwnerNeed: "unknown", Warnings: []string{}}
+	p := reportOverview{Blocks: make(map[string][]string), OwnerNeed: "unknown", Warnings: []string{}, Sections: []reportSection{}, Consensus: reportConsensus{State: "missing", Findings: []string{}}}
 	if strings.Contains(redacted, "[truncated]") || strings.Contains(redacted, "[REDACTED]") {
 		p.Incomplete = true
 		p.Warnings = append(p.Warnings, "Incomplete report interpretation: text was truncated or redacted.")
@@ -121,10 +149,16 @@ func projectReport(redacted string) reportOverview {
 	for last >= first && strings.TrimSpace(lines[last]) == "" {
 		last--
 	}
+	terminalLine := last
+	outsideConsensus := ""
 	if first <= last {
 		opening := strings.TrimSpace(lines[first])
 		if opening == "```text" || opening == "```" || opening == "~~~text" || opening == "~~~" {
 			fence := reportFence(opening)
+			if strings.HasPrefix(lines[last], "CONSENSUS:") && last > first && strings.TrimSpace(lines[last-1]) == fence {
+				outsideConsensus = lines[last]
+				last--
+			}
 			first++
 			if last >= first && strings.TrimSpace(lines[last]) == fence {
 				last--
@@ -135,10 +169,46 @@ func projectReport(redacted string) reportOverview {
 		}
 	}
 	current, fence := "", ""
+	expectedEnd := last
+	if outsideConsensus == "" && expectedEnd >= first && strings.HasPrefix(lines[expectedEnd], "CONSENSUS:") {
+		expectedEnd--
+	}
+	for expectedEnd >= first && strings.TrimSpace(lines[expectedEnd]) == "" {
+		expectedEnd--
+	}
+	startLine, endLine, lastEnd, consensusCount := 0, 0, -1, 0
+	addConsensus := func(line string, index int, terminal bool) {
+		consensusCount++
+		p.Blocks["CONSENSUS"] = append(p.Blocks["CONSENSUS"], strings.TrimPrefix(line, "CONSENSUS: ")+"\n")
+		p.Sections = append(p.Sections, reportSection{Name: "CONSENSUS", Text: line, StartLine: index + 1, EndLine: index + 1})
+		p.Consensus = reportConsensus{State: "invalid", Findings: []string{}, Line: index + 1}
+		if !terminal || consensusCount != 1 || lastEnd < 0 {
+			return
+		}
+		line = strings.TrimSuffix(line, "\r")
+		if line == "CONSENSUS: AGREE" {
+			p.Consensus.State = "agree"
+			return
+		}
+		if !strings.HasPrefix(line, "CONSENSUS: DISAGREE ") {
+			return
+		}
+		ids := strings.Split(strings.TrimPrefix(line, "CONSENSUS: DISAGREE "), " ")
+		seen := map[string]bool{}
+		for _, id := range ids {
+			if !queueID.MatchString(id) || seen[id] {
+				return
+			}
+			seen[id] = true
+		}
+		p.Consensus.State = "disagree"
+		p.Consensus.Findings = ids
+	}
 	var body strings.Builder
 	finish := func() {
 		if current != "" {
 			p.Blocks[current] = append(p.Blocks[current], body.String())
+			p.Sections = append(p.Sections, reportSection{Name: current, Text: body.String(), StartLine: startLine, EndLine: endLine})
 		}
 		body.Reset()
 		current = ""
@@ -153,12 +223,27 @@ func projectReport(redacted string) reportOverview {
 				fence = ""
 			}
 		} else if fence == "" {
+			if strings.HasPrefix(line, "Final Report — ") {
+				if p.ReportID != "" || i != first {
+					p.Incomplete = true
+				}
+				p.ReportID = strings.TrimSuffix(strings.TrimPrefix(line, "Final Report — "), "\r")
+			}
+			if strings.HasPrefix(line, "CONSENSUS:") {
+				if i == terminalLine {
+					finish()
+					addConsensus(line, i, true)
+					continue
+				}
+				addConsensus(line, i, false)
+				p.Incomplete = true
+				p.Warnings = append(p.Warnings, "Nonterminal CONSENSUS line is report text, not a verdict.")
+			}
 			if name, inline, ok := reportHeading(line); ok {
 				finish()
-				switch name {
-				case "PLAIN SUMMARY", "STATUS", "QUESTIONS", "DECISIONS", "IDS", "HEADS", "OPEN":
-					current = name
-				}
+				current = name
+				startLine = i + 1
+				endLine = i + 1
 				if current != "" {
 					if inline != "" {
 						body.WriteString(inline)
@@ -167,22 +252,50 @@ func projectReport(redacted string) reportOverview {
 				}
 				continue
 			}
-			if strings.HasPrefix(strings.TrimSpace(line), "end of report for ") {
-				finish()
-				continue
+			if strings.HasPrefix(line, "end of report for ") {
+				if i != expectedEnd {
+					p.Incomplete = true
+					p.Warnings = append(p.Warnings, "Nonterminal end marker is report text, not a boundary.")
+				} else {
+					p.EndID = strings.TrimSuffix(strings.TrimPrefix(line, "end of report for "), "\r")
+					lastEnd = i
+					finish()
+					continue
+				}
 			}
 		}
 		if current != "" {
+			endLine = i + 1
 			body.WriteString(line)
 			body.WriteByte('\n')
 		}
 	}
 	finish()
+	if outsideConsensus != "" {
+		addConsensus(outsideConsensus, terminalLine, true)
+	}
+	if p.ReportID != "" {
+		endAt := last
+		if outsideConsensus == "" && endAt >= first && strings.HasPrefix(lines[endAt], "CONSENSUS:") {
+			endAt--
+		}
+		for endAt >= first && strings.TrimSpace(lines[endAt]) == "" {
+			endAt--
+		}
+		if lastEnd != endAt {
+			p.Incomplete = true
+			p.Warnings = append(p.Warnings, "Report end marker is not terminal.")
+		}
+	}
+	if consensusCount > 1 {
+		p.Consensus.State = "invalid"
+		p.Consensus.Findings = []string{}
+	}
 	if fence != "" {
 		p.Incomplete = true
 		p.Warnings = append(p.Warnings, "Incomplete code excerpt fence.")
 	}
-	for _, name := range []string{"PLAIN SUMMARY", "STATUS", "QUESTIONS", "DECISIONS", "IDS", "HEADS", "OPEN"} {
+	for name := range p.Blocks {
 		if len(p.Blocks[name]) > 1 {
 			p.Incomplete = true
 			p.Warnings = append(p.Warnings, "Repeated "+name+" section; each source block is shown.")
@@ -227,6 +340,11 @@ func projectReport(redacted string) reportOverview {
 	if p.OwnerNeed != "none" || p.Incomplete {
 		p.Attention = true
 	}
+	if p.Incomplete || p.StatusConflict {
+		p.Consensus.State = "incomplete"
+		p.Consensus.Findings = []string{}
+	}
+	sort.SliceStable(p.Sections, func(i, j int) bool { return p.Sections[i].StartLine < p.Sections[j].StartLine })
 	return p
 }
 
