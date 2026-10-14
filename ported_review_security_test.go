@@ -167,7 +167,9 @@ func TestReviewChildCensus(t *testing.T) {
 		t.Error("CH01/identity-positive=false")
 		return
 	}
-	table, e := exec.Command("/bin/ps", "-axo", "pid=,ppid=,comm=").Output()
+	// args shows the executed path on both BSD and Linux ps; Linux comm is only
+	// the 15-character task name.
+	table, e := exec.Command("/bin/ps", "-axo", "pid=,ppid=,args=").Output()
 	if e != nil {
 		t.Log("CH01/census-available=false")
 		return
@@ -187,7 +189,7 @@ func TestReviewChildCensus(t *testing.T) {
 		t.Error("CH01/reaped=false")
 		return
 	}
-	table, e = exec.Command("/bin/ps", "-axo", "pid=,ppid=,comm=").Output()
+	table, e = exec.Command("/bin/ps", "-axo", "pid=,ppid=,args=").Output()
 	if e != nil {
 		t.Log("CH02/census-available=false")
 		return

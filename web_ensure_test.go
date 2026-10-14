@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -658,6 +659,9 @@ func TestWebEnsureNativeBackground(t *testing.T) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(store, "menubar", "dashboard.sock"))
 	}}}
 	defer client.CloseIdleConnections()
+	// The background child runs on the real OS: phone sending needs Messages on
+	// macOS and is refused elsewhere, without a send.
+	sends := 2
 	for _, action := range []string{"qr", "phone"} {
 		response, err := client.Post("http://unix/"+action, "application/json", nil)
 		if err != nil {
@@ -666,6 +670,13 @@ func TestWebEnsureNativeBackground(t *testing.T) {
 		var actionState phoneAction
 		_ = json.NewDecoder(response.Body).Decode(&actionState)
 		response.Body.Close()
+		if action == "phone" && runtime.GOOS != "darwin" {
+			if response.StatusCode != 409 || actionState.Code != "messages_unavailable" {
+				t.Fatalf("native phone action off macOS: %d %s", response.StatusCode, actionState.Code)
+			}
+			sends = 1
+			continue
+		}
 		if response.StatusCode != 200 {
 			t.Fatalf("native %s action refused: %d %s", action, response.StatusCode, actionState.Code)
 		}
@@ -673,7 +684,7 @@ func TestWebEnsureNativeBackground(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "open.ok")); err != nil {
 		t.Fatal("QR did not reach private fake opener")
 	}
-	if len(fakeCalls(t, dir, "osascript.log")) != 2 {
+	if len(fakeCalls(t, dir, "osascript.log")) != sends {
 		t.Fatal("explicit send missing or duplicated")
 	}
 	if r := ensureCall(t, m); r.Reason != "ready" || r.Operation != "none" {
