@@ -320,3 +320,91 @@ The view prints O (known running plus unexplained opportunity seconds), U
 they cannot improve the ratio. This is alert-only observation, not native
 execution compliance or complete project health. Status shows monitoring
 coverage, fixed faults and open-incident count when the mode is configured.
+
+# Native goal bookkeeping
+
+Global `--config FILE` and `--store DIRECTORY` selectors precede the command.
+The `goal` namespace uses the native journal. The existing `queue`, `report
+show`, and `tail` commands retain R01's portable/read interfaces; native rows
+are not merged into the portable queue.
+
+```text
+goal create ID --op OP --stdin [--json]
+goal update ID --revision N --op OP --stdin [--json]
+goal seal ID --revision N --op OP --stdin [--json]
+goal approve|verify|cancel|park ID --revision N --op OP --reason TEXT --authority ID --evidence ID [--json]
+goal cover ID --revision N --op OP --by ID --reason TEXT [--json]
+goal note ID --revision N --op OP --text TEXT [--evidence ID] [--json]
+goal ended ID --run RUN [--json]
+goal show ID [--json]
+goal queue [--state STATE] [--search TEXT] [--json]
+goal audit [--json]
+dispatch ID --revision N --op OP --lane LANE [--json]
+```
+
+`verify` additionally requires `--attempt RUN --report-digest SHA256`, or
+`--attempt RUN --alternate-evidence` with a named review evidence record.
+`approve` optionally takes `--source-state VALUE` matching the sealed review.
+Flags are closed per operation. Duplicate flags, extra positionals, arbitrary
+state setters, coercions and post-command global selectors are refused.
+Operation IDs are durable retry keys: repeat the exact request to obtain its
+original receipt; reuse with different content is refused. Revisions are
+positive decimal integers, except create's implicit expected revision zero.
+
+Create and update read one complete typed goal spec from stdin, bounded by the
+native spec limit. All required fields are present, including `after`, `writes`
+and `resources` as JSON arrays (empty arrays are valid; null and strings are
+refused). To add or remove dependencies, replace the `after` array in the full
+spec and update with the current revision and a new operation ID. `goal show`
+shows `depends_on`, dependents, specific blockers and full current/chain run IDs.
+Cycles are refused with a deterministic cycle path. A cancelled dependency
+remains blocked until an explicit spec edit removes it. `goal queue --search`
+finds native open goals by ID/title; repeat `--state` for an OR filter over
+drafted, approved, running, ended and parked. Parent counts remain in the
+unfiltered snapshot beside the matched rows. Reads never recover or launch.
+
+Seal reads one object with `body`, `standards`, `profile`, `authority`,
+`source_state` and `reviewed_source_state`. Profile contains `name`, `revision`,
+`separator`, `marker` and `wrapper`. Body/standards are JSON strings preserving
+the exact brief bytes. No arbitrary file reader is exposed. Sealing changes the
+revision and revokes prior approval. Approve requires the exact reviewed seal;
+it does not create an owner execution grant. Cover uses the existing coverage
+engine: the source stays parked until its target is verified, then closes with
+that target's evidence. Cancelling a goal sends no process signal; an unsettled
+attempt is refused. Lane pause/resume and lane Cancel remain separate controls.
+
+Ended observes the exact latest recorded native run, including the full IDs
+used by resume chains; it does not accept a judge-invented outcome. An old or
+unsettled run is refused with expected/found details. Repeated ended and verify
+with matching complete evidence are no-ops, leaving the journal unchanged.
+Different evidence, operation reuse and stale revisions cannot use this path.
+Native mutations mirror the existing audit. A durable commit whose audit mirror
+cannot be confirmed returns `uncertain` with `committed_audit_pending` and its
+receipt; inspect before repeating, then retry the exact operation.
+
+Both output modes use the same safe values, with R01's redaction/link policy.
+JSON schema is `nuntius.goal-cli.v1`; result is `ok`, `committed`, `no_op`,
+`invalid_request`, `refused` or `uncertain`. Exit 0 is a successful read or
+confirmed mutation/no-op; 2 is syntax/input refusal, 3 is application refusal,
+4 is unavailable evidence or uncertain persistence, and 1 is output failure.
+Refusals show expected/found revision and applicable state; bodies, paths and
+internal error strings are not echoed. Responses are bounded complete JSON.
+
+At this base, the executable has no trusted native source/scope/claim provider.
+Dispatch-by-ID parses and delegates over the tested manager seam, but the
+standalone CLI returns `trusted_dispatch_context_unavailable` before writes or
+launch. Caller flags/stdin cannot supply that authority. Native queue still
+returns known rows/counts with `uncertain` when capability/source/claim
+observations are missing; it never claims complete startability. Production
+activation requires a separately reviewed trusted provider integration.
+
+The Python tracker remains a legacy migration source, not retired by B17:
+`new`/writer metadata map to typed create/update, `dispatch` to sealed native
+dispatch, `ended` to real run observation, `verify` to evidence-bound review,
+`park`/`cancel` to typed decisions, `note` to append-only notes, and queue/plan
+accounting to the journal projection and native audit. Portable publication,
+legacy import/cutover, project ACTIVE/PAUSED/DONE decisions, idle reasons,
+morning utilization reports, metrics export and pointer-brief delivery remain
+in their existing tools. Native goals have no arbitrary `failed` state: run
+failure is an observed outcome, followed by review/park/cancel. B17 does not
+silently reinterpret those legacy operations or rewrite their records.

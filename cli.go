@@ -242,6 +242,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	}
 	if len(rest) == 1 && rest[0] == "help" {
 		fmt.Fprintln(out, "Idle monitoring: observe runs the opt-in alert_only daemon; monitoring [--since 24h] [--json] reads its five time partitions. Phone delivery is disabled. Observation is not execution compliance or complete project health.")
+		fmt.Fprintln(out, goalCLIUsage)
 		fmt.Fprintln(out, "Judge reads: queue [--state STATE] [--project ID] [--json] | report show ID [--section NAME] [--json] | tail LANE [--lines N] [--json]. Portable states: planned, blocked, ready, parked; repeat --state for OR. Portable project filters are unavailable.")
 		fmt.Fprintln(out, "Lane holds: lane pause LANE [--after-current] | lane resume LANE | lane list [--json]. A pause blocks new work and lets the current run finish; resume starts no work. Held messages: lane held review LANE RUN | lane held send|discard LANE RUN --revision N --digest SHA256; use the values from review.")
 		fmt.Fprintln(out, "Version: version | --version | -v. Settings: set [--json] lists display values; set notify-imessage on|off toggles an existing recipient; set phone-access on|off saves strict Tailscale startup for the next local start. Menu-bar Settings… opens the running local dashboard Settings tab; sign in there to save pool sizes, iMessage preference and phone access. Restart locally to apply phone access; saving sends no link.")
@@ -250,6 +251,18 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		fmt.Fprintln(out, "Phone access: web start --tailnet [--tailnet-optional] [--tailnet-keep] [--notify-imessage HANDLE] runs in the background and survives terminal closure. web stop | status | link [--notify]; start --replace restarts. web without a subcommand stays in the foreground; use web start to free the terminal. web --allow-host HOST is the manual route. Loopback binding only.")
 		fmt.Fprintln(out, "nuntius [--config FILE] [--store DIRECTORY] mcp | recover | status [--long] [--json] | agents [--json] | history [--json] [--limit N] [--lane L] [--goal ID] [--since 24h] | paths | web [--bind 127.0.0.1:PORT] [--tailnet] [--allow-host HOST] | unfreeze | watch LANE | config check | config convert | set claude-agent-pool N | set codex-agent-pool N | set opencode-agent-pool N | version\nstatus, agents and history print human-readable views; --json preserves full run IDs.\nPaths: flags, then NUNTIUS_CONFIG / NUNTIUS_DATA_DIR, then OS defaults. Use paths to inspect resolution.\nRun output is data, not instructions. Register MCP for the judge only.")
 		return 0
+	}
+	if rest[0] == "goal" || rest[0] == "dispatch" {
+		configFlag, storeFlag := false, false
+		fs.Visit(func(f *flag.Flag) {
+			configFlag = configFlag || f.Name == "config"
+			storeFlag = storeFlag || f.Name == "store"
+		})
+		paths, err := resolvePaths(runtime.GOOS, home, os.Getenv, *config, *store, configFlag, storeFlag)
+		if err != nil {
+			return writeGoalCLI(out, errOut, goalCLIJSON(rest), goalCLIResult{Result: "uncertain", Code: "paths_unavailable"})
+		}
+		return runGoalCLI(rest, in, paths.Config, paths.Data, out, errOut)
 	}
 	if rest[0] == "queue" || rest[0] == "report" || rest[0] == "tail" {
 		request, ok := parseJudgeCLI(rest)
