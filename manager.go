@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -122,7 +123,11 @@ func NewManager(c Config, store string, resolver ...goalContinuationResolver) (*
 	if e = m.prepareControlStore(); e != nil {
 		return nil, e
 	}
-	_ = m.recoverLaneControls(nil)
+	controlRecovery := m.recoverLaneControls(nil)
+	if controlRecovery != nil {
+		// Fixed operation/code only: OS paths and private state never enter logs.
+		log.Printf("nuntius: ERROR lane control startup recovery failed (%s); new work remains blocked until controls can be read; if controls stay busy, restart older Nuntius MCP processes", laneControlError(controlRecovery))
+	}
 	if _, e := m.Status(); e != nil {
 		return nil, e
 	}
@@ -134,6 +139,9 @@ func NewManager(c Config, store string, resolver ...goalContinuationResolver) (*
 			case <-m.closing:
 				return
 			case <-tick.C:
+				if controlRecovery != nil {
+					controlRecovery = m.recoverLaneControls(nil)
+				}
 				_, _ = m.status(false)
 				m.mu.Lock()
 				recovery := m.recovery
@@ -727,15 +735,30 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 	var e error
 	if m.readOnly {
 		if root, err := openLaneControlRoot(m.store); err == nil {
-			guard, _ = laneControlReadLock(root)
+			guard, e = laneControlReadLock(root)
 			root.Close()
+		} else {
+			e = err
 		}
 	} else {
-		guard, e = m.controlLock()
+		root, err := openLaneControlRoot(m.store)
+		if err != nil {
+			e = err
+		} else {
+			guard, e = laneControlLock(root, syscall.LOCK_EX)
+			root.Close()
+		}
 		if e != nil {
-			return nil, e
+			// A separate observer preserves read-only projection and independent
+			// controls while a legacy process owns the shared coordination inode.
+			reader, err := newReadManager(m.config, m.store)
+			if err != nil {
+				return nil, err
+			}
+			return reader.status(details, controlsOut...)
 		}
 	}
+	controlErr := e
 	if guard != nil {
 		defer guard.Close()
 	}
@@ -799,6 +822,9 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 	var controls laneControlSnapshot
 	if details {
 		controls = m.laneControlSnapshotLocked(runs, guard != nil)
+		if guard == nil && controlErr != nil {
+			controls = m.laneControlFailureSnapshot(runs, controlErr)
+		}
 	}
 	if len(controlsOut) > 0 {
 		*controlsOut[0] = controls

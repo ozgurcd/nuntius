@@ -256,7 +256,7 @@ const make = async (tab='queue') => {const clock={now:Date.parse(queueExample.up
 
 // Lane controls share the shipped script and offline DOM; no real HTTP or agents.
 func TestDashboardLaneControls(t *testing.T) {
-	for _, name := range []string{"presentation", "schema", "save", "conflict", "uncertainty", "revocation", "deadline", "order_focus", "unavailable_revision", "stale_pause", "stale_resume", "unchanged", "held_resume", "held_guards", "held_delivery", "held_discard", "held_wrong_run", "held_uncertainty", "held_focus", "held_signout", "held_counts", "held_retention", "held_replacement"} {
+	for _, name := range []string{"busy", "presentation", "schema", "save", "conflict", "uncertainty", "revocation", "deadline", "order_focus", "unavailable_revision", "stale_pause", "stale_resume", "unchanged", "held_resume", "held_guards", "held_delivery", "held_discard", "held_wrong_run", "held_uncertainty", "held_focus", "held_signout", "held_counts", "held_retention", "held_replacement"} {
 		t.Run(name, func(t *testing.T) {
 			assets := map[string]any{"test": name}
 			for key, path := range map[string]string{"script": "app.js", "page": "index.html", "css": "app.css"} {
@@ -448,6 +448,18 @@ const snapshot = (paused=false,phase=paused?'paused':'enabled',revision=7) => ({
 const inject = (h,value) => {h.context.fixtureControl=value;vm.runInContext('lastData = JSON.parse(JSON.stringify(lastData));lastData.lane_control=fixtureControl;render(lastData)',h.context);};
 (async()=>{
   predicate='A09/U02 '+input.test+' on shipped assets';
+  if(input.test==='busy'){
+    const {h}=await make(),v=card(h,'codex-1');inject(h,snapshot());
+    h.ids.lane.value='codex-1';h.ids.lane.listeners.change();
+    const busy=snapshot(false,'busy',0);for(const l of busy.lanes)l.revision=0;
+    const lane=busy.lanes.find(l=>l.name==='codex-1');lane.dispatch_eligible=false;lane.blockers=['lane_control_busy'];lane.explanation='Controls busy: held by another Nuntius process; restart it after the upgrade';
+    inject(h,busy);
+    check(v.holdBadge.textContent==='Controls busy' && v.holdReason.textContent.includes('restart it'),'busy holder explanation stays visible');
+    check(v.pause.disabled && v.pauseAfter.disabled && v.resume.disabled && h.ids.send.disabled && h.ids.stopSend.disabled,'busy observation blocks all lane mutations after known revision');
+    check(!card(h,'codex-2').pause.disabled && !h.ids.saveNote.disabled && !h.ids.message.disabled,'independent lane and notes remain usable');
+    inject(h,snapshot(false,'enabled',6));check(v.pause.disabled && h.ids.send.disabled,'older state cannot reopen busy lane');
+    inject(h,snapshot(false,'enabled',8));check(!v.pause.disabled && !h.ids.send.disabled,'fresh controls restore lane');
+  }
   if(input.test==='unavailable_revision'){
     for(const kind of ['unavailable','missing','unknown']){
       const {h}=await make(),v=card(h,'codex-1');inject(h,snapshot());

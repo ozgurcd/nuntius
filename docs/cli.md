@@ -97,7 +97,8 @@ selectors before the command, and the same environment defaults. They never
 rewrite configuration. Only pause/resume initialize missing control storage.
 `lane list`, CLI `status` and `agents` create no store, lock, signal or run file,
 reconcile no intent and launch no recovery or supervision. Unknown or unreadable
-controls appear as unavailable and block new work; the other run facts remain
+controls appear as unavailable and block new work; contended locks appear as
+busy, with new work still blocked. The other run facts remain
 visible. `lane list` exits 1 when it cannot confirm the controls, while still
 printing that safe snapshot. Mutation exits are 0 for a durable changed or
 unchanged result, 1 for refusal or uncertainty, and 2 for invalid syntax.
@@ -105,13 +106,23 @@ An uncertain response is not proof of a save or a delivery. Read the current
 state before deciding whether to retry.
 
 JSON supplies `lane_control_version: 1`. Each safe control has `paused`,
-`phase` (enabled, draining, paused or unavailable), UTC `since`, `source`,
+`phase` (enabled, draining, paused, busy or unavailable), UTC `since`, `source`,
 `revision`, `configured`, `dispatch_eligible`, fixed `blockers` and a plain
 `explanation`. Status includes the full sorted control snapshot under
 `lane_control`; status/agents rows add their own `lane_control` without replacing
 run `state`, `outcome`, `badge` or `report_exists`. A draining lane can be both
 running and paused. Availability also accounts for freeze and held work.
 Status and list never contain held message text or session values.
+
+Busy reads return promptly without reading mutable control records outside the
+lock. Best-effort local `lsof` diagnostics share a 200 ms deadline and a bounded
+output limit. When a holder's Homebrew executable path identifies an older
+version, status names that version and asks you to restart the process after
+upgrading. A missing tool, missing holder identity or unversioned executable
+leaves the version explicitly unknown. No path or command output is displayed.
+Nuntius never stops another process automatically. Writable startup initializes
+coordination storage, logs a fixed error reason if recovery fails, and retries
+pending recovery on its existing background tick. Read-only commands never repair it.
 
 To review a held message, use its full original run ID from status/history:
 

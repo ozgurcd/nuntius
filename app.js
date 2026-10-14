@@ -86,8 +86,8 @@ function validLaneControls(c) {
       typeof l.paused === 'boolean' && typeof l.configured === 'boolean' && typeof l.dispatch_eligible === 'boolean' &&
       typeof l.requested_after_current === 'boolean' && Number.isSafeInteger(l.revision) && l.revision >= 0 && l.revision <= c.revision &&
       typeof l.since === 'string' && typeof l.source === 'string' && typeof l.explanation === 'string' &&
-      ['enabled','paused','draining','unavailable'].includes(l.phase) &&
-      (l.phase === 'unavailable' || (l.paused ? ['paused','draining'].includes(l.phase) : l.phase === 'enabled')) &&
+      ['enabled','paused','draining','unavailable','busy'].includes(l.phase) &&
+      (l.phase === 'unavailable' || (l.phase === 'busy' ? !l.dispatch_eligible : (l.paused ? ['paused','draining'].includes(l.phase) : l.phase === 'enabled'))) &&
       Array.isArray(l.blockers) && l.blockers.every(b => typeof b === 'string'));
 }
 function acceptLaneControls(c, version) {
@@ -99,17 +99,19 @@ function acceptLaneControls(c, version) {
     // for any lane unavailable or missing from this fresh observation.
     laneControls = {...laneControls, lanes:laneControls.lanes.filter(l => c.lanes.some(n => n.name === l.name)).map(l => {
       const observed = c.lanes.find(n => n.name === l.name);
-      return observed.phase === 'unavailable' ? observed : l;
+      return ['unavailable','busy'].includes(observed.phase) ? observed : l;
     })};
   }
 }
 function controlFor(lane) { return laneControls?.lanes.find(l => l.name === lane); }
 function blockerWords(blockers) {
   const words = {lane_paused:'Lane is paused',running:'Current work is running',frozen:'Dispatch is frozen',held_message:'A held message still needs review',waiting_to_resume:'Interrupted work is waiting for a separate recovery check',not_configured:'Lane is no longer configured',freeze_unavailable:'Freeze state cannot be read; new work is blocked',held_message_unavailable:'Message reservations cannot be read; new work is blocked',lane_control_unavailable:'Lane controls are unavailable'};
+  words.lane_control_busy = 'Controls busy: held by another process; new work is blocked';
   return blockers.map(b => words[b] || 'An additional hold has no explanation here').join('; ');
 }
 function messageGuard(lane) {
   const c = controlFor(lane);
+  if (c?.phase === 'busy') return c.explanation;
   return !c || c.phase === 'unavailable' ? 'Lane controls are unavailable. Read current state before sending work.' :
     c.paused ? 'Lane is paused. New task messages cannot be sent; drafts, notes and reading stay available.' :
     lastData?.freeze ? 'Dispatch is frozen. New task messages cannot be sent.' : !c.configured ? 'Lane is no longer configured for new work.' : '';
@@ -121,7 +123,7 @@ function updateMessageControls() {
 }
 function updateLaneControls(v, lane) {
   const c = controlFor(lane), saving = laneSaves.has(lane);
-  setText(v.holdBadge, !c || c.phase === 'unavailable' ? 'Controls unavailable' : c.phase === 'draining' ? 'Paused · current run finishing' : c.paused ? 'Paused' : 'Lane enabled');
+  setText(v.holdBadge, !c || c.phase === 'unavailable' ? 'Controls unavailable' : c.phase === 'busy' ? 'Controls busy' : c.phase === 'draining' ? 'Paused · current run finishing' : c.paused ? 'Paused' : 'Lane enabled');
   setText(v.holdReason, !c ? 'Could not read lane holds. New starts are blocked until current state can be read.' :
     (c.paused ? 'Pause blocks new work and lets the current run finish. ' : '') + c.explanation +
     (c.since ? ' Hold saved ' + relative(c.since) + ' (' + c.since + ').' : '') +
@@ -130,7 +132,7 @@ function updateLaneControls(v, lane) {
   v.pause.hidden = !!c?.paused && document.activeElement !== v.pause;
   v.pauseAfter.hidden = !!c?.paused && document.activeElement !== v.pauseAfter;
   v.resume.hidden = !!c && !c.paused && document.activeElement !== v.resume;
-  for (const b of [v.pause,v.pauseAfter,v.resume]) b.disabled = !token || saving || !c || c.phase === 'unavailable';
+  for (const b of [v.pause,v.pauseAfter,v.resume]) b.disabled = !token || saving || !c || ['unavailable','busy'].includes(c.phase);
   v.pause.disabled ||= !c?.configured;
   v.pauseAfter.disabled ||= !c?.configured;
 }
@@ -144,7 +146,7 @@ async function setLaneControl(lane, operation, afterCurrent = false) {
   if (!authenticated() || laneSaves.has(lane)) return;
   const c = controlFor(lane), v = cards.get(lane) || retainedHolds.get(lane);
   const retainedResume = operation === 'resume' && retainedHolds.get(lane) === v && c && !c.configured && !c.blockers.includes('lane_control_unavailable');
-  if (!v || !c || (c.phase === 'unavailable' && !retainedResume) || (operation === 'pause' && !c.configured)) return;
+  if (!v || !c || c.phase === 'busy' || (c.phase === 'unavailable' && !retainedResume) || (operation === 'pause' && !c.configured)) return;
   const epoch = authEpoch, controller = new AbortController();
   let rejectSave;
   const cancelled = new Promise((_, reject) => { rejectSave = reject; });
@@ -212,7 +214,7 @@ function makeRetainedHold(c) {
 }
 function updateRetainedHold(v, c) {
   setText(v.reason, c.paused ? 'Paused · no longer configured. ' + blockerWords(c.blockers) : 'Hold cleared · still not configured. This action started no work.');
-  v.resume.disabled = !token || laneSaves.has(c.name) || !c.paused || c.blockers.includes('lane_control_unavailable');
+  v.resume.disabled = !token || laneSaves.has(c.name) || !c.paused || c.phase === 'busy' || c.blockers.includes('lane_control_unavailable');
 }
 function renderRetainedHolds() {
   const entries = (laneControls?.lanes || []).filter(c => !c.configured && (c.paused || retainedHolds.has(c.name)));
@@ -237,6 +239,7 @@ function sameHeldContent(a, b) {
 }
 function heldSendReason(m) {
   const c = controlFor(m.lane);
+  if (c?.phase === 'busy') return c.explanation;
   if (!c || c.phase === 'unavailable') return 'Lane controls are unavailable. Read current state before sending.';
   if (c.paused) return 'Lane is paused. Resume clears only the lane hold; the message still needs review.';
   if (lastData?.freeze) return 'Dispatch is frozen. Sending is blocked; reading and discard remain available.';
@@ -864,6 +867,7 @@ function laneExplanation(s) {
   if (mark.kind === 'failed' || mark.kind === 'attention') return {rank:0,rankReason:'Failed or missing-report attempt needs review',label:'Ended — needs review',reason:(s.exit != null ? 'Process exit ' + s.exit + '. ' : 'Process outcome needs inspection. ') + (s.report_exists ? 'Read the report; acceptance is not confirmed.' : 'Report is missing. Inspect the retained tail to find what happened.')};
   if (s.state !== 'running' && r?.overview?.attention) return {rank:0,rankReason:'Report needs attention',label:'Ended — needs review',reason:r.overview.owner_need === 'decision' ? 'The report includes an owner decision. Read its options and recommendation.' : 'The report status or missing interpretation needs review.'};
   if (mark.kind === 'stuck') return {rank:1,rankReason:'No action observed past the 15-minute silence threshold',label:'Possible stall',reason:'No newer action observed for ' + duration(s.last_event_age_seconds ?? s.elapsed_seconds) + '. This may be a long command. Inspect the tail before deciding; silence does not confirm a stuck process.'};
+  if (c?.phase === 'busy') return {rank:1,rankReason:'Lane controls are busy',label:s.state === 'running'?'Working — controls busy':'Lane controls busy',reason:c.explanation};
   if (!c || c.phase === 'unavailable') return {rank:1,rankReason:'Current lane controls are unavailable',label:s.state === 'running'?'Working — controls unavailable':'Lane controls unavailable',reason:'New-start permission is unknown and blocked. Tail, reports, notes and independent safety controls remain usable.'};
   if (s.state !== 'running' && s.state !== 'idle') return {rank:2,rankReason:'Ended attempt awaits review',label:'Ended — awaiting review',reason:'Process ended' + (s.exit === 0 ? ' normally' : s.exit == null ? ' with unknown exit' : ' with exit ' + s.exit) + '. A saved report does not establish acceptance or verification.'};
   if (s.state === 'running') return {rank:3,rankReason:'Current work is running',label:s.current_action?.running_seconds != null?'Waiting on its own work':'Working',reason:s.current_action?.running_seconds != null ? 'Waiting for its command to finish; running for ' + duration(s.current_action.running_seconds) + '. This is observed activity, not a successful result.' : 'Working — no newer action observed. Inspect the safe action summary and tail.'};

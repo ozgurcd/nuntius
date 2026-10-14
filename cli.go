@@ -89,7 +89,7 @@ func (m *Manager) laneCommand(r laneCLIRequest, out, errOut io.Writer) int {
 		if err != nil {
 			// Control failure is data. Independent lane/run visibility remains usable.
 			m.mu.Lock()
-			s = m.laneControlSnapshotLocked(nil, false)
+			s = m.laneControlFailureSnapshot(nil, err)
 			m.mu.Unlock()
 			fmt.Fprintln(errOut, laneCLIError(err))
 			code = 1

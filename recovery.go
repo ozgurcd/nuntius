@@ -17,7 +17,7 @@ func (m *Manager) Recover() error {
 	if m.closed {
 		return errors.New("server is closing")
 	}
-	guard, err := m.controlLock()
+	guard, err := m.admissionControlLock()
 	if err != nil {
 		return err
 	}

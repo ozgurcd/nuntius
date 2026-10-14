@@ -8,6 +8,14 @@ known to have ended is not shown as running or draining. Reads observe existing
 files only: they do not repair pending control changes, create signals, recover
 runs or start work. Queue faults do not prevent operational reads.
 
+A contended control lock shows **Controls busy** on each affected lane, with
+holder/restart guidance when it can be established. A corrupt or unsafe control
+record shows **Controls unavailable**. Both block new starts, sends and lane
+hold mutations; the rest of the dashboard still refreshes. Busy observations
+override older saved permission displays. Notes, tails, reports and independent
+safety controls stay available. The dashboard never reads control records
+without their shared lock and never kills an older process.
+
 The guarded `POST /lane-control` accepts `schema_version: 1`, a configured
 `lane`, `operation: "pause"` or `"resume"`, and numeric `expected_revision` from
 the latest control snapshot. Only pause accepts optional boolean `after_current`.

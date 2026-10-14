@@ -911,7 +911,7 @@ func TestLaneControlReadLockAndNoMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = m.laneControls(); !errors.Is(err, errLaneControlUnavailable) {
+	if _, err = m.laneControls(); laneControlCode(err) != "locked" {
 		lock.Close()
 		t.Fatal("contended read ignored shared control lock")
 	}

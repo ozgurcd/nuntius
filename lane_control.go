@@ -413,7 +413,7 @@ func (lock *controlFileLock) Close() error {
 func laneControlReadLock(root *os.File) (*controlFileLock, error) {
 	lock, err := openLaneControlLock(root, unix.LOCK_SH, false)
 	if err != nil {
-		return nil, errLaneControlUnavailable
+		return nil, err
 	}
 	return lock, nil
 }
@@ -433,7 +433,7 @@ func (m *Manager) admissionControlLock() (*controlFileLock, error) {
 	defer root.Close()
 	lock, err := openLaneControlLock(root, unix.LOCK_EX, false)
 	if err != nil {
-		return nil, errLaneControlUnavailable
+		return nil, err
 	}
 	return lock, nil
 }
@@ -635,6 +635,9 @@ func (m *Manager) recoverLaneControls(ops *laneControlIO) error {
 	defer guard.Close()
 	if err = reconcileLaneControl(root, ops); err != nil {
 		return &laneControlFault{Code: "audit_unavailable"}
+	}
+	if _, err = readLaneControlsAt(root); err != nil {
+		return laneControlError(err)
 	}
 	return nil
 }

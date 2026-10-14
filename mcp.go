@@ -419,7 +419,9 @@ func mcpStartupAllows(err error, name string) bool {
 	if err == nil || name == "nuntius_web_ensure" {
 		return true
 	}
-	if !errors.Is(err, errLaneControlUnavailable) {
+	var control *laneControlFault
+	busy := errors.As(err, &control) && control.Code == "locked"
+	if !busy && !errors.Is(err, errLaneControlUnavailable) {
 		return false
 	}
 	switch name {

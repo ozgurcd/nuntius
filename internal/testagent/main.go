@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -139,6 +140,18 @@ func main() {
 			os.Exit(44)
 		}
 	}
+	// Offline pre-upgrade holder: no owner metadata and no explicit unlock.
+	if len(os.Args) == 3 && os.Args[1] == "__fixture_control_lock" {
+		f, err := os.OpenFile(os.Args[2], os.O_RDWR, 0)
+		if err != nil || syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+			os.Exit(48)
+		}
+		defer f.Close()
+		fmt.Println("locked")
+		var release [1]byte
+		_, _ = io.ReadFull(os.Stdin, release[:])
+		return
+	}
 	if webSession {
 		interrupt := make(chan os.Signal, 1)
 		signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
@@ -223,6 +236,29 @@ func main() {
 	// Invoked through a symlink named like the real program, the fixture stands
 	// in for the Tailscale CLI or osascript. It never contacts either.
 	switch filepath.Base(os.Args[0]) {
+	case "lsof":
+		mode := os.Getenv("NUNTIUS_FAKE_LSOF")
+		if mode == "hang" {
+			time.Sleep(time.Second)
+			return
+		}
+		if mode == "oversize" {
+			fmt.Print(strings.Repeat("x", 32768))
+			return
+		}
+		if slices.Contains(os.Args, "-d") {
+			switch mode {
+			case "older":
+				fmt.Println("n/opt/homebrew/Caskroom/nuntius/0.3.4/bin/nuntius")
+			case "same":
+				fmt.Println("n/opt/homebrew/Caskroom/nuntius/0.3.5/bin/nuntius")
+			default:
+				fmt.Println("n/fixture/unversioned/nuntius")
+			}
+		} else {
+			fmt.Println("p12345\ncnuntius\nf3\nlW")
+		}
+		return
 	case "tailscale":
 		fakeTailscale()
 		return
