@@ -24,6 +24,10 @@ var fakeBinary string
 var cliBinary string
 
 func TestMain(m *testing.M) {
+	lifetimeHelper := os.Args[len(os.Args)-1] == "fixture-lifetime-helper"
+	if lifetimeHelper {
+		fmt.Println("fixture-stage=1")
+	}
 	if os.Args[len(os.Args)-1] == "fixture-web-server" {
 		fixtureWebServer()
 		os.Exit(0)
@@ -40,12 +44,18 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	var owner *fixturelife.Owner
+	if lifetimeHelper {
+		fmt.Println("fixture-stage=2")
+	}
 	if os.Getenv(fixturelife.Environment) == "" {
 		owner, err = fixturelife.New(filepath.Join(dir, "children"))
 		if err != nil {
 			os.Exit(1)
 		}
 		_ = os.Setenv(fixturelife.Environment, owner.Dir)
+		if lifetimeHelper {
+			fmt.Println("fixture-stage=3")
+		}
 		interrupt := make(chan os.Signal, 1)
 		signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 		go func() {
@@ -57,6 +67,9 @@ func TestMain(m *testing.M) {
 		}()
 	}
 	binary := os.Getenv("NUNTIUS_LIFETIME_FAKE_BINARY")
+	if lifetimeHelper {
+		fmt.Println("fixture-stage=4")
+	}
 	if binary == "" {
 		binary = os.Getenv("NUNTIUS_TEST_FAKE_BINARY")
 	}

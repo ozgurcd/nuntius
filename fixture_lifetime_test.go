@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -27,6 +29,7 @@ func TestFixtureLifetimeHelper(t *testing.T) {
 }
 
 func fixtureLifetimeReady() (cmd *exec.Cmd, err error) {
+	fmt.Println("fixture-stage=5")
 	cmd = exec.Command(fakeBinary)
 	webDir := os.Getenv("NUNTIUS_LIFETIME_WEB_DIR")
 	if webDir != "" {
@@ -38,11 +41,14 @@ func fixtureLifetimeReady() (cmd *exec.Cmd, err error) {
 		cmd.Env = append(os.Environ(), "NUNTIUS_FIXTURE_WEB_BINARY="+exe, "NUNTIUS_FIXTURE_WEB_DIR="+webDir)
 	}
 	cmd.Stdin = strings.NewReader("ignore-int wait")
-	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	// Nil output, not a pipe: the separate-session web stand-in inherits it,
+	// and Wait on a failed preparation must not block on that descendant.
+	cmd.Stdout, cmd.Stderr = nil, nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err = cmd.Start(); err != nil {
 		return nil, errors.New("start offline lifetime child")
 	}
+	fmt.Println("fixture-stage=6")
 	defer func() {
 		if err != nil {
 			_ = cmd.Process.Kill()
@@ -56,6 +62,7 @@ func fixtureLifetimeReady() (cmd *exec.Cmd, err error) {
 		}
 		for _, child := range children {
 			if child.PID == cmd.Process.Pid {
+				fmt.Println("fixture-stage=7")
 				if webDir != "" {
 					b, err := os.ReadFile(filepath.Join(webDir, fmt.Sprintf("%d.pid", cmd.Process.Pid)))
 					if err != nil {
@@ -73,6 +80,7 @@ func fixtureLifetimeReady() (cmd *exec.Cmd, err error) {
 					if _, err = os.Stat(filepath.Join(webDir, "server-ready")); err != nil {
 						continue
 					}
+					fmt.Println("fixture-stage=8")
 					child = fixturelife.Child{PID: pid, Start: birth}
 				}
 				b, _ := json.Marshal(struct {
@@ -119,6 +127,7 @@ func TestFixtureLifetimeInterrupted(t *testing.T) {
 						t.Fatal(err)
 					}
 					cmd.Stderr = io.Discard
+					started := time.Now()
 					if err = cmd.Start(); err != nil {
 						t.Fatal(err)
 					}
@@ -162,10 +171,22 @@ func TestFixtureLifetimeInterrupted(t *testing.T) {
 						Valid bool
 					}
 					ready := make(chan readyReport, 1)
+					var stage atomic.Int32
+					var stagesMu sync.Mutex
+					var stages []string
 					go func() {
 						scanner := bufio.NewScanner(stdout)
 						clockStarted := false
 						for scanner.Scan() {
+							if strings.HasPrefix(scanner.Text(), "fixture-stage=") {
+								var value int32
+								if _, err := fmt.Sscanf(scanner.Text(), "fixture-stage=%d", &value); err == nil {
+									stage.Store(value)
+									stagesMu.Lock()
+									stages = append(stages, fmt.Sprintf("%d@%s", value, time.Since(started).Round(time.Millisecond)))
+									stagesMu.Unlock()
+								}
+							}
 							if strings.HasPrefix(scanner.Text(), "=== RUN   TestFixtureLifetimeHelper") {
 								clockStarted = true
 							}
@@ -182,11 +203,16 @@ func TestFixtureLifetimeInterrupted(t *testing.T) {
 					select {
 					case report := <-ready:
 						child, leaseDir = report.Child, report.Lease
+						stagesMu.Lock()
+						t.Logf("helper readiness elapsed=%s stages=%v", time.Since(started), stages)
+						stagesMu.Unlock()
 						if !report.Valid || child.PID <= 1 || child.Start == "" {
 							t.Fatal("offline child ready identity missing")
 						}
 					case <-time.After(15 * time.Second):
-						t.Fatal("offline helper ready deadline")
+						stagesMu.Lock()
+						defer stagesMu.Unlock()
+						t.Fatalf("offline helper ready deadline; startup stages=%v", stages)
 					}
 					// Finish the readiness read before Wait can close StdoutPipe.
 					waitStarted = true

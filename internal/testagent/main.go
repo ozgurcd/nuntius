@@ -161,7 +161,12 @@ func main() {
 			os.Exit(46)
 		}
 		name := filepath.Join(os.Getenv("NUNTIUS_FIXTURE_WEB_DIR"), os.Args[2]+".pid")
-		if err := os.WriteFile(name, []byte(strconv.Itoa(cmd.Process.Pid)), 0600); err != nil {
+		// Readers poll for this file; publish it only with its complete content.
+		err = os.WriteFile(name+".tmp", []byte(strconv.Itoa(cmd.Process.Pid)), 0600)
+		if err == nil {
+			err = os.Rename(name+".tmp", name)
+		}
+		if err != nil {
 			stop()
 			_ = cmd.Wait()
 			os.Exit(46)
