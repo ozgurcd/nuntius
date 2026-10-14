@@ -105,6 +105,7 @@ func TestMain(m *testing.M) {
 		if child != nil {
 			_ = child.Wait()
 		}
+		code = testAgentStartSuiteResult(code)
 		_ = os.RemoveAll(dir)
 		os.Exit(code)
 	}
@@ -142,6 +143,7 @@ func TestMain(m *testing.M) {
 		fmt.Println("offline final child cleanup failed")
 		code = 1
 	}
+	code = testAgentStartSuiteResult(code)
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
 }

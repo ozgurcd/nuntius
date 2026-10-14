@@ -252,6 +252,11 @@ func main() {
 		if !filepath.IsAbs(dir) {
 			os.Exit(47)
 		}
+		destination, err := os.Stat(dir)
+		cwd, cwdErr := os.Stat(".")
+		if err != nil || cwdErr != nil || !destination.IsDir() || os.SameFile(destination, cwd) {
+			os.Exit(47)
+		}
 		marker, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("agent-start-%d-%d", os.Getpid(), time.Now().UnixNano())), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
 			os.Exit(47)

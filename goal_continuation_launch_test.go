@@ -589,16 +589,7 @@ func linkedStarts(t *testing.T, m *Manager, want int) {
 	if err != nil {
 		t.Fatal("offline marker pointer unavailable")
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := 0
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "agent-start-") {
-			got++
-		}
-	}
+	got := len(testAgentStartNames(t, dir))
 	if got != want {
 		t.Fatalf("all-branch agent starts=%d want=%d", got, want)
 	}

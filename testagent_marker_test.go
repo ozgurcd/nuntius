@@ -1,6 +1,7 @@
 package nuntius
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,6 +15,33 @@ import (
 
 const testAgentStartEnvironment = "NUNTIUS_TEST_AGENT_START_DIR"
 const testAgentStartPointer = ".test-agent-start-dir"
+
+func testAgentStartCheckPackageDir(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("offline package marker check unavailable")
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "agent-start-") {
+			return fmt.Errorf("offline suite left an agent-start marker in the package directory")
+		}
+	}
+	return nil
+}
+
+// TestMain calls this after all tests and owned children finish, including
+// parallel tests and their cleanups. Any marker makes the entire suite fail.
+func testAgentStartSuiteResult(code int) int {
+	dir, err := os.Getwd()
+	if err == nil {
+		err = testAgentStartCheckPackageDir(dir)
+	}
+	if err != nil {
+		fmt.Println("offline suite package marker check failed")
+		return 1
+	}
+	return code
+}
 
 // Only the isolated bootstrap process changes its environment. The shared
 // parallel test process never sets a fixture-specific destination.
@@ -188,5 +216,82 @@ func TestFakeAgentStartParallelFixtures(t *testing.T) {
 func TestFakeAgentStartMissingOracle(t *testing.T) {
 	if _, err := testAgentStartDir(t.TempDir()); err == nil {
 		t.Fatal("missing oracle destination was accepted")
+	}
+}
+
+func TestFakeAgentStartMarkerWorkingDirectory(t *testing.T) {
+	for _, alias := range []bool{false, true} {
+		t.Run(fmt.Sprint(alias), func(t *testing.T) {
+			workdir := t.TempDir()
+			dir := workdir
+			if alias {
+				dir = filepath.Join(t.TempDir(), "alias")
+				if err := os.Symlink(workdir, dir); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.Command(fakeBinary, "exec", "resume", "fixture-thread", "--sandbox", "workspace-write", "--json", "-")
+			cmd.Dir = workdir
+			cmd.Env = testAgentStartEnv(&dir)
+			cmd.Stdin = strings.NewReader("hello")
+			if err := cmd.Run(); err == nil || cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != 47 {
+				t.Fatal("working-directory marker destination was not refused")
+			}
+			if len(testAgentStartNames(t, workdir)) != 0 {
+				t.Fatal("fake wrote a working-directory marker")
+			}
+		})
+	}
+}
+
+func TestFakeAgentStartPackageDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := testAgentStartCheckPackageDir(dir); err != nil {
+		t.Fatal("clean package directory was refused")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ordinary-file"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := testAgentStartCheckPackageDir(dir); err != nil {
+		t.Fatal("ordinary package file was refused")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agent-start-fixture"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := testAgentStartCheckPackageDir(dir); err == nil {
+		t.Fatal("package marker leak was accepted")
+	}
+	if err := testAgentStartCheckPackageDir(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("unavailable package directory passed the marker check")
+	}
+}
+
+func TestFakeAgentStartSuiteEnd(t *testing.T) {
+	const probe = "NUNTIUS_TEST_AGENT_SUITE_LEAK"
+	if mode, nested := os.LookupEnv(probe); nested {
+		if mode == "1" {
+			// The parent owns this subprocess's cwd through t.TempDir. Leave
+			// the marker until TestMain checks the completed inner suite.
+			if err := os.WriteFile("agent-start-fixture", nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return
+	}
+	for _, want := range []int{0, 1} {
+		t.Run(fmt.Sprint(want), func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestFakeAgentStartSuiteEnd$", "-test.count=1")
+			cmd.Dir = t.TempDir()
+			cmd.Env = append(testAgentStartEnv(nil), probe+"="+fmt.Sprint(want))
+			var output bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &output, &output
+			err := cmd.Run()
+			if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != want || (err != nil && want == 0) {
+				t.Fatalf("completed inner suite did not exit %d", want)
+			}
+			if bytes.Contains(output.Bytes(), []byte("offline suite package marker check failed")) != (want == 1) {
+				t.Fatal("suite-end leak verdict did not match the fixture")
+			}
+		})
 	}
 }
