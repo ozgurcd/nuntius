@@ -332,18 +332,7 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	defer m.Close()
 	switch rest[0] {
 	case "observe":
-		fault := make(chan struct{}, 1)
-		if m.startIdleGuard(ctx, idleGuardHost{onFault: func() { fault <- struct{}{} }}) != nil {
-			fmt.Fprintln(errOut, "idle observer unavailable; select alert_only locally and check the private store and controller owner")
-			return 1
-		}
-		fmt.Fprintln(out, "alert_only observer running; phone delivery disabled; no execution or project-health claim")
-		select {
-		case <-fault:
-			fmt.Fprintln(errOut, "idle monitoring persistence unavailable; coverage is unknown; preserve records for owner review")
-			<-ctx.Done()
-		case <-ctx.Done():
-		}
+		return m.observeCLI(ctx, idleGuardHost{}, out, errOut)
 	case "monitoring":
 		mf := flag.NewFlagSet("monitoring", flag.ContinueOnError)
 		mf.SetOutput(io.Discard)
@@ -540,6 +529,48 @@ func CLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		}
 	}
 	return 0
+}
+
+func (m *Manager) observeCLI(ctx context.Context, host idleGuardHost, out, errOut io.Writer) int {
+	fault := make(chan string, 1)
+	contention := make(chan struct{}, 1)
+	host.onFault = func() {
+		m.mu.Lock()
+		cause := m.idleGuardFault
+		m.mu.Unlock()
+		if cause == "reader_contention" {
+			select {
+			case contention <- struct{}{}:
+			default:
+			}
+			return
+		}
+		// A pending transient notice must never hide a terminal fault.
+		select {
+		case fault <- cause:
+		default:
+		}
+	}
+	if m.startIdleGuard(ctx, host) != nil {
+		fmt.Fprintln(errOut, "idle observer unavailable; select alert_only locally and check the private store and controller owner")
+		return 1
+	}
+	fmt.Fprintln(out, "alert_only observer running; phone delivery disabled; no execution or project-health claim")
+	for {
+		select {
+		case <-contention:
+			fmt.Fprintln(errOut, "idle monitoring reader contention; missed coverage is unknown; observation will retry")
+		case cause := <-fault:
+			if cause == "storage_limit" {
+				fmt.Fprintln(errOut, "idle monitoring storage limit reached; coverage is unknown; preserve records for owner review")
+			} else {
+				fmt.Fprintln(errOut, "idle monitoring persistence unavailable; coverage is unknown; preserve records for owner review")
+			}
+			return 1
+		case <-ctx.Done():
+			return 0
+		}
+	}
 }
 
 func serveCLI(ctx context.Context, m *Manager, in io.Reader, out, errOut io.Writer) int {

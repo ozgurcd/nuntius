@@ -395,6 +395,118 @@ func TestIdleGuardDaemonReaderTimeoutRecovery(t *testing.T) {
 	}
 }
 
+func TestIdleGuardCLIRepeatedReaderContention(t *testing.T) {
+	c, _ := fixture(t)
+	c.IdleGuard = "alert_only"
+	store := igStore(t)
+	m, err := newReadManager(c, store)
+	if err != nil {
+		t.Fatal("manager")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		closed := make(chan struct{})
+		go func() { _ = m.Close(); close(closed) }()
+		select {
+		case <-closed:
+		case <-time.After(5 * time.Second):
+			t.Error("Close did not return after repeated contention")
+		}
+	})
+	ticks := make(chan time.Time)
+	result := make(chan int, 1)
+	var messages bytes.Buffer
+	go func() {
+		result <- m.observeCLI(ctx, idleGuardHost{now: func() time.Time { return igStart }, ticks: ticks, snapshot: igSnapshot}, &messages, &messages)
+	}()
+	tick := func(minute int) bool {
+		t.Helper()
+		select {
+		case ticks <- igStart.Add(time.Duration(minute) * time.Minute):
+			return true
+		case <-time.After(5 * time.Second):
+			t.Errorf("sample %d was not accepted", minute)
+			return false
+		}
+	}
+	if !tick(1) || !tick(2) {
+		return
+	}
+	// The next sample cannot begin until we hold the passive reader lock.
+	f, err := os.Open(filepath.Join(store, idleGuardJournal))
+	if err != nil {
+		t.Fatal("reader")
+	}
+	defer f.Close()
+	fd := int(f.Fd())
+	if unix.Flock(fd, unix.LOCK_SH) != nil {
+		t.Fatal("reader lock")
+	}
+	defer unix.Flock(fd, unix.LOCK_UN)
+	for minute := 3; minute <= 6; minute++ {
+		if !tick(minute) {
+			return
+		}
+	}
+	if unix.Flock(fd, unix.LOCK_UN) != nil {
+		t.Fatal("reader release")
+	}
+	if !tick(7) || !tick(8) {
+		return
+	}
+	m.mu.Lock()
+	fault := m.idleGuardFault
+	m.mu.Unlock()
+	if fault != "" {
+		t.Error("successful recovery did not clear contention")
+	}
+	select {
+	case <-result:
+		t.Error("transient contention ended observe")
+	default:
+	}
+	cancel()
+	select {
+	case code := <-result:
+		if code != 0 {
+			t.Error("cancelled observer returned failure")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("observe did not return on cancellation")
+	}
+	if !strings.Contains(messages.String(), "reader contention") || strings.Contains(messages.String(), "persistence unavailable") || strings.Contains(messages.String(), "preserve records") {
+		t.Error("transient contention was mislabeled as a persistence failure")
+	}
+}
+
+func TestIdleGuardCLITerminalFault(t *testing.T) {
+	c, _ := fixture(t)
+	c.IdleGuard = "alert_only"
+	m, err := newReadManager(c, igStore(t))
+	if err != nil {
+		t.Fatal("manager")
+	}
+	defer m.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan int, 1)
+	var messages bytes.Buffer
+	go func() {
+		result <- m.observeCLI(ctx, idleGuardHost{now: func() time.Time { return igStart }, snapshot: func(time.Time) idleGuardSnapshot { return idleGuardSnapshot{} }}, &messages, &messages)
+	}()
+	select {
+	case code := <-result:
+		if code != 1 || !strings.Contains(messages.String(), "persistence unavailable") || !strings.Contains(messages.String(), "preserve records") {
+			t.Error("terminal persistence fault lost its failure status or cause")
+		}
+	case <-time.After(5 * time.Second):
+		cancel()
+		<-result
+		t.Error("terminal fault did not end observe")
+	}
+}
+
 func TestIdleGuardByteLimitStatus(t *testing.T) {
 	store := igStore(t)
 	var journal bytes.Buffer
