@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func goalCLIConfig(t *testing.T, c Config) string {
@@ -271,7 +272,27 @@ func TestGoalCLIExactDispatch(t *testing.T) {
 	}
 	old, _ := dispatchRecord(t, m, req.GoalID)
 	config := goalCLIConfig(t, m.config)
-	code, veto := goalCLICall(t, config, m.store, "", "goal", "cancel", req.GoalID, "--op", "cancel-live", "--revision", strconv.FormatUint(old.revision, 10), "--reason", "Review the live run", "--authority", "judge", "--evidence", "review", "--json")
+	// The live run's supervisor briefly holds the store control lock on each
+	// tick, so a cancel can return the documented uncertain exit 4. Inspect
+	// that nothing changed, then retry the exact operation (docs/cli.md).
+	deadline, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stop()
+	var code int
+	var veto goalCLIResult
+	for {
+		code, veto = goalCLICall(t, config, m.store, "", "goal", "cancel", req.GoalID, "--op", "cancel-live", "--revision", strconv.FormatUint(old.revision, 10), "--reason", "Review the live run", "--authority", "judge", "--evidence", "review", "--json")
+		if code != 4 || veto.Code != "persistence_or_observation_unavailable" {
+			break
+		}
+		if record, _ := dispatchRecord(t, m, req.GoalID); record.revision != old.revision {
+			t.Fatal("uncertain goal cancellation changed the record")
+		}
+		select {
+		case <-deadline.Done():
+			t.Fatal("goal cancellation stayed uncertain")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 	current, err := m.latest(req.Lane)
 	if code != 3 || veto.Code != "attempt_unsettled" || err != nil || current.ID != active.ID || current.StopAt != nil || !sameProcess(*active) {
 		t.Fatal("goal cancellation changed live process")
