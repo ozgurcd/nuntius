@@ -145,6 +145,25 @@ func TestReviewOwnedChildReaping(t *testing.T) {
 	}
 }
 func TestReviewChildCensus(t *testing.T) {
+	// Model another lane using the very same fake binary and temporary root.
+	// It stays alive through both census observations but is not census-owned.
+	foreign := exec.Command(fakeBinary)
+	foreign.Dir = t.TempDir()
+	foreign.Stdin = strings.NewReader("wait")
+	var foreignOutput bytes.Buffer
+	foreign.Stdout, foreign.Stderr = &foreignOutput, &foreignOutput
+	foreign.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if foreign.Start() != nil {
+		t.Fatal("CH05/foreign-start=false")
+	}
+	defer func() { _ = foreign.Process.Kill(); _ = foreign.Wait() }()
+	foreignStart, err := processStart(foreign.Process.Pid)
+	foreignRun := Run{PID: foreign.Process.Pid, ProcessStart: foreignStart}
+	if err != nil || !sameProcess(foreignRun) {
+		t.Fatal("CH05/foreign-positive=false")
+	}
+	t.Log("CH05/foreign-positive=true")
+
 	cmd := exec.Command(fakeBinary)
 	cmd.Dir = t.TempDir()
 	cmd.Stdin = strings.NewReader("wait")
@@ -156,7 +175,7 @@ func TestReviewChildCensus(t *testing.T) {
 		t.Fatal("CH01/start=false")
 	}
 	pid := cmd.Process.Pid
-	// Always reap this exact owned child, including unavailable-census paths.
+	// Always reap this exact owned child, including failed census assertions.
 	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
 	start, e := processStart(pid)
 	if e != nil {
@@ -167,19 +186,20 @@ func TestReviewChildCensus(t *testing.T) {
 		t.Error("CH01/identity-positive=false")
 		return
 	}
-	// args shows the executed path on both BSD and Linux ps; Linux comm is only
-	// the 15-character task name.
-	table, e := exec.Command("/bin/ps", "-axo", "pid=,ppid=,args=").Output()
-	if e != nil {
-		t.Log("CH01/census-available=false")
-		return
-	}
-	found := false
-	for _, line := range strings.Split(string(table), "\n") {
-		if strings.Contains(line, fakeBinary) && strings.HasPrefix(strings.TrimSpace(line), fmt.Sprint(pid)+" ") {
-			found = true
+	// Census only identities spawned for this check, regardless of executable
+	// name, temporary root, reparenting, or unrelated tests on the same host.
+	// Birth identity prevents a reused PID from becoming a false survivor.
+	owned := []Run{{PID: pid, ProcessStart: start}}
+	census := func() int {
+		count := 0
+		for _, child := range owned {
+			if sameProcess(child) {
+				count++
+			}
 		}
+		return count
 	}
+	found := census() == 1
 	t.Logf("CH01/census-positive=%t", found)
 	if !found {
 		t.Error("CH01/control=false")
@@ -189,20 +209,15 @@ func TestReviewChildCensus(t *testing.T) {
 		t.Error("CH01/reaped=false")
 		return
 	}
-	table, e = exec.Command("/bin/ps", "-axo", "pid=,ppid=,args=").Output()
-	if e != nil {
-		t.Log("CH02/census-available=false")
-		return
-	}
-	survivors := false
-	for _, line := range strings.Split(string(table), "\n") {
-		if strings.Contains(line, os.Getenv("TMPDIR")) && strings.Contains(line, "fake-agent") {
-			survivors = true
-		}
-	}
+	survivors := census() != 0
 	t.Logf("CH02/survivors=%t", survivors)
 	if survivors {
 		t.Error("CH02/no-survivors=false")
+	}
+	if !sameProcess(foreignRun) {
+		t.Error("CH06/foreign-survives=false")
+	} else {
+		t.Log("CH06/foreign-survives=true")
 	}
 }
 func TestReviewTerminalRewind(t *testing.T) {
