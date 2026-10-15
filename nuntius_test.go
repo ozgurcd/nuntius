@@ -194,16 +194,46 @@ func fixture(t *testing.T) (Config, string) {
 		// This directory was created by this test. Never scan the owner's store.
 		m := &Manager{store: store}
 		runs, _ := m.history()
+		var killed []Run
 		for _, r := range runs {
 			if sameProcess(r) {
 				_ = signalRun(r, syscall.SIGKILL)
+				killed = append(killed, r)
 			}
 		}
 		if err := fixturelife.Stop(os.Getenv(fixturelife.Environment), d); err != nil {
 			t.Error("offline fixture process group cleanup failed")
 		}
+		// SIGKILL is asynchronous, and Stop waits only for children that already
+		// registered with fixturelife. A run killed while still bootstrapping is
+		// identified but unregistered; wait until its identity is gone.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := awaitRunsGone(ctx, killed); err != nil {
+			t.Error("offline fixture child did not exit after SIGKILL")
+		}
 	})
 	return Config{Lanes: []Lane{{Name: "claude", Kind: "claude", Workdir: d, Binary: fakeBinary}, {Name: "codex", Kind: "codex", Workdir: d, Binary: fakeBinary}}, MaxRuntime: "10s", ReportsDir: d, Notifications: &off}, store
+}
+
+// awaitRunsGone polls until no run keeps its verified process identity, or ctx ends.
+func awaitRunsGone(ctx context.Context, runs []Run) error {
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		alive := false
+		for _, r := range runs {
+			alive = alive || sameProcess(r)
+		}
+		if !alive {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+		}
+	}
 }
 func manager(t *testing.T) (*Manager, Config, string) {
 	t.Helper()

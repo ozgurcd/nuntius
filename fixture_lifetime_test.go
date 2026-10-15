@@ -2,6 +2,7 @@ package nuntius
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,57 @@ import (
 
 	"github.com/ozgurcd/nuntius/internal/fixturelife"
 )
+
+// The fixture teardown waits for a killed, unregistered child through
+// awaitRunsGone. It must honour its context and report true absence.
+func TestFixtureAwaitRunsGone(t *testing.T) {
+	cmd := exec.Command(fakeBinary, "brief-pointer")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, fixturelife.Environment+"=") {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = stdin.Close()
+		_ = cmd.Wait()
+	})
+	start, err := processStart(cmd.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := []Run{{PID: cmd.Process.Pid, ProcessStart: start}}
+	if !sameProcess(live[0]) {
+		t.Fatal("blocked fake child lacks a verified identity")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err = awaitRunsGone(ctx, live); !errors.Is(err, context.Canceled) {
+		t.Fatal("cancelled wait did not return")
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err = awaitRunsGone(ctx, live); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("live child reported gone")
+	}
+	if err = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// Not yet reaped: a zombie keeps its PID but no longer has a verified identity.
+	if err = awaitRunsGone(ctx, live); err != nil {
+		t.Fatal("killed child identity did not disappear")
+	}
+}
 
 func TestFixtureTemporaryRootCanonical(t *testing.T) {
 	if os.Args[len(os.Args)-1] == "fixture-temp-root-helper" {
