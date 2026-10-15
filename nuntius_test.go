@@ -474,10 +474,10 @@ func TestDispatchReplyArgvAndStore(t *testing.T) {
 		if !strings.Contains(joined, "cwd="+c.Lanes[0].Workdir) || !strings.Contains(joined, "fixture command") || strings.Contains(joined, "must-not-return") {
 			t.Fatal("tail contract")
 		}
-		if lane == "claude" && !strings.Contains(joined, `["-p","--output-format","stream-json","--verbose"]`) {
+		if lane == "claude" && !strings.Contains(joined, `["-p","--output-format","stream-json","--verbose","--permission-mode=auto"]`) {
 			t.Fatal("claude argv")
 		}
-		if lane == "codex" && !strings.Contains(joined, `["exec","--json","-"]`) {
+		if lane == "codex" && !strings.Contains(joined, `["exec","--json","--sandbox=workspace-write","-"]`) {
 			t.Fatal("codex argv")
 		}
 		if _, e := m.Reply(lane, "follow up slow-finish"); e != nil {
