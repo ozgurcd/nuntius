@@ -210,7 +210,7 @@ func (m *Manager) Reply(lane, text string) (string, error) { return m.start(lane
 func (m *Manager) start(name, goal, text string, resume bool) (id string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	guard, e := m.admissionControlLock()
+	guard, e := m.admissionControlLockWithin(dispatchControlLockWait)
 	if e != nil {
 		return "", e
 	}
@@ -583,11 +583,35 @@ func (m *Manager) follow(r Run, lock, supervisor *os.File, a *activeRun, grace t
 			return
 		case <-tick.C:
 			m.mu.Lock()
+			// Ordinary observations do not participate in control transactions.
+			// Re-read under the guard below only when a mutation may be needed.
+			current, readErr := loadRun(filepath.Join(m.store, "runs", r.ID), r.ID)
+			if readErr != nil || current == nil || current.ID != r.ID || current.PID != r.PID || current.ProcessStart != r.ProcessStart || current.Lane != r.Lane {
+				m.mu.Unlock()
+				continue
+			}
+			r = *current
+			now := time.Now()
+			if sameProcess(r) {
+				if r.StopAt != nil {
+					tick.Reset(50 * time.Millisecond)
+				}
+				stuckDue := now.Sub(lastStuckCheck) >= time.Second && !r.StuckSignalled && m.runStuck(r, now)
+				stopDue := r.StopAt == nil && (now.Sub(r.Started) >= m.runtime || m.checkFrozen() != nil)
+				escalate := r.StopAt != nil && now.Sub(*r.StopAt) >= grace
+				if !stuckDue && !stopDue && !escalate {
+					if now.Sub(lastStuckCheck) >= time.Second {
+						lastStuckCheck = now
+					}
+					m.mu.Unlock()
+					continue
+				}
+			}
 			guard, e := m.controlLock()
 			if e == nil {
 				current, err := loadRun(filepath.Join(m.store, "runs", r.ID), r.ID)
 				if err == nil && current != nil && current.ID == r.ID {
-					if current.ProcessStart != r.ProcessStart {
+					if current.PID != r.PID || current.ProcessStart != r.ProcessStart || current.Lane != r.Lane {
 						e = errors.New("process identity changed")
 					} else {
 						r = *current

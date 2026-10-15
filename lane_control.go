@@ -439,12 +439,16 @@ func laneControlLock(root *os.File, mode int) (*controlFileLock, error) {
 // and control mutations prepare it using laneControlLock. The caller holds the
 // manager mutex first. No lane lifetime lock is acquired here.
 func (m *Manager) admissionControlLock() (*controlFileLock, error) {
+	return m.admissionControlLockWithin(controlLockWait)
+}
+
+func (m *Manager) admissionControlLockWithin(wait time.Duration) (*controlFileLock, error) {
 	root, err := openLaneControlRoot(m.store)
 	if err != nil {
 		return nil, errLaneControlUnavailable
 	}
 	defer root.Close()
-	lock, err := acquireControlLock(root, unix.LOCK_EX, false, controlLockWait)
+	lock, err := acquireControlLock(root, unix.LOCK_EX, false, wait)
 	if err != nil {
 		return nil, err
 	}

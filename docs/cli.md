@@ -117,10 +117,12 @@ Status and list never contain held message text or session values.
 Busy reads return promptly without reading mutable control records outside the
 lock. One process-local owner coordinates all readers, monitors and writers of
 the same lock inode. Nested acquisition refuses without changing the outer lock.
-Lane dispatch and successor admission retry brief contention for up to 250 ms
-before returning `locked`. Native journal retries allow up to two seconds for
+Public dispatch and reply wait up to two seconds for control admission, with
+jittered retries. Other successor admission waits up to 250 ms. Healthy run
+monitor polls do not acquire the control lock; mutations re-read identity under
+the guard. Native journal retries allow up to two seconds for
 a known in-process publication handoff, then replay under the acquired guard.
-External contention still gets the short refusal. No control-lock acquisition
+External native-journal contention still gets the short refusal. No control-lock acquisition
 uses a blocking `flock`.
 Local contention says another operation in this process is using the lock.
 Best-effort local `lsof` diagnostics share a 200 ms deadline and a bounded

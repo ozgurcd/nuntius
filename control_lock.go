@@ -2,6 +2,7 @@ package nuntius
 
 import (
 	"errors"
+	"math/rand/v2"
 	"os"
 	"sync"
 	"time"
@@ -9,7 +10,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const controlLockWait = 250 * time.Millisecond
+const (
+	controlLockWait = 250 * time.Millisecond
+	// Public dispatch/reply can bridge a brief transaction in another process.
+	// Primitive and native reconciliation budgets remain independent.
+	dispatchControlLockWait = 2 * time.Second
+)
 
 // Every control.lock entry point shares one process-local owner per inode.
 // The *Locked helpers execute under that owner's guard; they do not acquire it
@@ -88,6 +94,6 @@ func boundedFlock(fd, mode int, wait time.Duration) error {
 		if remaining <= 0 {
 			return unix.EWOULDBLOCK
 		}
-		time.Sleep(min(5*time.Millisecond, remaining))
+		time.Sleep(min(time.Duration(5+rand.IntN(11))*time.Millisecond, remaining))
 	}
 }
