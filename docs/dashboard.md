@@ -9,7 +9,9 @@ files only: they do not repair pending control changes, create signals, recover
 runs or start work. Queue faults do not prevent operational reads.
 
 A contended control lock shows **Controls busy** on each affected lane, with
-holder/restart guidance when it can be established. A corrupt or unsafe control
+holder/restart guidance when it can be established. Contention inside the running
+process names an in-flight operation and asks you to retry after it finishes.
+A corrupt or unsafe control
 record shows **Controls unavailable**. Both block new starts, sends and lane
 hold mutations; the rest of the dashboard still refreshes. Busy observations
 override older saved permission displays. Notes, tails, reports and independent

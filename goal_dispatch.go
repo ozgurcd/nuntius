@@ -277,7 +277,7 @@ func (m *Manager) dispatchGoal(req goalDispatchRequest, ctx goalDispatchContext,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	guard, err := m.nativeDispatchControlLock()
+	guard, err := m.nativeDispatchTransactionLock()
 	if err != nil {
 		return goalDispatchResult{}, err
 	}
@@ -519,21 +519,36 @@ func (m *Manager) dispatchGoal(req goalDispatchRequest, ctx goalDispatchContext,
 // Native operations serialize exact receipts. Reuse the existing validated
 // control inode without creating or replacing it. Public controls retain their
 // existing nonblocking policy.
+// A local publisher can outlive one short acquisition while finishing a child
+// receipt. Wait for its bounded handoff, then replay under the real guard; never
+// infer a missing receipt or allocate another child from an unlocked snapshot.
+// External holders and unavailable stores retain the short, fail-closed refusal.
+func (m *Manager) nativeDispatchTransactionLock() (*controlFileLock, error) {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		wait := min(controlLockWait, max(0, time.Until(deadline)))
+		guard, err := m.nativeDispatchControlLockWithin(wait)
+		if err == nil {
+			return guard, nil
+		}
+		var busy *laneControlFault
+		if !errors.As(err, &busy) || busy.Code != "locked" || !busy.local || time.Until(deadline) <= 0 {
+			return nil, err
+		}
+	}
+}
+
 func (m *Manager) nativeDispatchControlLock() (*controlFileLock, error) {
+	return m.nativeDispatchControlLockWithin(controlLockWait)
+}
+
+func (m *Manager) nativeDispatchControlLockWithin(wait time.Duration) (*controlFileLock, error) {
 	root, err := openLaneControlRoot(m.store)
 	if err != nil {
 		return nil, errLaneControlUnavailable
 	}
 	defer root.Close()
-	lock, err := openLaneControlLockFile(root, false)
-	if err != nil {
-		return nil, errLaneControlUnavailable
-	}
-	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
-		lock.Close()
-		return nil, errLaneControlUnavailable
-	}
-	return lock, nil
+	return acquireControlLock(root, unix.LOCK_EX, false, wait)
 }
 
 type goalLaunchContext struct {

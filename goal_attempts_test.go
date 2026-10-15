@@ -701,15 +701,37 @@ func TestGoalAutomaticEndConcurrentRepair(t *testing.T) {
 	}
 	b.readOnly = false
 	start := make(chan struct{})
-	results := make(chan error, 2)
+	type repairResult struct {
+		writer *Manager
+		err    error
+	}
+	results := make(chan repairResult, 2)
+	publish := func(writer *Manager) error {
+		writer.mu.Lock()
+		defer writer.mu.Unlock()
+		guard, err := writer.controlLock()
+		if err != nil {
+			return err
+		}
+		defer guard.Close()
+		copy := r
+		return writer.publishGoalAttemptEndLocked(&copy, goalCommitIO{})
+	}
 	var wg sync.WaitGroup
 	for _, writer := range []*Manager{a, b} {
-		wg.Go(func() { <-start; copy := r; results <- goalEndPublish(t, writer, &copy, goalCommitIO{}) })
+		wg.Go(func() { <-start; results <- repairResult{writer, publish(writer)} })
 	}
 	close(start)
 	wg.Wait()
 	close(results)
-	for err := range results {
+	for result := range results {
+		err := result.err
+		var busy *laneControlFault
+		if errors.As(err, &busy) && busy.Code == "locked" {
+			// Both bounded attempts have finished. Retry only typed contention,
+			// with the same ended run, and still require both repairs to confirm.
+			err = publish(result.writer)
+		}
 		if err != nil {
 			t.Fatal(err)
 		}

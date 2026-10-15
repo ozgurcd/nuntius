@@ -396,8 +396,10 @@ func laneControlExplanation(v laneControlView) string {
 // cannot keep a completed operation locked.
 type controlFileLock struct {
 	*os.File
-	mu     sync.Mutex
-	closed bool
+	mu       sync.Mutex
+	closed   bool
+	owner    *controlLockOwner
+	acquired bool
 }
 
 func (lock *controlFileLock) Close() error {
@@ -407,7 +409,18 @@ func (lock *controlFileLock) Close() error {
 		return os.ErrClosed
 	}
 	lock.closed = true
-	return errors.Join(unix.Flock(int(lock.File.Fd()), unix.LOCK_UN), lock.File.Close())
+	var err error
+	if lock.acquired {
+		err = unix.Flock(int(lock.File.Fd()), unix.LOCK_UN)
+	}
+	err = errors.Join(err, lock.File.Close())
+	if lock.owner != nil {
+		processControlLocks.Lock()
+		delete(processControlLocks.owners, lock.owner.identity)
+		close(lock.owner.done)
+		processControlLocks.Unlock()
+	}
+	return err
 }
 
 func laneControlReadLock(root *os.File) (*controlFileLock, error) {
@@ -431,7 +444,7 @@ func (m *Manager) admissionControlLock() (*controlFileLock, error) {
 		return nil, errLaneControlUnavailable
 	}
 	defer root.Close()
-	lock, err := openLaneControlLock(root, unix.LOCK_EX, false)
+	lock, err := acquireControlLock(root, unix.LOCK_EX, false, controlLockWait)
 	if err != nil {
 		return nil, err
 	}
@@ -439,18 +452,7 @@ func (m *Manager) admissionControlLock() (*controlFileLock, error) {
 }
 
 func openLaneControlLock(root *os.File, mode int, create bool) (*controlFileLock, error) {
-	lock, err := openLaneControlLockFile(root, create)
-	if err != nil {
-		return nil, err
-	}
-	if err = unix.Flock(int(lock.Fd()), mode|unix.LOCK_NB); err != nil {
-		lock.Close()
-		if errors.Is(err, unix.EWOULDBLOCK) {
-			return nil, &laneControlFault{Code: "locked"}
-		}
-		return nil, errLaneControlUnavailable
-	}
-	return lock, nil
+	return acquireControlLock(root, mode, create, 0)
 }
 
 func openLaneControlLockFile(root *os.File, create bool) (*controlFileLock, error) {
@@ -574,7 +576,10 @@ type laneControlResult struct {
 	Snapshot  *laneControlSnapshot
 }
 
-type laneControlFault struct{ Code string }
+type laneControlFault struct {
+	Code  string
+	local bool // Coordination is owned by an in-flight operation in this process.
+}
 
 func (e *laneControlFault) Error() string { return e.Code }
 

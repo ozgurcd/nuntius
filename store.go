@@ -194,11 +194,11 @@ func (m *Manager) appendAudit(nonblocking bool, tool, lane, goal, digest, result
 		return e
 	}
 	defer f.Close()
-	lockMode := syscall.LOCK_EX
+	wait := controlLockWait
 	if nonblocking {
-		lockMode |= syscall.LOCK_NB
+		wait = 0
 	}
-	if e = syscall.Flock(int(f.Fd()), lockMode); e != nil {
+	if e = boundedFlock(int(f.Fd()), syscall.LOCK_EX, wait); e != nil {
 		return errors.New("cannot lock audit")
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)

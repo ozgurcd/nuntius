@@ -62,7 +62,16 @@ func call(m *Manager, name string, args json.RawMessage) (any, error) {
 	return callContext(context.Background(), m, name, args)
 }
 
-func callContext(ctx context.Context, m *Manager, name string, args json.RawMessage) (any, error) {
+func callContext(ctx context.Context, m *Manager, name string, args json.RawMessage, beforeStart ...func() error) (any, error) {
+	if len(beforeStart) > 1 || len(beforeStart) == 1 && beforeStart[0] == nil {
+		return nil, errors.New("invalid admission check")
+	}
+	admit := func() error {
+		if len(beforeStart) == 1 {
+			return beforeStart[0]()
+		}
+		return nil
+	}
 	if laneControlTool(name) {
 		return callLaneControl(m, name, args)
 	}
@@ -172,6 +181,9 @@ func callContext(ctx context.Context, m *Manager, name string, args json.RawMess
 		if e := strictJSON(args, &a); e != nil {
 			return nil, e
 		}
+		if e := admit(); e != nil {
+			return nil, e
+		}
 		id, e := m.Dispatch(a.Lane, a.Goal, a.Text)
 		return map[string]string{"run_id": shortRunID(id)}, e
 	case "nuntius_reply":
@@ -180,6 +192,9 @@ func callContext(ctx context.Context, m *Manager, name string, args json.RawMess
 			Text string `json:"text"`
 		}
 		if e := strictJSON(args, &a); e != nil {
+			return nil, e
+		}
+		if e := admit(); e != nil {
 			return nil, e
 		}
 		id, e := m.Reply(a.Lane, a.Text)
@@ -251,6 +266,24 @@ func Serve(ctx context.Context, m *Manager, in io.Reader, out io.Writer) error {
 			m.recovery = true
 			m.mu.Unlock()
 		}
+	}
+	// A typed startup contention fault is transient. Re-run real recovery only
+	// at a decoded start request, and clear the latch only after it succeeds.
+	// Other startup faults retain the existing fail-closed tool policy.
+	retryStartup := func() error {
+		if startupErr == nil {
+			return nil
+		}
+		if m == nil || !mcpStartupBusy(startupErr) {
+			return startupErr
+		}
+		startupErr = m.Recover()
+		if startupErr == nil {
+			m.mu.Lock()
+			m.recovery = true
+			m.mu.Unlock()
+		}
+		return startupErr
 	}
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 4096), 131072)
@@ -346,7 +379,8 @@ func Serve(ctx context.Context, m *Manager, in io.Reader, out io.Writer) error {
 				Arguments json.RawMessage `json:"arguments"`
 			}
 			e := strictJSON(req.Params, &p)
-			if e == nil && !mcpStartupAllows(startupErr, p.Name) {
+			retryStart := m != nil && mcpStartupBusy(startupErr) && (p.Name == "nuntius_dispatch" || p.Name == "nuntius_reply")
+			if e == nil && !mcpStartupAllows(startupErr, p.Name) && !retryStart {
 				e = startupErr
 			}
 			var value any
@@ -355,7 +389,7 @@ func Serve(ctx context.Context, m *Manager, in io.Reader, out io.Writer) error {
 				if startupErr != nil && p.Name == "nuntius_web_ensure" {
 					manager = nil
 				}
-				value, e = callContext(ctx, manager, p.Name, p.Arguments)
+				value, e = callContext(ctx, manager, p.Name, p.Arguments, retryStartup)
 			}
 			status := "pass"
 			if e != nil {
@@ -415,12 +449,16 @@ func managerAuditsMCPTool(name string) bool {
 // Only a lane-control admission fault leaves independent observation and safety
 // tools available. Configuration, run-store and other startup faults still fail
 // closed. No caller identity or host approval is inferred here.
+func mcpStartupBusy(err error) bool {
+	var control *laneControlFault
+	return errors.As(err, &control) && control.Code == "locked"
+}
+
 func mcpStartupAllows(err error, name string) bool {
 	if err == nil || name == "nuntius_web_ensure" {
 		return true
 	}
-	var control *laneControlFault
-	busy := errors.As(err, &control) && control.Code == "locked"
+	busy := mcpStartupBusy(err)
 	if !busy && !errors.Is(err, errLaneControlUnavailable) {
 		return false
 	}

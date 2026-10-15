@@ -143,10 +143,21 @@ func main() {
 	// Offline pre-upgrade holder: no owner metadata and no explicit unlock.
 	if len(os.Args) == 3 && os.Args[1] == "__fixture_control_lock" {
 		f, err := os.OpenFile(os.Args[2], os.O_RDWR, 0)
-		if err != nil || syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		if err != nil {
 			os.Exit(48)
 		}
 		defer f.Close()
+		deadline := time.Now().Add(time.Second)
+		for {
+			err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+			if err == nil {
+				break
+			}
+			if err != syscall.EWOULDBLOCK || time.Now().After(deadline) {
+				os.Exit(48)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
 		fmt.Println("locked")
 		var release [1]byte
 		_, _ = io.ReadFull(os.Stdin, release[:])

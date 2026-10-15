@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -121,15 +120,13 @@ func (m *Manager) recoverSettings() error {
 	}
 	guard, err := privateControlFile(m.store)
 	if err != nil {
-		return err
-	}
-	defer guard.Close()
-	if err = syscall.Flock(int(guard.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		if errors.Is(err, syscall.EWOULDBLOCK) {
+		var fault *laneControlFault
+		if errors.As(err, &fault) && fault.Code == "locked" {
 			return errBusy
 		}
 		return err
 	}
+	defer guard.Close()
 	return m.reconcileSettings(m.config.SourcePath)
 }
 func (m *Manager) reconcileSettings(path string) error {
@@ -468,15 +465,12 @@ func (w *Web) settings(out http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer m.mu.Unlock()
-	guard, err := privateControlFile(m.store)
-	if err != nil {
-		fail(err)
-		return
-	}
-	defer guard.Close()
+	var guard *controlFileLock
 	if err := acquire(func() (bool, error) {
-		err := syscall.Flock(int(guard.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EINTR) {
+		var err error
+		guard, err = privateControlFile(m.store)
+		var fault *laneControlFault
+		if errors.As(err, &fault) && fault.Code == "locked" {
 			return false, nil
 		}
 		return err == nil, err
@@ -484,6 +478,7 @@ func (w *Web) settings(out http.ResponseWriter, r *http.Request) {
 		fail(err)
 		return
 	}
+	defer guard.Close()
 	path := m.config.SourcePath
 	if path == "" {
 		fail(settingsError("configuration_unavailable", "", 503))

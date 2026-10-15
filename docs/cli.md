@@ -115,7 +115,15 @@ running and paused. Availability also accounts for freeze and held work.
 Status and list never contain held message text or session values.
 
 Busy reads return promptly without reading mutable control records outside the
-lock. Best-effort local `lsof` diagnostics share a 200 ms deadline and a bounded
+lock. One process-local owner coordinates all readers, monitors and writers of
+the same lock inode. Nested acquisition refuses without changing the outer lock.
+Lane dispatch and successor admission retry brief contention for up to 250 ms
+before returning `locked`. Native journal retries allow up to two seconds for
+a known in-process publication handoff, then replay under the acquired guard.
+External contention still gets the short refusal. No control-lock acquisition
+uses a blocking `flock`.
+Local contention says another operation in this process is using the lock.
+Best-effort local `lsof` diagnostics share a 200 ms deadline and a bounded
 output limit. When a holder's Homebrew executable path identifies an older
 version, status names that version and asks you to restart the process after
 upgrading. A missing tool, missing holder identity or unversioned executable

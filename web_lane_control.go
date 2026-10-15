@@ -348,7 +348,7 @@ func (m *Manager) webHeldMutation(v map[string]any, ops *laneControlIO) (string,
 		return "", err
 	}
 	defer root.Close()
-	guard, err := openLaneControlLock(root, unix.LOCK_EX, false)
+	guard, err := acquireControlLock(root, unix.LOCK_EX, false, controlLockWait)
 	if err != nil {
 		return "", err
 	}

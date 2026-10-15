@@ -20,7 +20,10 @@ func (m *Manager) laneControlFailureSnapshot(runs []Run, err error) laneControlS
 	if !errors.As(err, &fault) || fault.Code != "locked" {
 		return s
 	}
-	reason := controlLockHolderExplanation(m.store)
+	reason := "Controls busy: another operation in this process is using the control lock; retry after it finishes"
+	if !fault.local {
+		reason = controlLockHolderExplanation(m.store)
+	}
 	for i := range s.Lanes {
 		lane := &s.Lanes[i]
 		lane.Phase = "busy"

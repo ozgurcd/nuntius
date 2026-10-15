@@ -801,7 +801,12 @@ func TestDispatchGoalIDProcessHelper(t *testing.T) {
 	}
 	_, err = m.dispatchGoal(f.Request, ctx, fault)
 	if err != nil {
-		fmt.Println("held")
+		var contention *laneControlFault
+		if errors.As(err, &contention) && contention.Code == "locked" {
+			fmt.Println("locked")
+		} else {
+			fmt.Println("held")
+		}
 	} else {
 		fmt.Println("confirmed")
 	}
@@ -1164,7 +1169,21 @@ func TestDispatchGoalIDDuplicateProcesses(t *testing.T) {
 	}
 	e = contender.Wait()
 	secondWaited = true
-	if e != nil || contender.ProcessState == nil || !contender.ProcessState.Success() || !bytes.Contains(out, []byte("confirmed")) {
+	if e != nil || contender.ProcessState == nil || !contender.ProcessState.Success() {
+		t.Fatal("independent retry lost original receipt")
+	}
+	if bytes.HasPrefix(out, []byte("locked\n")) {
+		// Bounded admission can expire while the original process finishes its
+		// durable child publication. Retry the exact same request after that
+		// process has returned; a refusal grants no authority to replace it.
+		retry := exec.CommandContext(deadline, exe, "-test.run=^TestDispatchGoalIDProcessHelper$", "--", "b11-fixture", path, "no-barrier")
+		retry.Stderr = io.Discard
+		out, e = retry.Output()
+		if e != nil {
+			t.Fatal("independent exact retry failed after owner release")
+		}
+	}
+	if !bytes.Contains(out, []byte("confirmed")) {
 		t.Fatal("independent retry lost original receipt")
 	}
 	t.Logf("offline contender start=%s end=%s teardown=waited", secondStart.Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
