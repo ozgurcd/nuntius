@@ -661,7 +661,17 @@ func TestDispatchGoalIDRetainedScopeAndApproval(t *testing.T) {
 			if !reflect.DeepEqual(before, goalCommitTree(t, m.store)) {
 				t.Fatal("candidate refusal changed history")
 			}
-			briefHistoryReplayCandidate(t, m, req.GoalID, old, specBytes, record)
+			briefHistoryReplayCandidate(t, m, req.GoalID, old, specBytes, record, func() {
+				// Exercise the watcher's observation during fixture publication.
+				before := goalCommitTree(t, m.store)
+				_, err := m.status(false)
+				if !reflect.DeepEqual(before, goalCommitTree(t, m.store)) {
+					t.Fatal("watcher changed retained dispatch during fixture publication")
+				}
+				if err != nil {
+					t.Fatal("watcher observation failed")
+				}
+			})
 		})
 	}
 }

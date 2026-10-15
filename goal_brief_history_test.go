@@ -129,7 +129,7 @@ func TestBriefHistoryRetainedApproval(t *testing.T) {
 	}
 }
 
-func briefHistoryReplayCandidate(t *testing.T, m *Manager, id string, old goalReplayRecord, spec, record []byte) {
+func briefHistoryReplayCandidate(t *testing.T, m *Manager, id string, old goalReplayRecord, spec, record []byte, beforePublish ...func()) {
 	t.Helper()
 	root, err := openLaneControlRoot(m.store)
 	if err != nil {
@@ -162,7 +162,20 @@ func briefHistoryReplayCandidate(t *testing.T, m *Manager, id string, old goalRe
 	}
 	// Construct and checksum the frame independently of every writer. Reopen
 	// the on-disk journal so no writer projection or cached reader is involved.
-	goalReplayWrite(t, m.store, goalJournalName, append(prefix[:len(prefix):len(prefix)], goalReplayFrame(p.sequence+1, payload)...))
+	// The fixture manager still watches the store. An in-place rewrite briefly
+	// exposes an empty journal, letting it recover the prepared run as legacy.
+	// Publish a complete candidate so readers see either complete history.
+	candidate := goalJournalName + ".candidate"
+	goalReplayWrite(t, m.store, candidate, append(prefix[:len(prefix):len(prefix)], goalReplayFrame(p.sequence+1, payload)...))
+	for _, observe := range beforePublish {
+		observe()
+	}
+	if err := t.Context().Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(m.store, candidate), filepath.Join(m.store, goalJournalName)); err != nil {
+		t.Fatal("fixture publication failed")
+	}
 	before := goalCommitTree(t, m.store)
 	got, err := replayGoalJournal(m.store)
 	if !errors.Is(err, errGoalReplay) || got != nil {
