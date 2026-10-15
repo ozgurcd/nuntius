@@ -52,7 +52,7 @@ func TestRedispatchedReportIsNotCurrent(t *testing.T) {
 
 func TestSetQueries(t *testing.T) {
 	_, c, store := manager(t)
-	c.Lanes[0].ExtraArgs = []string{"--model", "private-model-fixture"}
+	c.Lanes[0].ExtraArgs = []string{"--model", "private-model-fixture", "--permission-mode=auto"}
 	cliFixture(t, c, store)
 	for _, args := range [][]string{{"set"}, {"set", "codex-agent-pool"}, {"set", "opencode-agent-pool"}} {
 		var out, errs bytes.Buffer

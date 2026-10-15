@@ -604,6 +604,7 @@ func TestGoalAutomaticEndTerminalDelivery(t *testing.T) {
 	m.mu.Lock()
 	m.config.Lanes[1].Kind = "opencode"
 	m.config.Lanes[1].Model = "opencode/fixture-free"
+	m.config.Lanes[1].ExtraArgs = nil
 	m.mu.Unlock()
 	s, in := briefFixture(t)
 	s.ID, s.PreferredLane, s.LaneBinding = "DISPATCH", "codex", "required"

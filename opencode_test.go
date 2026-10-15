@@ -17,6 +17,7 @@ func opencodeFixture(t *testing.T) (Config, string) {
 	c, store := fixture(t)
 	c.Lanes = c.Lanes[:1]
 	c.Lanes[0].Name, c.Lanes[0].Kind = "opencode-1", "opencode"
+	c.Lanes[0].ExtraArgs = nil
 	b, _ := json.Marshal(c.Lanes[0])
 	var fields map[string]any
 	_ = json.Unmarshal(b, &fields)

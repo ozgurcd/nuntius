@@ -272,6 +272,7 @@ func TestNativeContinuationPendingExclusions(t *testing.T) {
 				m.config.Lanes = m.config.Lanes[:1]
 			case "changed-kind":
 				m.config.Lanes[1].Kind = "claude"
+				m.config.Lanes[1].ExtraArgs = []string{"--permission-mode=auto"}
 			}
 			if branch := m.goalContinuationPendingLocked(&r, "", false); branch != "" || r.WaitingToResume || r.ResumeCount > 2 {
 				t.Fatal("excluded observation became new recovery work")

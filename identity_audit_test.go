@@ -52,7 +52,7 @@ func TestEffectiveLaunchIdentity(t *testing.T) {
 
 func TestLaunchIdentitySurfacesAndHistory(t *testing.T) {
 	c, store := fixture(t)
-	c.Lanes[0].ExtraArgs = []string{"--model", "launch-opus", "--effort=high"}
+	c.Lanes[0].ExtraArgs = []string{"--model", "launch-opus", "--effort=high", "--permission-mode=auto"}
 	c.Lanes[0].StartMode = "as_is"
 	m, err := NewManager(c, store)
 	if err != nil {
@@ -69,7 +69,7 @@ func TestLaunchIdentitySurfacesAndHistory(t *testing.T) {
 		t.Fatal("launch snapshot missing")
 	}
 	m.mu.Lock()
-	m.config.Lanes[0].ExtraArgs = []string{"--model=new-opus", "--effort=low"}
+	m.config.Lanes[0].ExtraArgs = []string{"--model=new-opus", "--effort=low", "--permission-mode=auto"}
 	m.mu.Unlock()
 	rows, err := m.History(HistoryFilter{Limit: 20})
 	if err != nil || len(rows) != 1 || rows[0].Model != "launch-opus" || rows[0].Effort != "high" {

@@ -213,7 +213,7 @@ func fixture(t *testing.T) (Config, string) {
 			t.Error("offline fixture child did not exit after SIGKILL")
 		}
 	})
-	return Config{Lanes: []Lane{{Name: "claude", Kind: "claude", Workdir: d, Binary: fakeBinary}, {Name: "codex", Kind: "codex", Workdir: d, Binary: fakeBinary}}, MaxRuntime: "10s", ReportsDir: d, Notifications: &off}, store
+	return Config{Lanes: []Lane{{Name: "claude", Kind: "claude", Workdir: d, Binary: fakeBinary, ExtraArgs: []string{"--permission-mode=auto"}}, {Name: "codex", Kind: "codex", Workdir: d, Binary: fakeBinary, ExtraArgs: []string{"--sandbox=workspace-write"}}}, MaxRuntime: "10s", ReportsDir: d, Notifications: &off}, store
 }
 
 // awaitRunsGone polls until no run keeps its verified process identity, or ctx ends.
@@ -333,6 +333,9 @@ func TestConfigAndBypassRefusal(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/%s/%d", kind, tc.name, form), func(t *testing.T) {
 					c, _ := fixture(t)
 					c.Lanes[0].Kind = kind
+					if tc.name == "skip-git-repo-check" && kind == "codex" {
+						args = append(append([]string(nil), args...), "--sandbox=workspace-write")
+					}
 					c.Lanes[0].ExtraArgs = args
 					_, err := c.Validate()
 					if (err == nil) != (tc.allowedKind == kind) {
@@ -363,7 +366,7 @@ func TestConfigAndBypassRefusal(t *testing.T) {
 		})
 	}
 	c, _ := fixture(t)
-	c.Lanes[0].ExtraArgs = []string{"--model", "example", "--effort", "high"}
+	c.Lanes[0].ExtraArgs = []string{"--model", "example", "--effort", "high", "--permission-mode=auto"}
 	if _, e := c.Validate(); e != nil {
 		t.Fatal(e)
 	}

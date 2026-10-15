@@ -6,8 +6,8 @@ paths from your machine. The following paths are placeholders, not defaults:
 ```json
 {
   "pools": {
-    "claude":{"size":1,"template":{"workdir":"/absolute/workspace","binary":"/absolute/bin/claude","extra_args":[],"start_mode":"goal_then_continue","continue_text":"continue"}},
-    "codex":{"size":2,"template":{"workdir":"/absolute/workspace","binary":"/absolute/bin/codex","extra_args":[],"start_mode":"as_is"}}
+    "claude":{"size":1,"template":{"workdir":"/absolute/workspace","binary":"/absolute/bin/claude","extra_args":["--permission-mode","auto"],"start_mode":"goal_then_continue","continue_text":"continue"}},
+    "codex":{"size":2,"template":{"workdir":"/absolute/workspace","binary":"/absolute/bin/codex","extra_args":["--sandbox","workspace-write"],"start_mode":"as_is"}}
   },
   "max_runtime":"8h",
   "reports_dir":"/absolute/workspace/reports",
@@ -56,10 +56,13 @@ must be positive and no longer than seven days. Configuration is limited to
 64 KiB. No setting is read from agent configuration files by nuntius.
 
 `extra_args` supports `--model`/`-m` for Claude and Codex, and `--effort` and
-`--max-budget-usd` for Claude. Claude also permits `--permission-mode` with
-exactly `auto`, `acceptEdits`, `plan` or `manual`. Codex permits
-`--skip-git-repo-check` without a value and `--sandbox` with exactly `read-only`
-or `workspace-write`. Value-taking options support split and `--name=value`
+`--max-budget-usd` for Claude. Every Claude lane and pool template requires
+`--permission-mode` with exactly `auto`, `acceptEdits`, `plan` or `manual`.
+Every Codex lane and pool template requires `--sandbox` with exactly `read-only`
+or `workspace-write`; `--skip-git-repo-check` is optional and takes no value.
+These requirements also apply to disabled pool templates. OpenCode uses a
+different CLI and requires neither flag; its guardrail parity is a separate check.
+Value-taking options support split and `--name=value`
 forms. These options are agent-specific. Other options
 are refused, including permission/sandbox bypasses, hook or settings overrides,
 working-directory changes, session selection and output-format overrides.

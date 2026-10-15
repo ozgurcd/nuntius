@@ -190,6 +190,7 @@ func (c Config) Validate() (time.Duration, error) {
 		if len(l.ExtraArgs) > 16 {
 			return fail()
 		}
+		hasFloor := l.Kind == "opencode"
 		for i := 0; i < len(l.ExtraArgs); i++ {
 			key, val, eq := strings.Cut(l.ExtraArgs[i], "=")
 			if l.Kind == "codex" && key == "--skip-git-repo-check" && !eq {
@@ -217,6 +218,12 @@ func (c Config) Validate() (time.Duration, error) {
 			if val == "" || len(val) > 128 || strings.HasPrefix(val, "-") || strings.ContainsAny(val, "\x00\r\n") || strings.Contains(strings.ToLower(val), "bypass") || strings.Contains(val, "danger-full-access") {
 				return fail()
 			}
+			if key == "--permission-mode" || key == "--sandbox" {
+				hasFloor = true
+			}
+		}
+		if !hasFloor {
+			return fail()
 		}
 	}
 	return d, nil

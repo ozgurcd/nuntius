@@ -385,7 +385,7 @@ func TestLaneCLIRetentionPoolAndFrozenResume(t *testing.T) {
 	if code, _, _ := laneCLI(t, config, store, "lane", "resume", "codex"); code != 0 {
 		t.Fatal("orphan resume")
 	}
-	c.Lanes = append(c.Lanes, Lane{Name: "codex", Kind: "claude", Workdir: c.Lanes[0].Workdir, Binary: fakeBinary})
+	c.Lanes = append(c.Lanes, Lane{Name: "codex", Kind: "claude", Workdir: c.Lanes[0].Workdir, Binary: fakeBinary, ExtraArgs: []string{"--permission-mode=auto"}})
 	b, _ = json.Marshal(c)
 	_ = os.WriteFile(config, b, 0600)
 	if code, _, _ := laneCLI(t, config, store, "lane", "pause", "codex"); code != 0 {
@@ -395,7 +395,7 @@ func TestLaneCLIRetentionPoolAndFrozenResume(t *testing.T) {
 	c.Lanes = c.Lanes[:1]
 	b, _ = json.Marshal(c)
 	_ = os.WriteFile(config, b, 0600)
-	c.Lanes = append(c.Lanes, Lane{Name: "codex", Kind: "codex", Workdir: c.Lanes[0].Workdir, Binary: fakeBinary})
+	c.Lanes = append(c.Lanes, Lane{Name: "codex", Kind: "codex", Workdir: c.Lanes[0].Workdir, Binary: fakeBinary, ExtraArgs: []string{"--sandbox=workspace-write"}})
 	b, _ = json.Marshal(c)
 	_ = os.WriteFile(config, b, 0600)
 	if code, out, _ := laneCLI(t, config, store, "lane", "list", "--json"); code != 0 || !strings.Contains(out, `"paused":true`) {
@@ -412,7 +412,7 @@ func TestLaneCLIRetentionPoolAndFrozenResume(t *testing.T) {
 	if !bytes.Equal(frozen, after) {
 		t.Fatal("resume cleared freeze")
 	}
-	c.Pools = map[string]AgentPool{"codex": {Size: 0, Template: Lane{Kind: "codex", Workdir: c.Lanes[0].Workdir, Binary: fakeBinary}}}
+	c.Pools = map[string]AgentPool{"codex": {Size: 0, Template: Lane{Kind: "codex", Workdir: c.Lanes[0].Workdir, Binary: fakeBinary, ExtraArgs: []string{"--sandbox=workspace-write"}}}}
 	c.Lanes = nil
 	b, _ = json.Marshal(c)
 	_ = os.WriteFile(config, b, 0600)

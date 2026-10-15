@@ -22,7 +22,7 @@ func TestVersionAliases(t *testing.T) {
 
 func TestLegacyConfiguredIdentity(t *testing.T) {
 	c, store := fixture(t)
-	c.Lanes[0].ExtraArgs = []string{"--model=chosen-model", "--effort=high"}
+	c.Lanes[0].ExtraArgs = []string{"--model=chosen-model", "--effort=high", "--permission-mode=auto"}
 	m, err := NewManager(c, store)
 	if err != nil {
 		t.Fatal(err)
