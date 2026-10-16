@@ -875,6 +875,13 @@ func (m *Manager) statusPass(ctx context.Context, details, fallback bool, contro
 	return m.statusTransaction(ctx, details, fallback, false, controlsOut...)
 }
 
+// statusMutexBusy marks the bounded m.mu wait in statusTransaction as the
+// origin of a refusal. It keeps the wait's error text and unwraps to it.
+type statusMutexBusy struct{ err error }
+
+func (e statusMutexBusy) Error() string { return e.err.Error() }
+func (e statusMutexBusy) Unwrap() error { return e.err }
+
 func (m *Manager) statusTransaction(ctx context.Context, details, fallback, recoverDue bool, controlsOut ...*laneControlSnapshot) ([]Status, error) {
 	if m.readOnly && m.observation == nil {
 		s, err := m.displaySnapshot(ctx)
@@ -887,7 +894,7 @@ func (m *Manager) statusTransaction(ctx context.Context, details, fallback, reco
 	waitErr := lockContext(waitCtx, &m.mu)
 	cancelWait()
 	if waitErr != nil {
-		return nil, waitErr
+		return nil, statusMutexBusy{waitErr}
 	}
 	heldAt := time.Now()
 	locked := true
