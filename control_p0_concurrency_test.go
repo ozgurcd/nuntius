@@ -142,6 +142,7 @@ func TestP0TouchedIntakeNames(t *testing.T) {
 }
 
 func TestP0DisplayRetainedBudget(t *testing.T) {
+	setupStarted := time.Now()
 	ctx, m, r := p0MetadataFixture(t)
 	r.Brief = strings.Repeat("x", 12000)
 	for i := range 750 {
@@ -154,7 +155,19 @@ func TestP0DisplayRetainedBudget(t *testing.T) {
 			t.Fatal("cache fixture write")
 		}
 	}
+	parentDeadline, _ := ctx.Deadline()
+	started := time.Now()
+	opens, revalidations := m.metadata.opens.Load(), m.metadata.revalidations.Load()
 	view, err := m.displaySnapshot(ctx)
+	elapsed, parentErr := time.Since(started), ctx.Err()
+	expired := "none"
+	if errors.Is(err, context.DeadlineExceeded) {
+		expired = "display"
+		if parentDeadline.Before(started.Add(time.Second)) {
+			expired = "parent"
+		}
+	}
+	t.Logf("retained_display setup_ms=%.3f snapshot_ms=%.3f parent_remaining_before_ms=%.3f parent_remaining_after_ms=%.3f parent_error=%v expired=%s metadata_opens=%d revalidations=%d", float64(started.Sub(setupStarted))/float64(time.Millisecond), float64(elapsed)/float64(time.Millisecond), float64(parentDeadline.Sub(started))/float64(time.Millisecond), float64(time.Until(parentDeadline))/float64(time.Millisecond), parentErr, expired, m.metadata.opens.Load()-opens, m.metadata.revalidations.Load()-revalidations)
 	if err != nil || len(view.runs) != 751 {
 		t.Fatal("oversized display lost observations", err)
 	}

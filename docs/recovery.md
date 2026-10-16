@@ -199,6 +199,26 @@ program from explicitly killing an agent. Offline proofs cover parent loss,
 MCP death, binary replacement, recovery policy, waiting and torn files; real
 Claude-app restarts and reboots still need the owner's pilot.
 
+The private metadata cache retains at most 4096 entries and 16 MiB of byte
+buffers. Each access checks the anchored directory and file stat and validates
+the decoded record. A stat is trusted for content reuse only when all directory
+and file modification/change times predate the validating read by more than
+two seconds. Recent or future stamps require a full bounded re-read. An equal
+re-read refreshes that validation time; a changed record uses the fresh bytes.
+Metadata revalidation clears any retained message-absence observation before
+that observation can inherit the later validation time. These rules support
+local Unix stores with timestamp granularity at most two seconds; network and
+cloud-synced stores remain unsupported.
+
+Internal cache counters are diagnostic and are not public status fields.
+`opens` counts successful metadata opens, including revalidation reads;
+`revalidations` counts attempted reads of matching, insufficiently aged entries,
+including attempts that fail. `hits` counts matching entries served either
+without a content read or after an equal revalidation. A mismatched revalidation
+is not a hit. `messageOpens` counts message open attempts, including missing
+files. Thus hits alone do not prove an I/O saving; compare both opens and
+revalidations. Tests also exercise an aged entry with zero content I/O.
+
 Tool approvals in Claude Desktop:
 
 - **Ask**: `nuntius_dispatch`, `nuntius_reply`, `nuntius_cancel`, `nuntius_unfreeze`.

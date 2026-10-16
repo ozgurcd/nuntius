@@ -34,7 +34,7 @@ type runMetadataCache struct {
 	entries       map[string]runMetadataEntry
 	bytes         int
 	clearNext     atomic.Bool
-	opens         atomic.Uint64 // cache fills; recent-stamp revalidation is separate
+	opens         atomic.Uint64 // successful metadata opens, including revalidation
 	revalidations atomic.Uint64
 	hits          atomic.Uint64
 	messageOpens  atomic.Uint64
@@ -108,14 +108,30 @@ func (c *runMetadataCache) lookup(ctx context.Context, id string, stamp runMetad
 	c.mu.Unlock()
 	if ok && entry.stamp == stamp {
 		if !metadataStampReusable(stamp, entry.validatedAt) {
+			started := time.Now()
 			c.revalidations.Add(1)
-			b, after, err := readRunMetadata(ctx, dir)
+			b, after, err := c.readRunMetadata(ctx, dir)
 			if err != nil {
 				return nil, false, err
 			}
 			if after != stamp || !bytes.Equal(b, entry.data) {
-				return nil, false, nil
+				if err := c.remember(ctx, id, after, b, started); err != nil {
+					return nil, false, err
+				}
+				return b, true, nil
 			}
+			if err := lockContext(ctx, &c.mu, 4); err != nil {
+				return nil, false, err
+			}
+			c.clearLocked()
+			if current, ok := c.entries[id]; ok && current.stamp == stamp && bytes.Equal(current.data, b) && current.validatedAt.Before(started) {
+				current.validatedAt = started
+				// The metadata read did not validate message absence. Never
+				// promote that independent observation to a later safe age.
+				current.messageAbsent = false
+				c.entries[id] = current
+			}
+			c.mu.Unlock()
 		}
 		c.hits.Add(1)
 		return entry.data, true, nil
@@ -204,8 +220,7 @@ func (c *runMetadataCache) readOnce(ctx context.Context, dir *os.File, id string
 	if b, ok, err := c.lookup(ctx, id, before, dir); err != nil || ok {
 		return b, err
 	}
-	c.opens.Add(1)
-	b, after, err := readRunMetadata(ctx, dir)
+	b, after, err := c.readRunMetadata(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +233,7 @@ func (c *runMetadataCache) readOnce(ctx context.Context, dir *os.File, id string
 // The revalidation path uses the same bounded, anchored, no-follow read as a
 // cache fill. No cache lock is held across I/O; check cancellation between the
 // OS-bounded local-file syscalls and on every reader call.
-func readRunMetadata(ctx context.Context, dir *os.File) ([]byte, runMetadataStamp, error) {
+func (c *runMetadataCache) readRunMetadata(ctx context.Context, dir *os.File) ([]byte, runMetadataStamp, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, runMetadataStamp{}, err
 	}
@@ -226,6 +241,7 @@ func readRunMetadata(ctx context.Context, dir *os.File) ([]byte, runMetadataStam
 	if err != nil {
 		return nil, runMetadataStamp{}, errLaneControlUnavailable
 	}
+	c.opens.Add(1)
 	f := os.NewFile(uintptr(fd), "private-run-metadata")
 	defer f.Close()
 	if err := ctx.Err(); err != nil {

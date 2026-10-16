@@ -37,23 +37,34 @@ func p0MetadataFixture(t *testing.T) (context.Context, *Manager, Run) {
 
 func TestP0MetadataReuse(t *testing.T) {
 	ctx, m, r := p0MetadataFixture(t)
-	for range 2 {
+	for i := range 2 {
 		runs, err := m.historyContext(ctx)
 		if err != nil || len(runs) != 1 || runs[0].ID != r.ID {
 			t.Fatal("metadata history identity")
 		}
 		// Mutating a projection must never mutate retained private bytes.
 		runs[0].Brief = "changed projection"
+		if i == 0 {
+			// Force the unvalidated-age case without relying on the fixture
+			// having completed inside the filesystem granularity window.
+			if lockContext(ctx, &m.metadata.mu) != nil {
+				t.Fatal("reuse age fixture lock")
+			}
+			entry := m.metadata.entries[r.ID]
+			entry.validatedAt = time.Time{}
+			m.metadata.entries[r.ID] = entry
+			m.metadata.mu.Unlock()
+		}
 	}
-	if m.metadata.opens.Load() != 1 {
-		t.Fatal("unchanged history reopened private metadata")
+	if m.metadata.revalidations.Load() == 0 || m.metadata.opens.Load() != 1+m.metadata.revalidations.Load() {
+		t.Fatal("metadata open count omitted recent-entry revalidations")
 	}
 	guard, err := m.admissionControlLockWithin(dispatchControlLockWait, ctx)
 	if err != nil {
 		t.Fatal("metadata admission guard")
 	}
 	defer guard.Close()
-	if m.admitLaneLocked("codex", ctx) != nil || m.metadata.opens.Load() != 1 {
+	if m.admitLaneLocked("codex", ctx) != nil || m.metadata.opens.Load() != 1+m.metadata.revalidations.Load() {
 		t.Fatal("fresh admission did not reuse validated metadata")
 	}
 	runs, err := m.historyContext(ctx)
@@ -73,8 +84,101 @@ func TestP0MetadataReuse(t *testing.T) {
 		t.Fatal("own write did not explicitly invalidate its entry")
 	}
 	runs, err = m.historyContext(ctx)
-	if err != nil || len(runs) != 1 || runs[0].Brief != r.Brief || m.metadata.opens.Load() != 2 {
+	if err != nil || len(runs) != 1 || runs[0].Brief != r.Brief || m.metadata.opens.Load() != 2+m.metadata.revalidations.Load() {
 		t.Fatal("metadata own write freshness")
+	}
+}
+
+func TestP0MetadataRevalidationAge(t *testing.T) {
+	ctx, m, r := p0MetadataFixture(t)
+	dir, err := os.Open(filepath.Join(m.store, "runs", r.ID))
+	if err != nil {
+		t.Fatal("revalidation directory")
+	}
+	defer dir.Close()
+	want, err := m.metadata.readOnce(ctx, dir, r.ID)
+	if err != nil {
+		t.Fatal("revalidation fill")
+	}
+	entry := m.metadata.entries[r.ID]
+	entry.messageAbsent = true
+	m.metadata.entries[r.ID] = entry
+	started := time.Now()
+	got, ok, err := m.metadata.lookup(ctx, r.ID, entry.stamp, dir)
+	if err != nil || !ok || !bytes.Equal(got, want) || m.metadata.revalidations.Load() != 1 {
+		t.Fatal("recent entry did not revalidate")
+	}
+	if m.metadata.entries[r.ID].validatedAt.Before(started) {
+		t.Fatal("equal revalidation did not refresh validation age")
+	}
+	if m.metadata.entries[r.ID].messageAbsent {
+		t.Fatal("metadata revalidation promoted an unvalidated message absence")
+	}
+}
+
+func TestP0MetadataAgedEntryNoIO(t *testing.T) {
+	ctx, m, r := p0MetadataFixture(t)
+	dir, err := os.Open(filepath.Join(m.store, "runs", r.ID))
+	if err != nil {
+		t.Fatal("aged directory")
+	}
+	defer dir.Close()
+	want, err := m.metadata.readOnce(ctx, dir, r.ID)
+	if err != nil {
+		t.Fatal("aged fill")
+	}
+	entry := m.metadata.entries[r.ID]
+	// Model a read begun three seconds after all four timestamps. No wall
+	// clock wait is needed to exercise the already-aged cache state.
+	for _, ts := range []time.Time{
+		time.Unix(entry.stamp.directory.Mtim.Sec, entry.stamp.directory.Mtim.Nsec),
+		time.Unix(entry.stamp.directory.Ctim.Sec, entry.stamp.directory.Ctim.Nsec),
+		time.Unix(entry.stamp.file.Mtim.Sec, entry.stamp.file.Mtim.Nsec),
+		time.Unix(entry.stamp.file.Ctim.Sec, entry.stamp.file.Ctim.Nsec),
+	} {
+		if later := ts.Add(3 * time.Second); later.After(entry.validatedAt) {
+			entry.validatedAt = later
+		}
+	}
+	m.metadata.entries[r.ID] = entry
+	opens, revalidations := m.metadata.opens.Load(), m.metadata.revalidations.Load()
+	runs, err := m.historyContext(ctx)
+	if err != nil || len(runs) != 1 || runs[0].ID != r.ID || m.metadata.opens.Load() != opens || m.metadata.revalidations.Load() != revalidations {
+		t.Fatal("aged history performed content I/O")
+	}
+	if dir.Close() != nil {
+		t.Fatal("aged close")
+	}
+	// A closed anchor makes any attempted content I/O fail deterministically.
+	got, ok, err := m.metadata.lookup(ctx, r.ID, entry.stamp, dir)
+	if err != nil || !ok || !bytes.Equal(got, want) || m.metadata.opens.Load() != opens || m.metadata.revalidations.Load() != revalidations {
+		t.Fatal("aged entry performed content I/O")
+	}
+}
+
+func TestP0MetadataMismatchReturnsRead(t *testing.T) {
+	ctx, m, r := p0MetadataFixture(t)
+	dir, err := os.Open(filepath.Join(m.store, "runs", r.ID))
+	if err != nil {
+		t.Fatal("mismatch directory")
+	}
+	defer dir.Close()
+	if _, err := m.metadata.readOnce(ctx, dir, r.ID); err != nil {
+		t.Fatal("mismatch fill")
+	}
+	r.Brief = "fresh revalidation bytes"
+	r.Integrity = ""
+	b, _ := json.Marshal(r)
+	r.Integrity = laneControlDigest(b)
+	b, _ = json.Marshal(r)
+	if os.WriteFile(filepath.Join(m.store, "runs", r.ID, "meta.json"), b, 0600) != nil {
+		t.Fatal("mismatch rewrite")
+	}
+	p0MetadataCollapseStamp(t, ctx, m, r)
+	entry := m.metadata.entries[r.ID]
+	got, ok, err := m.metadata.lookup(ctx, r.ID, entry.stamp, dir)
+	if err != nil || !ok || !bytes.Equal(got, b) || !bytes.Equal(m.metadata.entries[r.ID].data, b) || m.metadata.opens.Load() != 2 || m.metadata.revalidations.Load() != 1 {
+		t.Fatal("mismatch discarded fresh bytes or opened metadata twice")
 	}
 }
 
