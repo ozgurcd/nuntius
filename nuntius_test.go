@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -256,17 +257,34 @@ func manager(t *testing.T) (*Manager, Config, string) {
 }
 func waitState(t testing.TB, m *Manager, lane, state string) Status {
 	t.Helper()
+	return waitStateContext(context.Background(), t, m, lane, state)
+}
+
+// waitStateContext polls like waitState, but its reads and sleeps observe ctx:
+// cancellation ends the poll with a Fatal instead of letting it run on.
+func waitStateContext(ctx context.Context, t testing.TB, m *Manager, lane, state string) Status {
+	t.Helper()
+	pause := func() {
+		timer := time.NewTimer(5 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			t.Fatalf("waiting for %s: %v", state, ctx.Err())
+		}
+	}
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
 		// Native Status repairs and replays the entire journal. Observe the
 		// small run record first while a verified live child is still running;
 		// always use the real Status for the requested state and dead/adopted runs.
-		r, err := m.latest(lane)
+		r, err := m.latestContext(ctx, lane)
 		if err == nil && r != nil && r.State == "running" && state == "ended" && sameProcess(*r) {
-			time.Sleep(5 * time.Millisecond)
+			pause()
 			continue
 		}
-		s, e := m.Status()
+		// statusContext with ctx is Status() with the caller's cancellation.
+		s, e := m.statusContext(ctx, true)
 		if statusBusyRefusal(e) {
 			// Only statusTransaction's bounded m.mu wait refused while another
 			// owner (e.g. end publication) held it. That is a busy observation;
@@ -274,7 +292,7 @@ func waitState(t testing.TB, m *Manager, lane, state string) Status {
 			if o, ok := t.(statusRefusalObserver); ok {
 				o.observeStatusRefusal()
 			}
-			time.Sleep(5 * time.Millisecond)
+			pause()
 			continue
 		}
 		if e != nil {
@@ -285,7 +303,7 @@ func waitState(t testing.TB, m *Manager, lane, state string) Status {
 				return v
 			}
 		}
-		time.Sleep(5 * time.Millisecond)
+		pause()
 	}
 	t.Fatalf("lane did not reach %s", state)
 	return Status{}
@@ -307,22 +325,21 @@ type statusRefusalObserver interface{ observeStatusRefusal() }
 type fatalRecorder struct {
 	testing.TB
 	refused chan struct{}
-	mu      sync.Mutex
-	fatal   string
+	fatal   atomic.Pointer[string]
 }
 
 func (f *fatalRecorder) Helper() {}
 func (f *fatalRecorder) Fatal(args ...any) {
-	f.mu.Lock()
-	f.fatal = fmt.Sprint(args...)
-	f.mu.Unlock()
+	text := fmt.Sprint(args...)
+	f.fatal.Store(&text)
 	runtime.Goexit()
 }
 func (f *fatalRecorder) Fatalf(format string, args ...any) { f.Fatal(fmt.Sprintf(format, args...)) }
 func (f *fatalRecorder) fatalText() string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.fatal
+	if p := f.fatal.Load(); p != nil {
+		return *p
+	}
+	return ""
 }
 func (f *fatalRecorder) observeStatusRefusal() {
 	select {
@@ -368,27 +385,7 @@ func TestWaitStateRetriesBoundedStatusRefusal(t *testing.T) {
 	lane := m.config.Lanes[0].Name
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	held, release, exited := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	var once sync.Once
-	releaseHolder := func() { once.Do(func() { close(release) }) }
-	go func() {
-		defer close(exited)
-		if lockContext(ctx, &m.mu) != nil {
-			return
-		}
-		defer m.mu.Unlock()
-		close(held)
-		select {
-		case <-release:
-		case <-ctx.Done():
-		}
-	}()
-	t.Cleanup(func() { releaseHolder(); joinWithin(t, exited, 5*time.Second, "mutex holder") })
-	select {
-	case <-held:
-	case <-ctx.Done():
-		t.Fatal("mutex holder did not acquire m.mu")
-	}
+	releaseHolder := holdManagerMutex(t, ctx, m)
 	if _, err := m.Status(); !statusBusyRefusal(err) {
 		t.Fatalf("Status mutex wait is no longer a bounded busy refusal: %v", err)
 	}
@@ -396,9 +393,9 @@ func TestWaitStateRetriesBoundedStatusRefusal(t *testing.T) {
 	got, done := make(chan Status, 1), make(chan struct{})
 	go func() {
 		defer close(done)
-		got <- waitState(rec, m, lane, "idle")
+		got <- waitStateContext(ctx, rec, m, lane, "idle")
 	}()
-	t.Cleanup(func() { releaseHolder(); joinWithin(t, done, 10*time.Second, "waitState") })
+	t.Cleanup(func() { cancel(); joinWithin(t, done, 10*time.Second, "waitState") })
 	// Release only after waitState has observed at least one refusal.
 	select {
 	case <-rec.refused:
@@ -418,6 +415,71 @@ func TestWaitStateRetriesBoundedStatusRefusal(t *testing.T) {
 	}
 	if s := <-got; s.Lane != lane || s.State != "idle" {
 		t.Fatalf("unexpected status %s/%s", s.Lane, s.State)
+	}
+}
+
+// holdManagerMutex holds m.mu in an owned goroutine until release or ctx ends.
+// Cleanup releases it and joins the holder within a bound.
+func holdManagerMutex(t *testing.T, ctx context.Context, m *Manager) (release func()) {
+	t.Helper()
+	held, stop, exited := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(stop) }) }
+	go func() {
+		defer close(exited)
+		if lockContext(ctx, &m.mu) != nil {
+			return
+		}
+		defer m.mu.Unlock()
+		close(held)
+		select {
+		case <-stop:
+		case <-ctx.Done():
+		}
+	}()
+	t.Cleanup(func() { release(); joinWithin(t, exited, 5*time.Second, "mutex holder") })
+	select {
+	case <-held:
+	case <-exited:
+		t.Fatal("mutex holder did not acquire m.mu")
+	}
+	return release
+}
+
+// Cancelling the poll's context must end it while Status is blocked on m.mu,
+// well inside Status's own 2s mutex bound and waitState's 4s loop.
+func TestWaitStateStopsOnCancellation(t *testing.T) {
+	m, _, _ := manager(t)
+	lane := m.config.Lanes[0].Name
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	holdManagerMutex(t, ctx, m)
+	work, stop := context.WithCancel(ctx)
+	defer stop()
+	rec := &fatalRecorder{TB: t, refused: make(chan struct{}, 1)}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		waitStateContext(work, rec, m, lane, "idle")
+	}()
+	t.Cleanup(func() { stop(); joinWithin(t, done, 10*time.Second, "waitState") })
+	select {
+	case <-rec.refused:
+	case <-done:
+		t.Fatalf("waitState returned before any refusal: %s", rec.fatalText())
+	case <-ctx.Done():
+		t.Fatal("waitState observed no refusal")
+	}
+	stop()
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		t.Fatal("waitState ignored cancellation while Status waited for m.mu")
+	}
+	if f := rec.fatalText(); !strings.Contains(f, context.Canceled.Error()) {
+		t.Fatalf("waitState did not stop on cancellation: %q", f)
 	}
 }
 func waitReady(t *testing.T, m *Manager, lane string) {
