@@ -78,6 +78,114 @@ func TestP0MetadataReuse(t *testing.T) {
 	}
 }
 
+// Collapse only the retained stat identity, leaving the retained bytes and
+// absence observation unchanged. This simulates a write/chtimes pair inside
+// one filesystem timestamp tick on every host, without sleeps or global hooks.
+func p0MetadataCollapseStamp(t *testing.T, ctx context.Context, m *Manager, r Run) {
+	t.Helper()
+	dir, err := os.Open(filepath.Join(m.store, "runs", r.ID))
+	if err != nil {
+		t.Fatal("coarse stamp directory")
+	}
+	defer dir.Close()
+	stamp, err := metadataStampAt(ctx, dir)
+	if err != nil || lockContext(ctx, &m.metadata.mu) != nil {
+		t.Fatal("coarse stamp fixture")
+	}
+	defer m.metadata.mu.Unlock()
+	entry, ok := m.metadata.entries[r.ID]
+	if !ok {
+		t.Fatal("coarse stamp cache missing")
+	}
+	entry.stamp = stamp
+	m.metadata.entries[r.ID] = entry
+}
+
+func TestP0MetadataCoarseStampRewrite(t *testing.T) {
+	for _, corrupt := range []bool{false, true} {
+		t.Run(fmt.Sprintf("corrupt=%t", corrupt), func(t *testing.T) {
+			ctx, m, r := p0MetadataFixture(t)
+			if _, err := m.historyContext(ctx); err != nil {
+				t.Fatal("coarse stamp warmup")
+			}
+			meta := filepath.Join(m.store, "runs", r.ID, "meta.json")
+			before, err := os.Stat(meta)
+			if err != nil {
+				t.Fatal("coarse stamp stat")
+			}
+			r.Brief = "note no-session"
+			r.Integrity = ""
+			b, _ := json.Marshal(r)
+			r.Integrity = laneControlDigest(b)
+			b, _ = json.Marshal(r)
+			if corrupt {
+				b = bytes.Replace(b, []byte("note no-session"), []byte("fake no-session"), 1)
+			}
+			if int64(len(b)) != before.Size() || os.WriteFile(meta, b, 0600) != nil || os.Chtimes(meta, before.ModTime(), before.ModTime()) != nil {
+				t.Fatal("coarse stamp rewrite fixture")
+			}
+			p0MetadataCollapseStamp(t, ctx, m, r)
+			runs, err := m.historyContext(ctx)
+			if err != nil {
+				t.Fatal("coarse stamp history")
+			}
+			if corrupt {
+				if len(runs) != 0 {
+					t.Fatal("collapsed stat stamp admitted corrupt metadata")
+				}
+			} else if len(runs) != 1 || runs[0].Brief != r.Brief {
+				t.Fatal("collapsed stat stamp reused stale bytes")
+			}
+		})
+	}
+}
+
+func TestP0MetadataCoarseStampMessage(t *testing.T) {
+	ctx, m, r := p0MetadataFixture(t)
+	if _, err := m.historyContext(ctx); err != nil {
+		t.Fatal("coarse message warmup")
+	}
+	dir, err := os.Open(filepath.Join(m.store, "runs", r.ID))
+	if err != nil {
+		t.Fatal("coarse message directory")
+	}
+	defer dir.Close()
+	if _, err := m.metadata.readMessage(ctx, dir, r.ID); !os.IsNotExist(err) {
+		t.Fatal("coarse message absence")
+	}
+	if os.WriteFile(filepath.Join(m.store, "runs", r.ID, "message.json"), []byte("new message"), 0600) != nil {
+		t.Fatal("coarse message creation")
+	}
+	p0MetadataCollapseStamp(t, ctx, m, r)
+	if b, err := m.metadata.readMessage(ctx, dir, r.ID); err != nil || string(b) != "new message" {
+		t.Fatal("collapsed directory stamp hid message creation")
+	}
+}
+
+func TestP0MetadataStampAge(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	stamp := runMetadataStamp{}
+	fields := []*int64{&stamp.directory.Mtim.Sec, &stamp.directory.Ctim.Sec, &stamp.file.Mtim.Sec, &stamp.file.Ctim.Sec}
+	for _, field := range fields {
+		*field = now.Unix() - 3
+	}
+	if !metadataStampReusable(stamp, now) {
+		t.Fatal("old validated stamp was not reusable")
+	}
+	for i, field := range fields {
+		for _, offset := range []int64{-2, -1, 0, 1} {
+			*field = now.Unix() + offset
+			if metadataStampReusable(stamp, now) {
+				t.Fatalf("recent or future stamp field %d was trusted", i)
+			}
+		}
+		*field = now.Unix() - 3
+	}
+	if metadataStampReusable(stamp, time.Time{}) || metadataStampReusable(stamp, now.Add(-time.Hour)) {
+		t.Fatal("unvalidated or initially recent entry became trusted by aging")
+	}
+}
+
 func TestP0MetadataMissingMessage(t *testing.T) {
 	ctx, m, r := p0MetadataFixture(t)
 	if _, err := m.historyContext(ctx); err != nil {
@@ -307,7 +415,7 @@ func TestP0MetadataNamesAndCancellation(t *testing.T) {
 	}
 	wait, stop := context.WithTimeout(ctx, 20*time.Millisecond)
 	start := time.Now()
-	_, _, err = m.metadata.lookup(wait, r.ID, runMetadataStamp{})
+	_, _, err = m.metadata.lookup(wait, r.ID, runMetadataStamp{}, dir)
 	stop()
 	m.metadata.mu.Unlock()
 	if err == nil || time.Since(start) > 100*time.Millisecond {
@@ -325,18 +433,18 @@ func TestP0MetadataBudgetAndInvalidation(t *testing.T) {
 	defer cancel()
 	var c runMetadataCache
 	retained := make([]byte, 1, 131072)
-	if c.remember(ctx, strings.Repeat("a", 32), runMetadataStamp{}, retained) != nil || c.bytes != cap(retained) {
+	if c.remember(ctx, strings.Repeat("a", 32), runMetadataStamp{}, retained, time.Time{}) != nil || c.bytes != cap(retained) {
 		t.Fatal("metadata budget omitted retained buffer capacity")
 	}
 	c.invalidateAll()
 	for i := range runMetadataEntries + 1 {
-		if c.remember(ctx, fmt.Sprintf("%032x", i), runMetadataStamp{}, []byte{1}) != nil || len(c.entries) > runMetadataEntries || c.bytes > runMetadataBytes {
+		if c.remember(ctx, fmt.Sprintf("%032x", i), runMetadataStamp{}, []byte{1}, time.Time{}) != nil || len(c.entries) > runMetadataEntries || c.bytes > runMetadataBytes {
 			t.Fatal("metadata entry budget")
 		}
 	}
 	large := make([]byte, 131072)
 	for i := range runMetadataBytes/len(large) + 1 {
-		if c.remember(ctx, fmt.Sprintf("%032x", i), runMetadataStamp{}, large) != nil || c.bytes > runMetadataBytes {
+		if c.remember(ctx, fmt.Sprintf("%032x", i), runMetadataStamp{}, large, time.Time{}) != nil || c.bytes > runMetadataBytes {
 			t.Fatal("metadata byte budget")
 		}
 	}
@@ -348,7 +456,7 @@ func TestP0MetadataBudgetAndInvalidation(t *testing.T) {
 	if !c.clearNext.Load() {
 		t.Fatal("contended invalidation was lost")
 	}
-	if _, _, err := c.lookup(ctx, strings.Repeat("a", 32), runMetadataStamp{}); err != nil || len(c.entries) != 0 || c.bytes != 0 {
+	if _, _, err := c.lookup(ctx, strings.Repeat("a", 32), runMetadataStamp{}, nil); err != nil || len(c.entries) != 0 || c.bytes != 0 {
 		t.Fatal("deferred invalidation did not clear retained data")
 	}
 	c.invalidateAll()

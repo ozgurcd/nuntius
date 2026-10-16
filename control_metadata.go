@@ -1,12 +1,14 @@
 package nuntius
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -25,15 +27,17 @@ type runMetadataEntry struct {
 	stamp         runMetadataStamp
 	data          []byte
 	messageAbsent bool
+	validatedAt   time.Time
 }
 type runMetadataCache struct {
-	mu           sync.Mutex
-	entries      map[string]runMetadataEntry
-	bytes        int
-	clearNext    atomic.Bool
-	opens        atomic.Uint64
-	hits         atomic.Uint64
-	messageOpens atomic.Uint64
+	mu            sync.Mutex
+	entries       map[string]runMetadataEntry
+	bytes         int
+	clearNext     atomic.Bool
+	opens         atomic.Uint64 // cache fills; recent-stamp revalidation is separate
+	revalidations atomic.Uint64
+	hits          atomic.Uint64
+	messageOpens  atomic.Uint64
 }
 type runMetadataScan struct {
 	ctx     context.Context
@@ -65,8 +69,8 @@ func metadataStampAt(ctx context.Context, dir *os.File) (runMetadataStamp, error
 	if s.file.Size > 131072 {
 		return s, errRunMetadataLimit
 	}
-	// ctime stays in the key: same-size rewrites with a restored mtime, chmod,
-	// link changes and atomic replacements cannot reuse the previous bytes.
+	// ctime stays in the key, but a recent stat identity alone cannot detect
+	// same-size rewrites with restored mtime inside one filesystem clock tick.
 	s.directory.Atim, s.file.Atim = unix.Timespec{}, unix.Timespec{}
 	return s, ctx.Err()
 }
@@ -77,20 +81,49 @@ func (c *runMetadataCache) clearLocked() {
 	}
 }
 
-func (c *runMetadataCache) lookup(ctx context.Context, id string, stamp runMetadataStamp) ([]byte, bool, error) {
+// Use the same conservative two-second bound on Darwin and Linux: it exceeds
+// both a coarse one-second Unix timestamp tick and its truncation uncertainty.
+// This cache supports local Unix stores with timestamp granularity <= 2s;
+// network/cloud-synced stores are unsupported. Future stamps also revalidate.
+// Judge age at the START of the validating read, never at a later lookup: an
+// unsafe entry must not become trusted merely by aging after a hidden rewrite.
+func metadataStampReusable(stamp runMetadataStamp, validatedAt time.Time) bool {
+	cutoff := validatedAt.Add(-2 * time.Second)
+	for _, s := range []unix.Stat_t{stamp.directory, stamp.file} {
+		for _, ts := range []unix.Timespec{s.Mtim, s.Ctim} {
+			if !time.Unix(ts.Sec, ts.Nsec).Before(cutoff) {
+				return false
+			}
+		}
+	}
+	return !validatedAt.IsZero()
+}
+
+func (c *runMetadataCache) lookup(ctx context.Context, id string, stamp runMetadataStamp, dir *os.File) ([]byte, bool, error) {
 	if err := lockContext(ctx, &c.mu, 4); err != nil {
 		return nil, false, err
 	}
-	defer c.mu.Unlock()
 	c.clearLocked()
-	if entry, ok := c.entries[id]; ok && entry.stamp == stamp {
+	entry, ok := c.entries[id]
+	c.mu.Unlock()
+	if ok && entry.stamp == stamp {
+		if !metadataStampReusable(stamp, entry.validatedAt) {
+			c.revalidations.Add(1)
+			b, after, err := readRunMetadata(ctx, dir)
+			if err != nil {
+				return nil, false, err
+			}
+			if after != stamp || !bytes.Equal(b, entry.data) {
+				return nil, false, nil
+			}
+		}
 		c.hits.Add(1)
 		return entry.data, true, nil
 	}
 	return nil, false, nil
 }
 
-func (c *runMetadataCache) remember(ctx context.Context, id string, stamp runMetadataStamp, b []byte) error {
+func (c *runMetadataCache) remember(ctx context.Context, id string, stamp runMetadataStamp, b []byte, validatedAt time.Time) error {
 	if !runPattern.MatchString(id) || len(b) > 131072 || cap(b) > runMetadataBytes {
 		return errLaneControlUnavailable
 	}
@@ -109,7 +142,7 @@ func (c *runMetadataCache) remember(ctx context.Context, id string, stamp runMet
 	if c.entries == nil {
 		c.entries = make(map[string]runMetadataEntry)
 	}
-	c.entries[id] = runMetadataEntry{stamp: stamp, data: b}
+	c.entries[id] = runMetadataEntry{stamp: stamp, data: b, validatedAt: validatedAt}
 	c.bytes += cap(b)
 	return nil
 }
@@ -163,49 +196,61 @@ func (c *runMetadataCache) read(ctx context.Context, dir *os.File, id string) ([
 }
 
 func (c *runMetadataCache) readOnce(ctx context.Context, dir *os.File, id string) ([]byte, error) {
+	started := time.Now()
 	before, err := metadataStampAt(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
-	if b, ok, err := c.lookup(ctx, id, before); err != nil || ok {
+	if b, ok, err := c.lookup(ctx, id, before, dir); err != nil || ok {
 		return b, err
 	}
-	if err := ctx.Err(); err != nil {
+	c.opens.Add(1)
+	b, after, err := readRunMetadata(ctx, dir)
+	if err != nil {
 		return nil, err
+	}
+	if err := c.remember(ctx, id, after, b, started); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// The revalidation path uses the same bounded, anchored, no-follow read as a
+// cache fill. No cache lock is held across I/O; check cancellation between the
+// OS-bounded local-file syscalls and on every reader call.
+func readRunMetadata(ctx context.Context, dir *os.File) ([]byte, runMetadataStamp, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, runMetadataStamp{}, err
 	}
 	fd, err := unix.Openat(int(dir.Fd()), "meta.json", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, errLaneControlUnavailable
+		return nil, runMetadataStamp{}, errLaneControlUnavailable
 	}
-	c.opens.Add(1)
 	f := os.NewFile(uintptr(fd), "private-run-metadata")
 	defer f.Close()
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, runMetadataStamp{}, err
 	}
 	var opened unix.Stat_t
 	if unix.Fstat(fd, &opened) != nil || opened.Mode&unix.S_IFMT != unix.S_IFREG || opened.Mode&07777 != 0600 || opened.Uid != uint32(os.Geteuid()) || opened.Nlink != 1 || opened.Size < 0 {
-		return nil, errLaneControlUnavailable
+		return nil, runMetadataStamp{}, errLaneControlUnavailable
 	}
 	if opened.Size > 131072 {
-		return nil, errRunMetadataLimit
+		return nil, runMetadataStamp{}, errRunMetadataLimit
 	}
 	opened.Atim = unix.Timespec{}
 	b, err := io.ReadAll(io.LimitReader(metadataContextReader{ctx, f}, 131073))
 	if err != nil {
-		return nil, err
+		return nil, runMetadataStamp{}, err
 	}
 	after, err := metadataStampAt(ctx, dir)
 	if err != nil {
-		return nil, err
+		return nil, runMetadataStamp{}, err
 	}
 	if opened != after.file || int64(len(b)) != after.file.Size {
-		return nil, errRunMetadataChanged
+		return nil, runMetadataStamp{}, errRunMetadataChanged
 	}
-	if err := c.remember(ctx, id, after, b); err != nil {
-		return nil, err
-	}
-	return b, nil
+	return b, after, ctx.Err()
 }
 
 // Cache only absence. Directory ctime/mtime and identity are rechecked before
@@ -227,7 +272,22 @@ func (c *runMetadataCache) readMessage(ctx context.Context, dir *os.File, id str
 	absent := ok && entry.stamp == before && entry.messageAbsent
 	c.mu.Unlock()
 	if absent {
-		return nil, os.ErrNotExist
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if metadataStampReusable(before, entry.validatedAt) {
+			return nil, os.ErrNotExist
+		}
+		// Only absence is cached. A fresh anchored existence check is enough
+		// to disprove it; positive content still follows the full read below.
+		var message unix.Stat_t
+		err := unix.Fstatat(int(dir.Fd()), "message.json", &message, unix.AT_SYMLINK_NOFOLLOW)
+		if errors.Is(err, unix.ENOENT) {
+			return nil, os.ErrNotExist
+		}
+		if err != nil {
+			return nil, errLaneControlUnavailable
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
