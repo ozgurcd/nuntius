@@ -317,6 +317,97 @@ func statusBusyRefusal(err error) bool {
 	return errors.As(err, &busy) && errors.Is(busy.err, context.DeadlineExceeded)
 }
 
+// latestRunWhen polls m.latestContext until done accepts the lane's newest run.
+// errLaneControlUnavailable is the store's bounded refusal (meta.json replaced
+// across every bounded re-read, or not yet openable); like a busy Status it is
+// retried within ctx. done never sees a nil run, every other error returns at
+// once, and expiry returns the context error, never a nil run as success.
+func latestRunWhen(ctx context.Context, m *Manager, lane string, done func(*Run) bool) (*Run, error) {
+	last, refusal := "no read", error(nil)
+	for {
+		r, err := m.latestContext(ctx, lane)
+		switch {
+		case err == nil && r != nil && done(r):
+			return r, nil
+		case err == nil && r != nil:
+			last, refusal = fmt.Sprintf("run %s state %s resume %d", r.ID, r.State, r.ResumeCount), nil
+		case err == nil:
+			last, refusal = "no run", nil
+		case errors.Is(err, errLaneControlUnavailable) && ctx.Err() == nil:
+			last, refusal = "refused", err
+		case ctx.Err() == nil:
+			return nil, err
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			if refusal != nil {
+				return nil, fmt.Errorf("lane %s: %w; last: %w", lane, ctx.Err(), refusal)
+			}
+			return nil, fmt.Errorf("lane %s: %w; last: %s", lane, ctx.Err(), last)
+		}
+	}
+}
+
+// latestRun reads the lane's newest run within Status's bounded wait budget,
+// retrying only the store's refusal, and fails instead of returning nil.
+func latestRun(t testing.TB, m *Manager, lane string) *Run {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), dispatchControlLockWait)
+	defer cancel()
+	r, err := latestRunWhen(ctx, m, lane, func(*Run) bool { return true })
+	if err != nil {
+		t.Fatalf("reading newest %s run: %v", lane, err)
+	}
+	return r
+}
+
+// TestLatestRunWhenRetriesStoreRefusal pins the crash-recovery read helper to
+// the store's bounded refusal: while meta.json cannot be read, m.latest returns
+// (nil, errLaneControlUnavailable), which the old `r, _ := m.latest(lane)`
+// call sites dereferenced.
+func TestLatestRunWhenRetriesStoreRefusal(t *testing.T) {
+	m, _, store := manager(t)
+	id := strings.Repeat("e", 32)
+	seedCrashRun(t, m, id, "REFUSE-23", "")
+	meta := filepath.Join(store, "runs", id, "meta.json")
+	running := func(r *Run) bool { return r.State == "running" }
+	if err := os.Chmod(meta, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := m.latest("codex"); r != nil || !errors.Is(err, errLaneControlUnavailable) {
+		t.Fatalf("fault seam: m.latest = %v, %v; want nil, errLaneControlUnavailable", r, err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	r, err := latestRunWhen(ctx, m, "codex", running)
+	cancel()
+	if r != nil || !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, errLaneControlUnavailable) {
+		t.Fatalf("persistent refusal: got %v, %v; want nil and the bounded refusal", r, err)
+	}
+	if err = os.Chmod(meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if r, err = latestRunWhen(ctx, m, "codex", running); err != nil || r == nil || r.ID != id {
+		t.Fatalf("readable run: got %v, %v", r, err)
+	}
+	// Any other store error is not a refusal and returns before ctx ends.
+	stray := filepath.Join(store, "runs", "not-a-run")
+	if err = os.WriteFile(stray, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, err = latestRunWhen(ctx, m, "codex", running)
+	if rmErr := os.Remove(stray); rmErr != nil {
+		t.Fatal(rmErr)
+	}
+	if r != nil || err == nil || errors.Is(err, errLaneControlUnavailable) || ctx.Err() != nil {
+		t.Fatalf("non-refusal error: got %v, %v (ctx %v)", r, err, ctx.Err())
+	}
+}
+
 // statusRefusalObserver lets a test learn that waitState saw a busy refusal.
 type statusRefusalObserver interface{ observeStatusRefusal() }
 

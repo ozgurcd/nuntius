@@ -93,7 +93,7 @@ func TestCrashMCPDeathAndBinaryReplacement(t *testing.T) {
 			}
 			defer m.Close()
 			waitReady(t, m, "codex")
-			r, _ := m.latest("codex")
+			r := latestRun(t, m, "codex")
 			defer signalRun(*r, syscall.SIGKILL)
 			rows, _ := m.Tail("codex", 200)
 			if !strings.Contains(strings.Join(rows, "\n"), "ppid=1") {
@@ -136,7 +136,7 @@ func TestCrashMCPDeathAndBinaryReplacement(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer next.Close()
-			ended, _ := next.latest("codex")
+			ended := latestRun(t, next, "codex")
 			want := "interrupted"
 			if report {
 				want = "completed"
@@ -253,21 +253,18 @@ func TestCrashRecoveryBusyLaneAndLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	for n := 1; n <= 2; n++ {
-		var current *Run
 		// Automatic recovery now runs every 10s; allow one tick and scheduling
 		// margin while retaining the exact resume-chain and duplicate checks.
-		for deadline := time.Now().Add(12 * time.Second); time.Now().Before(deadline); {
-			current, _ = m.latest("codex")
-			if current != nil && current.GoalID == "QUEUED-23" && current.ResumeCount == n && current.State == "running" {
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		if current == nil || current.ResumeCount != n || current.State != "running" {
-			t.Fatal("waiting goal did not resume when lane freed")
+		wait, stopWait := context.WithTimeout(t.Context(), 12*time.Second)
+		_, err = latestRunWhen(wait, m, "codex", func(r *Run) bool {
+			return r.GoalID == "QUEUED-23" && r.ResumeCount == n && r.State == "running"
+		})
+		stopWait()
+		if err != nil {
+			t.Fatalf("waiting goal did not resume when lane freed: %v", err)
 		}
 		waitReady(t, m, "codex")
-		current, _ = m.latest("codex")
+		current := latestRun(t, m, "codex")
 		if !current.RecoveryRun || current.ParentRunID == "" {
 			t.Fatal("resume chain lost")
 		}
@@ -275,14 +272,13 @@ func TestCrashRecoveryBusyLaneAndLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for deadline := time.Now().Add(12 * time.Second); time.Now().Before(deadline); {
-		current, _ := m.latest("codex")
-		if current.State == "interrupted" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	wait, stopWait := context.WithTimeout(t.Context(), 12*time.Second)
+	_, err = latestRunWhen(wait, m, "codex", func(r *Run) bool { return r.State == "interrupted" })
+	stopWait()
+	if err != nil {
+		t.Fatalf("bounded recovery did not stop at 2: %v", err)
 	}
-	current, _ := m.latest("codex")
+	current := latestRun(t, m, "codex")
 	if current.ResumeCount != 2 || current.State != "interrupted" || current.ContinueRunID != "" {
 		t.Fatal("bounded recovery did not stop at 2")
 	}
@@ -349,7 +345,7 @@ func TestCrashDetachedOrphanSensitiveAgent(t *testing.T) {
 	if !strings.Contains(strings.Join(rows, "\n"), "ppid=1") {
 		t.Fatal("agent has a manager or app parent")
 	}
-	r, _ := m.latest("codex")
+	r := latestRun(t, m, "codex")
 	defer signalRun(*r, syscall.SIGKILL)
 	if err = m.Close(); err != nil {
 		t.Fatal(err)
@@ -377,7 +373,7 @@ func TestCrashExplicitRecoverySessionAndFresh(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitReady(t, m, "codex")
-			r, _ := m.latest("codex")
+			r := latestRun(t, m, "codex")
 			if err = m.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -401,8 +397,8 @@ func TestCrashExplicitRecoverySessionAndFresh(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer next.Close()
-			current, _ := next.latest("codex")
-			if current == nil || current.ID == id {
+			current := latestRun(t, next, "codex")
+			if current.ID == id {
 				t.Fatal("interrupted goal was not resumed")
 			}
 			defer signalRun(*current, syscall.SIGKILL)
