@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -252,7 +254,7 @@ func manager(t *testing.T) (*Manager, Config, string) {
 	})
 	return m, c, s
 }
-func waitState(t *testing.T, m *Manager, lane, state string) Status {
+func waitState(t testing.TB, m *Manager, lane, state string) Status {
 	t.Helper()
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
@@ -265,6 +267,13 @@ func waitState(t *testing.T, m *Manager, lane, state string) Status {
 			continue
 		}
 		s, e := m.Status()
+		if errors.Is(e, context.DeadlineExceeded) {
+			// Status has no caller deadline, so this is only its bounded m.mu
+			// wait refusing while another owner (e.g. end publication) holds it.
+			// That is a busy observation; keep polling within this deadline.
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -277,6 +286,62 @@ func waitState(t *testing.T, m *Manager, lane, state string) Status {
 	}
 	t.Fatalf("lane did not reach %s", state)
 	return Status{}
+}
+
+// fatalRecorder ends only the polling goroutine on Fatal, so a test can
+// observe whether waitState gave up.
+type fatalRecorder struct {
+	testing.TB
+	mu    sync.Mutex
+	fatal string
+}
+
+func (f *fatalRecorder) Helper() {}
+func (f *fatalRecorder) Fatal(args ...any) {
+	f.mu.Lock()
+	f.fatal = fmt.Sprint(args...)
+	f.mu.Unlock()
+	runtime.Goexit()
+}
+func (f *fatalRecorder) Fatalf(format string, args ...any) { f.Fatal(fmt.Sprintf(format, args...)) }
+
+// A run end publishes under m.mu; on a slow race host that can outlast the
+// bounded Status mutex wait (CI run 38864108310). The bound must stay in
+// force, and the poll must treat that refusal as busy, not as a failure.
+func TestWaitStateRetriesBoundedStatusRefusal(t *testing.T) {
+	m, _, _ := manager(t)
+	lane := m.config.Lanes[0].Name
+	held, release, exited := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	releaseHolder := func() { once.Do(func() { close(release) }) }
+	go func() {
+		defer close(exited)
+		m.mu.Lock()
+		close(held)
+		<-release
+		m.mu.Unlock()
+	}()
+	t.Cleanup(func() { releaseHolder(); <-exited })
+	<-held
+	if _, err := m.Status(); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Status mutex wait is no longer bounded: %v", err)
+	}
+	rec := &fatalRecorder{TB: t}
+	got, done := make(chan Status, 1), make(chan struct{})
+	go func() {
+		defer close(done)
+		got <- waitState(rec, m, lane, "idle")
+	}()
+	// Hold past one full bounded wait inside waitState, then release.
+	time.Sleep(dispatchControlLockWait + 200*time.Millisecond)
+	releaseHolder()
+	<-done
+	if rec.fatal != "" {
+		t.Fatalf("waitState failed on a bounded busy refusal: %s", rec.fatal)
+	}
+	if s := <-got; s.Lane != lane || s.State != "idle" {
+		t.Fatalf("unexpected status %s/%s", s.Lane, s.State)
+	}
 }
 func waitReady(t *testing.T, m *Manager, lane string) {
 	t.Helper()
