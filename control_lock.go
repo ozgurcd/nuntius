@@ -1,10 +1,12 @@
 package nuntius
 
 import (
+	"context"
 	"errors"
 	"math/rand/v2"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -26,16 +28,78 @@ type controlLockIdentity struct{ device, inode uint64 }
 type controlLockOwner struct {
 	identity controlLockIdentity
 	done     chan struct{}
+	slot     *atomic.Pointer[controlLockOwner]
 }
 
+// Exact identity lookup with a finite entry cap. Release clears its stable
+// atomic slot without taking the registry mutex; empty bookkeeping slots are
+// reclaimed at capacity. Only acquisition waits for the bounded registry gate.
 var processControlLocks = struct {
 	sync.Mutex
-	owners map[controlLockIdentity]*controlLockOwner
-}{owners: make(map[controlLockIdentity]*controlLockOwner)}
+	owners map[controlLockIdentity]*atomic.Pointer[controlLockOwner]
+}{owners: make(map[controlLockIdentity]*atomic.Pointer[controlLockOwner])}
 
-func acquireControlLock(root *os.File, mode int, create bool, wait time.Duration) (*controlFileLock, error) {
+func reserveControlOwner(ctx context.Context, identity controlLockIdentity) (*controlLockOwner, *controlLockOwner, error) {
+	registryCtx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+	err := lockContext(registryCtx, &processControlLocks.Mutex)
+	cancel()
+	if err != nil {
+		return nil, nil, &laneControlFault{Code: "locked", local: true}
+	}
+	defer processControlLocks.Unlock()
+	slot := processControlLocks.owners[identity]
+	if slot != nil {
+		if held := slot.Load(); held != nil {
+			return nil, held, nil
+		}
+	} else {
+		if len(processControlLocks.owners) >= 4096 {
+			for id, entry := range processControlLocks.owners {
+				if ctx.Err() != nil {
+					return nil, nil, &laneControlFault{Code: "locked"}
+				}
+				if entry.Load() == nil {
+					delete(processControlLocks.owners, id)
+				}
+			}
+			if len(processControlLocks.owners) >= 4096 {
+				return nil, nil, &laneControlFault{Code: "locked", local: true}
+			}
+		}
+		slot = &atomic.Pointer[controlLockOwner]{}
+		processControlLocks.owners[identity] = slot
+	}
+	if ctx.Err() != nil {
+		return nil, nil, &laneControlFault{Code: "locked"}
+	}
+	owner := &controlLockOwner{identity: identity, done: make(chan struct{}), slot: slot}
+	slot.Store(owner)
+	return owner, nil, nil
+}
+
+func acquireControlLock(root *os.File, mode int, create bool, wait time.Duration, contexts ...context.Context) (*controlFileLock, error) {
+	site := 0
+	if mode == unix.LOCK_SH {
+		site = 1
+	} else if wait == dispatchControlLockWait {
+		site = 2
+	}
+	began := time.Now()
+	defer func() { controlMetric(site, 0, time.Since(began)) }()
+	ctx := context.Background()
+	if len(contexts) != 0 {
+		ctx = contexts[0]
+	}
+	if wait > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, wait)
+		defer cancel()
+	}
 	deadline := time.Now().Add(wait)
 	for {
+		if ctx.Err() != nil {
+			return nil, &laneControlFault{Code: "locked"}
+		}
 		lock, err := openLaneControlLockFile(root, create)
 		if err != nil {
 			return nil, err
@@ -46,35 +110,42 @@ func acquireControlLock(root *os.File, mode int, create bool, wait time.Duration
 			return nil, errLaneControlUnavailable
 		}
 		identity := controlLockIdentity{uint64(st.Dev), uint64(st.Ino)}
-		processControlLocks.Lock()
-		if owner := processControlLocks.owners[identity]; owner != nil {
-			processControlLocks.Unlock()
+		owner, held, reserveErr := reserveControlOwner(ctx, identity)
+		if reserveErr != nil {
+			lock.File.Close()
+			return nil, reserveErr
+		}
+		if owner == nil {
 			// This descriptor never owned a flock. Close it without LOCK_UN.
 			lock.File.Close()
 			remaining := time.Until(deadline)
 			if wait == 0 || remaining <= 0 {
 				return nil, &laneControlFault{Code: "locked", local: true}
 			}
+			if held == nil {
+				continue
+			} // released between CAS and observation
 			timer := time.NewTimer(remaining)
 			select {
-			case <-owner.done:
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, &laneControlFault{Code: "locked", local: true}
+			case <-held.done:
 				timer.Stop()
 			case <-timer.C:
 				return nil, &laneControlFault{Code: "locked", local: true}
 			}
 			continue
 		}
-		owner := &controlLockOwner{identity: identity, done: make(chan struct{})}
-		processControlLocks.owners[identity] = owner
 		lock.owner = owner
-		processControlLocks.Unlock()
-		err = boundedFlock(int(lock.Fd()), mode, max(0, time.Until(deadline)))
+		err = boundedFlock(int(lock.Fd()), mode, max(0, time.Until(deadline)), ctx)
 		if err == nil {
 			lock.acquired = true
+			lock.metricSite, lock.acquiredAt = site, time.Now()
 			return lock, nil
 		}
 		lock.Close()
-		if errors.Is(err, unix.EWOULDBLOCK) {
+		if errors.Is(err, unix.EWOULDBLOCK) || ctx.Err() != nil {
 			return nil, &laneControlFault{Code: "locked"}
 		}
 		return nil, errLaneControlUnavailable
@@ -83,9 +154,16 @@ func acquireControlLock(root *os.File, mode int, create bool, wait time.Duration
 
 // Audit append runs under some control guards. Its separate inode must not
 // introduce an unbounded wait while the process owns the coordination lock.
-func boundedFlock(fd, mode int, wait time.Duration) error {
+func boundedFlock(fd, mode int, wait time.Duration, contexts ...context.Context) error {
+	ctx := context.Background()
+	if len(contexts) != 0 {
+		ctx = contexts[0]
+	}
 	deadline := time.Now().Add(wait)
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		err := unix.Flock(fd, mode|unix.LOCK_NB)
 		if err == nil || !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EINTR) {
 			return err
@@ -94,6 +172,12 @@ func boundedFlock(fd, mode int, wait time.Duration) error {
 		if remaining <= 0 {
 			return unix.EWOULDBLOCK
 		}
-		time.Sleep(min(time.Duration(5+rand.IntN(11))*time.Millisecond, remaining))
+		timer := time.NewTimer(min(time.Duration(5+rand.IntN(11))*time.Millisecond, remaining))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 }

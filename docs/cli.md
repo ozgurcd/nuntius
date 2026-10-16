@@ -97,8 +97,8 @@ selectors before the command, and the same environment defaults. They never
 rewrite configuration. Only pause/resume initialize missing control storage.
 `lane list`, CLI `status` and `agents` create no store, lock, signal or run file,
 reconcile no intent and launch no recovery or supervision. Unknown or unreadable
-controls appear as unavailable and block new work; contended locks appear as
-busy, with new work still blocked. The other run facts remain
+controls appear as unavailable. A contended `lane list` read appears as busy;
+status instead uses an advisory, unlocked snapshot. The other run facts remain
 visible. `lane list` exits 1 when it cannot confirm the controls, while still
 printing that safe snapshot. Mutation exits are 0 for a durable changed or
 unchanged result, 1 for refusal or uncertainty, and 2 for invalid syntax.
@@ -114,8 +114,13 @@ run `state`, `outcome`, `badge` or `report_exists`. A draining lane can be both
 running and paused. Availability also accounts for freeze and held work.
 Status and list never contain held message text or session values.
 
-Busy reads return promptly without reading mutable control records outside the
-lock. One process-local owner coordinates all readers, monitors and writers of
+Status reads atomically replaced records without a control lock. It checks the
+control revision and pending intent before and after its scan. A change during
+the scan reports change pending, without asserting that a future dispatch is
+blocked. A per-process cache lasts at most one second; display callers fill it
+inline, and waiters leave on their own cancellation or deadline. The actual
+dispatch always rechecks policy under its writer guard. One process-local owner
+coordinates guarded readers, monitors and writers of
 the same lock inode. Nested acquisition refuses without changing the outer lock.
 Public dispatch and reply wait up to two seconds for control admission, with
 jittered retries. Other successor admission waits up to 250 ms. Healthy run
@@ -133,6 +138,24 @@ leaves the version explicitly unknown. No path or command output is displayed.
 Nuntius never stops another process automatically. Writable startup initializes
 coordination storage, logs a fixed error reason if recovery fails, and retries
 pending recovery on its existing background tick. Read-only commands never repair it.
+
+After `accepted`, `launch_uncertain`, `stop_recorded`, another uncertain result,
+or no response (timeout, EOF, cancellation or a killed client), reconcile status
+and history by lane, goal and time window before retrying. Only a confirmed
+pre-effect refusal or `locked` result is retry-safe. A reserved held-message
+receipt stays blocked for owner review. There is no request-id deduplication;
+forcing a second dispatch after a completed first run can start another child.
+An error after durable run publication retains its run ID as `launch_uncertain`.
+An error after a saved StopAt is `stop_recorded`; supervision still escalates
+the stop by verified process identity without waiting for either writer lock.
+
+Set `NUNTIUS_CONTROL_METRICS=1` before starting a process to expose bounded,
+atomic wait/hold histograms in MCP status. Buckets are upper bounds in
+milliseconds; -1 is overflow. Metrics contain no paths, prompts or run values.
+Status also exposes this process's live goroutine and owned follow counts.
+The hotfix adds no goroutines. Legacy notification tasks and HTTP connections
+retain their prior growth behavior; their pools and caps belong to P1.
+The run store must be local; network and cloud-synced stores are unsupported.
 
 To review a held message, use its full original run ID from status/history:
 

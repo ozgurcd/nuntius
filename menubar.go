@@ -94,7 +94,8 @@ func (w *Web) menubarHandler() http.Handler {
 				phoneRefusal(out, 405, "method_refused")
 				return
 			}
-			lanes, err := w.manager.Status()
+			snapshot, err := w.manager.displaySnapshot(r.Context())
+			lanes := snapshot.rows
 			if err != nil {
 				phoneRefusal(out, 503, "configuration_unavailable")
 				return

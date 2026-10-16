@@ -19,6 +19,9 @@ import (
 func TestControlOwnerNativeTransactionBound(t *testing.T) {
 	m, store := laneControlCommitFixture(t)
 	m.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	m.life = ctx // watcher is joined; this proof owns an independent live lease.
 	root, err := openLaneControlRoot(store)
 	if err != nil {
 		t.Fatal(err)
@@ -59,6 +62,8 @@ func TestControlOwnerNativeFaultHandoff(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			m, req, ctx := dispatchFixture(t)
 			n := dispatchReopen(t, m)
+			workCtx, cancelWork := context.WithTimeout(t.Context(), 20*time.Second)
+			defer cancelWork()
 			ready, release := make(chan struct{}), make(chan struct{})
 			released := false
 			defer func() {
@@ -73,7 +78,11 @@ func TestControlOwnerNativeFaultHandoff(t *testing.T) {
 				}
 				if s == stage && (stage == "after_os" || publishing) {
 					close(ready)
-					<-release
+					select {
+					case <-release:
+					case <-workCtx.Done():
+						return workCtx.Err()
+					}
 					return errors.New("injected publication boundary failure")
 				}
 				return nil
@@ -83,28 +92,52 @@ func TestControlOwnerNativeFaultHandoff(t *testing.T) {
 				err    error
 			}
 			first, retry := make(chan outcome, 1), make(chan outcome, 1)
+			firstDone, retryStarted, retryDone := false, false, false
+			defer func() {
+				cancelWork()
+				if !firstDone {
+					m.cancelLife()
+				}
+				if retryStarted && !retryDone {
+					n.cancelLife()
+				}
+				if !released {
+					close(release)
+					released = true
+				}
+				if !firstDone {
+					p0TestJoin(t, first)
+				}
+				if retryStarted && !retryDone {
+					p0TestJoin(t, retry)
+				}
+			}()
 			go func() { r, err := m.dispatchGoal(req, ctx, fault); first <- outcome{r, err} }()
 			select {
 			case <-ready:
 			case <-time.After(10 * time.Second):
 				t.Fatal("publication boundary was not reached")
 			}
+			retryStarted = true
 			go func() { r, err := n.dispatchGoal(req, ctx, goalCommitIO{}); retry <- outcome{r, err} }()
 			// The other manager is finishing the exact child publication. A
 			// single short acquisition must not abandon its durable receipt.
 			select {
 			case <-retry:
+				retryDone = true
 				t.Fatal("native retry abandoned the in-process publication holder")
 			case <-time.After(450 * time.Millisecond):
 			}
 			close(release)
 			released = true
-			initial := <-first
+			initial := p0TestJoin(t, first)
+			firstDone = true
 			if !errors.Is(initial.err, errGoalLaunchHeld) || initial.result.RunID == "" {
 				t.Fatal("publication failure did not retain its child")
 			}
 			select {
 			case again := <-retry:
+				retryDone = true
 				if again.err != nil || again.result.RunID != initial.result.RunID || again.result.Phase != "running" {
 					t.Fatal("same native child was not reconciled", again.err)
 				}
@@ -124,7 +157,7 @@ func TestControlOwnerMCPArgumentAdmission(t *testing.T) {
 	m, _ := laneControlCommitFixture(t)
 	for _, name := range []string{"nuntius_dispatch", "nuntius_reply"} {
 		calls := 0
-		gate := func() error { calls++; return &laneControlFault{Code: "locked"} }
+		gate := func(context.Context) error { calls++; return &laneControlFault{Code: "locked"} }
 		if _, err := callContext(context.Background(), m, name, json.RawMessage(`{"unexpected":true}`), gate); err == nil || calls != 0 {
 			t.Fatal("invalid arguments entered startup recovery")
 		}
@@ -141,6 +174,9 @@ func TestControlOwnerNestedAcquire(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			m, store := laneControlCommitFixture(t)
 			m.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			m.life = ctx // joined watcher; keep the local-contention premise live.
 			root, err := openLaneControlRoot(store)
 			if err != nil {
 				t.Fatal("root")
@@ -184,7 +220,8 @@ func TestControlOwnerNestedAcquire(t *testing.T) {
 			case <-time.After(600 * time.Millisecond):
 				t.Error("nested acquisition exceeded its bound")
 				outer.Close()
-				<-done
+				cancel()
+				p0TestJoin(t, done)
 				return
 			}
 			// A failed inner attempt must not unlock or convert the outer SH lock.
@@ -280,20 +317,21 @@ func TestControlOwnerMonitoredCrossProcessDispatch(t *testing.T) {
 			if err != nil {
 				t.Fatal("web")
 			}
-			stop, done := make(chan struct{}), make(chan error, 1)
+			observe, cancelObserve := context.WithTimeout(t.Context(), 30*time.Second)
+			done := make(chan error, 1)
 			go func() {
 				for {
 					select {
-					case <-stop:
+					case <-observe.Done():
 						done <- nil
 						return
 					default:
 					}
-					if _, err := m.Status(); err != nil {
+					if _, err := m.statusContext(observe, true); err != nil {
 						done <- err
 						return
 					}
-					req := httptest.NewRequest("GET", "http://localhost:8123/data", nil)
+					req := httptest.NewRequestWithContext(observe, "GET", "http://localhost:8123/data", nil)
 					req.Header.Set("X-Nuntius-Token", w.token)
 					out := httptest.NewRecorder()
 					w.ServeHTTP(out, req)
@@ -301,19 +339,22 @@ func TestControlOwnerMonitoredCrossProcessDispatch(t *testing.T) {
 						done <- context.Canceled
 						return
 					}
-					if _, err := call(other, "nuntius_status", json.RawMessage(`{}`)); err != nil {
+					if _, err := callContext(observe, other, "nuntius_status", json.RawMessage(`{}`)); err != nil {
 						done <- err
 						return
 					}
-					_ = mcpLaneControlSnapshot(other)
-					time.Sleep(5 * time.Millisecond)
+					_ = mcpLaneControlSnapshotContext(observe, other)
+					if !p0MonitorPause(observe, 5*time.Millisecond) {
+						done <- nil
+						return
+					}
 				}
 			}()
 			defer func() {
-				close(stop)
+				cancelObserve()
 				select {
 				case err := <-done:
-					if err != nil {
+					if err != nil && !errors.Is(err, context.Canceled) {
 						t.Error("observation loop failed")
 					}
 				case <-time.After(2 * time.Second):
@@ -326,10 +367,13 @@ func TestControlOwnerMonitoredCrossProcessDispatch(t *testing.T) {
 				t.Fatal("config")
 			}
 			// Keep both watchers and the active follow loop alive across several ticks.
-			time.Sleep(1200 * time.Millisecond)
+			if !p0MonitorPause(observe, 1200*time.Millisecond) {
+				t.Fatal("observer fixture deadline")
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, cliBinary, "--config", path, "--store", store, "mcp")
+			cmd.WaitDelay = 100 * time.Millisecond
 			cmd.Dir = filepath.Dir(store)
 			in, err := cmd.StdinPipe()
 			if err != nil {
@@ -347,6 +391,12 @@ func TestControlOwnerMonitoredCrossProcessDispatch(t *testing.T) {
 				t.Fatal("second process")
 			}
 			defer func() { in.Close(); cancel(); _ = cmd.Wait() }()
+			deadline, _ := ctx.Deadline()
+			input, inputOK := in.(*os.File)
+			output, outputOK := out.(*os.File)
+			if !inputOK || !outputOK || input.SetWriteDeadline(deadline) != nil || output.SetReadDeadline(deadline) != nil {
+				t.Fatal("fixture pipe deadlines")
+			}
 			decoder := json.NewDecoder(out)
 			exchange := func(request string) bool {
 				if _, err := io.WriteString(in, request+"\n"); err != nil {
@@ -359,15 +409,8 @@ func TestControlOwnerMonitoredCrossProcessDispatch(t *testing.T) {
 					} `json:"result"`
 					Error any `json:"error"`
 				}
-				decoded := make(chan error, 1)
-				go func() { decoded <- decoder.Decode(&response) }()
-				select {
-				case err := <-decoded:
-					if err != nil {
-						t.Fatal("response encoding")
-					}
-				case <-ctx.Done():
-					t.Fatal("second-process request exceeded bound")
+				if err := decoder.Decode(&response); err != nil {
+					t.Fatal("response encoding or request deadline")
 				}
 				return response.Error == nil && !response.Result.IsError
 			}
@@ -391,18 +434,20 @@ func TestControlOwnerMonitoredCrossProcessDispatch(t *testing.T) {
 				// the request so this exercises retry rather than startup timing.
 				release := oldControlHolder(t, store)
 				released = make(chan struct{})
-				go func() { time.Sleep(50 * time.Millisecond); release(); close(released) }()
-				defer func() { <-released }()
+				go func() { _ = p0MonitorPause(ctx, 50*time.Millisecond); release(); close(released) }()
+				defer func() { cancel(); p0TestJoin(t, released) }()
 			}
 			accepted := exchange(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"nuntius_dispatch","arguments":{"lane":"codex","goal_id":"CONTROL-SECOND","text":"wait"}}}`)
 			if released != nil {
-				<-released
+				p0TestJoin(t, released)
 			}
 			if !accepted {
 				t.Fatal("second process could not dispatch under active monitoring and observation")
 			}
-			m.mu.Lock()
-			run, err := m.latest("codex")
+			if lockContext(ctx, &m.mu) != nil {
+				t.Fatal("fixture final read deadline")
+			}
+			run, err := m.latestContext(ctx, "codex")
 			m.mu.Unlock()
 			if err != nil || run == nil || run.GoalID != "CONTROL-SECOND" || !sameProcess(*run) {
 				t.Fatal("dispatch did not start a fixture child")

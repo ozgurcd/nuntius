@@ -165,7 +165,7 @@ func (c Config) Validate() (time.Duration, error) {
 		if (l.StartMode != "" && l.StartMode != "as_is" && l.StartMode != "goal_then_continue") || (l.Kind != "claude" && l.StartMode == "goal_then_continue") || len(l.ContinueText) > 12000 {
 			return fail()
 		}
-		if !namePattern.MatchString(l.Name) || seen[l.Name] || (l.Kind != "claude" && l.Kind != "codex" && l.Kind != "opencode") || !filepath.IsAbs(l.Binary) || !filepath.IsAbs(l.Workdir) {
+		if !namePattern.MatchString(l.Name) || strings.Contains(l.Name, "..") || seen[strings.ToLower(l.Name)] || (l.Kind != "claude" && l.Kind != "codex" && l.Kind != "opencode") || !filepath.IsAbs(l.Binary) || !filepath.IsAbs(l.Workdir) {
 			return fail()
 		}
 		if l.Kind == "opencode" {
@@ -176,7 +176,7 @@ func (c Config) Validate() (time.Duration, error) {
 		} else if l.Model != "" {
 			return fail()
 		}
-		seen[l.Name] = true
+		seen[strings.ToLower(l.Name)] = true
 		b, e := os.Stat(l.Binary)
 		if e != nil || !b.Mode().IsRegular() || b.Mode().Perm()&0111 == 0 {
 			return fail()

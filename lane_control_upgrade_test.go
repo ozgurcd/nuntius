@@ -3,6 +3,7 @@ package nuntius
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -18,8 +19,16 @@ import (
 
 func oldControlHolder(t *testing.T, store string) func() {
 	t.Helper()
-	cmd := exec.Command(fakeBinary, "__fixture_control_lock", filepath.Join(store, "locks", "control.lock"))
-	cmd.Dir = filepath.Dir(store)
+	return controlFileHolder(t, filepath.Join(store, "locks", "control.lock"), filepath.Dir(store))
+}
+
+func controlFileHolder(t *testing.T, path, dir string) func() {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, fakeBinary, "__fixture_control_lock", path)
+	cmd.WaitDelay = 100 * time.Millisecond
+	cmd.Dir = dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	in, err := cmd.StdinPipe()
 	if err != nil {
@@ -29,36 +38,33 @@ func oldControlHolder(t *testing.T, store string) func() {
 	if err != nil {
 		t.Fatal("holder output")
 	}
+	cmd.Cancel = in.Close
 	if cmd.Start() != nil {
 		t.Fatal("holder start")
 	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
 	released := false
 	release := func() {
 		if released {
 			return
 		}
 		released = true
-		in.Close()
-		select {
-		case <-done:
-		case <-time.After(3 * time.Second):
-			cmd.Process.Kill()
-			<-done
+		cancel()
+		_ = in.Close()
+		_ = out.Close()
+		began := time.Now()
+		_ = cmd.Wait() // CommandContext + WaitDelay bound exit and inherited pipes.
+		if time.Since(began) > 3*time.Second {
 			t.Error("holder exceeded cleanup bound")
 		}
 	}
 	t.Cleanup(release)
-	ready := make(chan string, 1)
-	go func() { s, _ := bufio.NewReader(out).ReadString('\n'); ready <- s }()
-	select {
-	case s := <-ready:
-		if s != "locked\n" {
-			t.Fatal("holder not ready")
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("holder readiness bound")
+	pipe, ok := out.(*os.File)
+	if !ok || pipe.SetReadDeadline(time.Now().Add(3*time.Second)) != nil {
+		t.Fatal("holder readiness deadline")
+	}
+	s, err := bufio.NewReader(out).ReadString('\n')
+	if err != nil || s != "locked\n" {
+		t.Fatal("holder not ready within bound")
 	}
 	return release
 }
@@ -94,16 +100,19 @@ func TestLaneUpgradeProcessContention(t *testing.T) {
 		t.Error("CLI list lost busy state")
 	}
 	result := make(chan []Status, 1)
-	go func() { rows, _ := m.Status(); result <- rows }()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	go func() { rows, _ := m.statusContext(ctx, true); result <- rows }()
 	select {
 	case rows := <-result:
-		if len(rows) != 2 || rows[0].LaneControl.Phase != "busy" || rows[0].LaneControl.DispatchEligible || !strings.Contains(rows[0].LaneControl.Explanation, "held by another") {
-			t.Error("busy projection missing")
+		if len(rows) != 2 || rows[0].LaneControl.Phase != "enabled" || !rows[0].LaneControl.DispatchEligible || strings.Contains(rows[0].LaneControl.Explanation, "new work is blocked") {
+			t.Error("stable advisory eligibility lost behind writer")
 		}
 	case <-time.After(time.Second):
 		t.Error("status blocked on another process")
 		release()
-		<-result
+		cancel()
+		p0TestJoin(t, result)
 	}
 	w, err := NewWeb(m, "127.0.0.1:8123")
 	if err != nil {
@@ -120,8 +129,8 @@ func TestLaneUpgradeProcessContention(t *testing.T) {
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &data) != nil || len(data.Lanes) != 2 {
 		t.Fatal("one control read broke dashboard refresh")
 	}
-	if data.Controls.Lanes[0].Phase != "busy" {
-		t.Error("dashboard contention state missing")
+	if data.Controls.Lanes[0].Phase != "enabled" || !data.Controls.Lanes[0].DispatchEligible {
+		t.Error("dashboard stable advisory eligibility missing")
 	}
 	release()
 	rows, err := m.Status()
@@ -140,6 +149,8 @@ func TestLaneUpgradeProcessContention(t *testing.T) {
 }
 
 func TestLaneUpgradeStartupContention(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
 	m, store := laneControlCommitFixture(t)
 	m.Close()
 	_, err := m.setLaneControlIO(laneControlChange{Lane: "codex", Paused: true}, "cli", &laneControlIO{checkpoint: func(stage string) error {
@@ -159,23 +170,28 @@ func TestLaneUpgradeStartupContention(t *testing.T) {
 		if restarted == nil {
 			t.Fatal("startup lost independent controls")
 		}
-		restarted.mu.Lock()
+		if lockContext(ctx, &restarted.mu) != nil {
+			t.Fatal("fixture recovery handoff deadline")
+		}
 		restarted.recovery = true
 		restarted.mu.Unlock()
 		// Stay contended through a real watcher tick. Recover must not hold
 		// the manager mutex while waiting for this older process to release.
-		time.Sleep(1100 * time.Millisecond)
+		if !p0MonitorPause(ctx, 1100*time.Millisecond) {
+			t.Fatal("watcher fixture deadline")
+		}
 		responsive := make(chan []Status, 1)
-		go func() { rows, _ := restarted.Status(); responsive <- rows }()
+		go func() { rows, _ := restarted.statusContext(ctx, true); responsive <- rows }()
 		select {
 		case rows := <-responsive:
-			if len(rows) != 2 || rows[0].LaneControl.Phase != "busy" {
-				t.Error("recovery lost busy projection")
+			if len(rows) != 2 || rows[0].LaneControl.Phase != "unavailable" || rows[0].LaneControl.DispatchEligible || !strings.Contains(rows[0].LaneControl.Explanation, "change pending") {
+				t.Error("pending intent lost its unavailable advisory projection")
 			}
 		case <-time.After(time.Second):
 			t.Error("recovery watcher blocked independent status")
 			release()
-			<-responsive
+			cancel()
+			p0TestJoin(t, responsive)
 		}
 		release()
 		defer restarted.Close()
@@ -188,7 +204,9 @@ func TestLaneUpgradeStartupContention(t *testing.T) {
 			if time.Now().After(deadline) {
 				t.Fatal("startup retry left recoverable intent")
 			}
-			time.Sleep(10 * time.Millisecond)
+			if !p0MonitorPause(ctx, 10*time.Millisecond) {
+				t.Fatal("recovery fixture deadline")
+			}
 		}
 		rows, err := restarted.Status()
 		if err != nil {
@@ -202,7 +220,7 @@ func TestLaneUpgradeStartupContention(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Error("startup waited forever on old holder")
 		release()
-		if restarted := <-result; restarted != nil {
+		if restarted := p0TestJoin(t, result); restarted != nil {
 			restarted.Close()
 		}
 	}

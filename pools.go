@@ -91,7 +91,7 @@ func (m *Manager) controlLock() (*controlFileLock, error) {
 		return nil, err
 	}
 	defer root.Close()
-	return acquireControlLock(root, syscall.LOCK_EX, true, controlLockWait)
+	return acquireControlLock(root, syscall.LOCK_EX, true, controlLockWait, m.owningContext())
 }
 
 func atomicPrivate(path string, b []byte) error {

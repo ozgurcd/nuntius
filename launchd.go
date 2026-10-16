@@ -44,6 +44,7 @@ func captureUmask(change func(int) (int, error)) int {
 type jobLauncher struct {
 	domain string
 	call   func(...string) ([]byte, error)
+	ctx    context.Context // immutable request-scoped copy while Manager.mu is held
 }
 
 // Selected once at construction; tests inject a fake, never the host launchctl.
@@ -53,20 +54,59 @@ func platformJobLauncher() *jobLauncher {
 	if runtime.GOOS != "darwin" {
 		return nil
 	}
-	return &jobLauncher{domain: fmt.Sprintf("gui/%d", os.Getuid()), call: func(args ...string) ([]byte, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		out, err := exec.CommandContext(ctx, "launchctl", args...).Output()
-		var exit *exec.ExitError
-		if (args[0] == "print" || args[0] == "bootout") && errors.As(err, &exit) && exit.ExitCode() == 113 {
-			return nil, errJobAbsent
+	return &jobLauncher{domain: fmt.Sprintf("gui/%d", os.Getuid())}
+}
+
+func (j *jobLauncher) operationContext() context.Context {
+	if j.ctx != nil {
+		return j.ctx
+	}
+	return context.Background()
+}
+
+func (j *jobLauncher) command(args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(j.operationContext(), 5*time.Second)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if j.call != nil {
+		out, err := j.call(args...)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
-		// Never return launchctl stderr: paths or inherited job details are private.
-		if err != nil {
-			return nil, errors.New("launchctl command failed")
-		}
-		return out, nil
-	}}
+		return out, err
+	} // offline injected callbacks perform local file operations
+	return launchctlContext(ctx, args...)
+}
+
+func launchPoll(ctx context.Context) error {
+	timer := time.NewTimer(time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func launchctlContext(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "launchctl", args...)
+	cmd.WaitDelay = 100 * time.Millisecond
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	var exit *exec.ExitError
+	if len(args) != 0 && (args[0] == "print" || args[0] == "bootout") && errors.As(err, &exit) && exit.ExitCode() == 113 {
+		return nil, errJobAbsent
+	}
+	// Never return launchctl stderr: paths or inherited job details are private.
+	if err != nil {
+		return nil, errors.New("launchctl command failed")
+	}
+	return out, nil
 }
 
 func plistString(s string) string {
@@ -125,14 +165,16 @@ func (j *jobLauncher) start(dir string, lane Lane, session string) (err error) {
 	if err = atomicPrivate(path, []byte(text)); err != nil {
 		return err
 	}
-	if _, err = j.call("bootstrap", j.domain, path); err != nil {
+	if _, err = j.command("bootstrap", j.domain, path); err != nil {
 		return err
 	}
 	kickstarted = true
-	if _, err = j.call("kickstart", "-p", j.domain+"/"+r.LaunchdLabel); err != nil {
+	if _, err = j.command("kickstart", "-p", j.domain+"/"+r.LaunchdLabel); err != nil {
 		return err
 	}
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+	ctx, cancel := context.WithTimeout(j.operationContext(), 5*time.Second)
+	defer cancel()
+	for ctx.Err() == nil {
 		r, err = loadRun(dir, filepath.Base(dir))
 		if err != nil {
 			return err
@@ -140,7 +182,9 @@ func (j *jobLauncher) start(dir string, lane Lane, session string) (err error) {
 		if r != nil && r.PID > 1 && r.ProcessStart != "" {
 			return nil
 		}
-		time.Sleep(time.Millisecond)
+		if launchPoll(ctx) != nil {
+			break
+		}
 	}
 	return errors.New("launchd identity unavailable")
 }
@@ -158,7 +202,7 @@ func (m *Manager) cleanupJob(r *Run) error {
 		return nil
 	}
 	target := m.launcher.domain + "/" + r.LaunchdLabel
-	b, err := m.launcher.call("print", target)
+	b, err := m.launcher.command("print", target)
 	if errors.Is(err, errJobAbsent) {
 		return m.jobCleaned(r)
 	}
@@ -182,7 +226,7 @@ func (m *Manager) cleanupJob(r *Run) error {
 	if !identified {
 		return errors.New("launchd state unrecognized; no removal")
 	}
-	_, err = m.launcher.call("bootout", target)
+	_, err = m.launcher.command("bootout", target)
 	if errors.Is(err, errJobAbsent) {
 		return m.jobCleaned(r)
 	}
@@ -212,7 +256,7 @@ func (m *Manager) pendingJob(r *Run) error {
 	if !runPattern.MatchString(r.ID) || r.LaunchdLabel != "nuntius.run."+r.ID {
 		return errors.New("unrecorded launchd label refused")
 	}
-	b, err := m.launcher.call("print", m.launcher.domain+"/"+r.LaunchdLabel)
+	b, err := m.launcher.command("print", m.launcher.domain+"/"+r.LaunchdLabel)
 	if errors.Is(err, errJobAbsent) {
 		return nil
 	}
@@ -256,11 +300,18 @@ func (m *Manager) startAgent(dir string, lane Lane, session string, input, stdou
 	if cleanupErr != nil {
 		_ = m.audit("launchd_cleanup", r.Lane, r.GoalID, r.SHA256, "failed")
 	}
-	for deadline := time.Now().Add(5 * time.Second); sameProcess(*r); {
-		if time.Now().After(deadline) {
+	ctx, cancel := context.WithTimeout(m.launcher.operationContext(), 5*time.Second)
+	defer cancel()
+	for sameProcess(*r) {
+		if ctx.Err() != nil {
 			return errors.New("launchd process still running; no duplicate fallback")
 		}
-		time.Sleep(time.Millisecond)
+		if launchPoll(ctx) != nil {
+			return errors.New("launchd process still running; no duplicate fallback")
+		}
+	}
+	if m.launcher.operationContext().Err() != nil {
+		return errors.New("launch cancelled; reconcile recorded run before retry")
 	}
 	r.PID, r.ProcessStart = 0, ""
 	if cleanupErr == nil {

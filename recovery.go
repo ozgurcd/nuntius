@@ -1,6 +1,7 @@
 package nuntius
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,12 +13,23 @@ import (
 // Recover is the only crash-recovery launch entry. Display commands never call
 // it. The control lock serializes every chain transition across MCP instances.
 func (m *Manager) Recover() error {
-	m.mu.Lock()
+	ctx := m.owningContext()
+	return m.recoverContext(ctx, ctx, false)
+}
+
+func (m *Manager) recoverContext(ctx, waitParent context.Context, enable bool) error {
+	waitCtx, cancelWait := controlWaitContext(waitParent)
+	defer cancelWait()
+	if err := lockContext(waitCtx, &m.mu); err != nil {
+		return &laneControlFault{Code: "locked", local: true}
+	}
 	defer m.mu.Unlock()
+	defer m.bindLauncherContext(ctx)()
 	if m.closed {
 		return errors.New("server is closing")
 	}
-	guard, err := m.admissionControlLock()
+	guard, err := m.admissionControlLockWithin(dispatchControlLockWait, waitCtx)
+	cancelWait()
 	if err != nil {
 		return err
 	}
@@ -28,12 +40,29 @@ func (m *Manager) Recover() error {
 	if err = m.reconcileGoalAttemptsLocked(goalCommitIO{}); err != nil {
 		return err
 	}
-	runs, err := m.history()
+	runs, err := m.historyContext(ctx)
 	if err != nil {
 		return err
 	}
+	if err = m.recoverRunsLocked(ctx, runs); err != nil {
+		return err
+	}
+	if enable {
+		m.recovery = true
+	}
+	return nil
+}
+
+// The caller owns m.mu and the same EX control guard for the complete pass.
+// Keep known own writes in this bounded slice instead of rescanning the store.
+func (m *Manager) recoverRunsLocked(ctx context.Context, runs []Run) error {
+	var err error
 	// Repair a crash between child publication and parent-link publication.
-	for _, r := range runs {
+	for i := range runs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		r := &runs[i]
 		if r.ParentRunID == "" {
 			continue
 		}
@@ -53,23 +82,35 @@ func (m *Manager) Recover() error {
 			if err = m.save(parent); err != nil {
 				return err
 			}
+			for j := range runs {
+				if runs[j].ID == parent.ID {
+					runs[j] = *parent
+					break
+				}
+			}
 		}
 		if r.RecoveryRun && !r.ResumedSignalled {
-			if err = m.emitSignal(r, "resumed"); err != nil {
+			if err = m.emitSignal(*r, "resumed"); err != nil {
 				return err
 			}
 			r.ResumedSignalled = true
-			if err = m.save(&r); err != nil {
+			if err = m.save(r); err != nil {
 				return err
 			}
 		}
 	}
-	runs, err = m.history()
-	if err != nil {
-		return err
-	}
 	for i := range runs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		r := &runs[i]
+		// Idle completed records have no recovery action. Filter them before
+		// opening the native journal, as the watcher already does.
+		if r.State != "running" && r.State != "interrupted" &&
+			(r.LaunchdLabel == "" || r.LaunchdCleaned) &&
+			!(r.State == "ended" && r.StopReason == "ended_no_report" && r.StopAt == nil && !m.reportExists(*r)) {
+			continue
+		}
 		native, nativeErr := m.nativeGoalLocked(r.GoalID)
 		if nativeErr != nil {
 			return nativeErr
@@ -179,6 +220,9 @@ func (m *Manager) Recover() error {
 	// Oldest interrupted goal first. A busy lane leaves every queued goal intact.
 	sort.Slice(runs, func(i, j int) bool { return runs[i].Started.Before(runs[j].Started) })
 	for _, r := range runs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		native, nativeErr := m.nativeGoalLocked(r.GoalID)
 		if nativeErr != nil {
 			return nativeErr
@@ -203,15 +247,22 @@ func (m *Manager) Recover() error {
 		if err != nil {
 			continue
 		} // Removed lane stays visible in history.
-		if m.admitLaneLocked(r.Lane) != nil {
+		var all []Run
+		if m.admitLaneHistoryLocked(r.Lane, "", &all, ctx) != nil {
 			continue
 		}
 		busy := false
-		all, err := m.history()
-		if err != nil {
-			return err
-		}
 		for _, other := range all {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if other.State == "running" {
+				fresh, err := loadRun(filepath.Join(m.store, "runs", other.ID), other.ID)
+				if err != nil || fresh == nil {
+					return errLaneControlUnavailable
+				}
+				other = *fresh
+			}
 			if other.Lane == r.Lane && other.State == "running" && (sameProcess(other) || (other.ProcessStart == "" && processExists(other.PID))) {
 				busy = true
 				break

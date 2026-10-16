@@ -254,7 +254,9 @@ func TestCrashRecoveryBusyLaneAndLimit(t *testing.T) {
 	}
 	for n := 1; n <= 2; n++ {
 		var current *Run
-		for deadline := time.Now().Add(4 * time.Second); time.Now().Before(deadline); {
+		// Automatic recovery now runs every 10s; allow one tick and scheduling
+		// margin while retaining the exact resume-chain and duplicate checks.
+		for deadline := time.Now().Add(12 * time.Second); time.Now().Before(deadline); {
 			current, _ = m.latest("codex")
 			if current != nil && current.GoalID == "QUEUED-23" && current.ResumeCount == n && current.State == "running" {
 				break
@@ -273,7 +275,7 @@ func TestCrashRecoveryBusyLaneAndLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for deadline := time.Now().Add(4 * time.Second); time.Now().Before(deadline); {
+	for deadline := time.Now().Add(12 * time.Second); time.Now().Before(deadline); {
 		current, _ := m.latest("codex")
 		if current.State == "interrupted" {
 			break

@@ -2,6 +2,7 @@ package nuntius
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -524,15 +525,17 @@ func (m *Manager) dispatchGoal(req goalDispatchRequest, ctx goalDispatchContext,
 // infer a missing receipt or allocate another child from an unlocked snapshot.
 // External holders and unavailable stores retain the short, fail-closed refusal.
 func (m *Manager) nativeDispatchTransactionLock() (*controlFileLock, error) {
+	ctx, cancel := context.WithTimeout(m.owningContext(), 2*time.Second)
+	defer cancel()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		wait := min(controlLockWait, max(0, time.Until(deadline)))
-		guard, err := m.nativeDispatchControlLockWithin(wait)
+		guard, err := m.nativeDispatchControlLockWithin(wait, ctx)
 		if err == nil {
 			return guard, nil
 		}
 		var busy *laneControlFault
-		if !errors.As(err, &busy) || busy.Code != "locked" || !busy.local || time.Until(deadline) <= 0 {
+		if !errors.As(err, &busy) || busy.Code != "locked" || !busy.local || ctx.Err() != nil || time.Until(deadline) <= 0 {
 			return nil, err
 		}
 	}
@@ -542,13 +545,17 @@ func (m *Manager) nativeDispatchControlLock() (*controlFileLock, error) {
 	return m.nativeDispatchControlLockWithin(controlLockWait)
 }
 
-func (m *Manager) nativeDispatchControlLockWithin(wait time.Duration) (*controlFileLock, error) {
+func (m *Manager) nativeDispatchControlLockWithin(wait time.Duration, contexts ...context.Context) (*controlFileLock, error) {
+	ctx := m.owningContext()
+	if len(contexts) != 0 {
+		ctx = contexts[0]
+	}
 	root, err := openLaneControlRoot(m.store)
 	if err != nil {
 		return nil, errLaneControlUnavailable
 	}
 	defer root.Close()
-	return acquireControlLock(root, unix.LOCK_EX, false, wait)
+	return acquireControlLock(root, unix.LOCK_EX, false, wait, ctx)
 }
 
 type goalLaunchContext struct {

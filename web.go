@@ -289,7 +289,7 @@ func (w *Web) action(out http.ResponseWriter, r *http.Request) {
 	case "unfreeze":
 		e = w.manager.Unfreeze()
 	case "cancel":
-		e = w.manager.Cancel(a.Lane)
+		e = w.manager.CancelContext(r.Context(), a.Lane)
 	case "message":
 		e = w.manager.SendMessage(a.Lane, a.Text, a.Stop)
 	case "note":
@@ -351,20 +351,14 @@ func (w *Web) dataContext(parent context.Context) (any, error) {
 	defer w.dataMu.Unlock()
 	// A separate read-only observer uses value copies; never toggle the serving
 	// manager's mode or run recovery/supervision from a dashboard GET.
-	owner := w.manager
-	if err := settingsReadLock(ctx, func() (bool, error) { return owner.mu.TryLock(), nil }); err != nil {
-		return nil, err
+	snapshot, e := w.manager.displaySnapshot(ctx)
+	if e != nil {
+		return nil, e
 	}
-	if err := owner.reload(); err != nil {
-		owner.mu.Unlock()
-		return nil, err
-	}
-	config, store := owner.config, owner.store
-	owner.mu.Unlock()
+	status, controls, runs, config := snapshot.rows, snapshot.controls, snapshot.runs, snapshot.config
 	m := w.observer
 	if m == nil {
-		var e error
-		m, e = newReadManager(config, store)
+		m, e = newReadManager(config, w.manager.store)
 		if e != nil {
 			return nil, e
 		}
@@ -372,18 +366,10 @@ func (w *Web) dataContext(parent context.Context) (any, error) {
 	} else {
 		m.config = config
 	}
-	var controls laneControlSnapshot
-	status, e := m.status(true, &controls)
-	if e != nil {
-		return nil, e
-	}
-	m.mu.Lock()
-	runs, e := m.history()
-	config = m.config
-	m.mu.Unlock()
-	if e != nil {
-		return nil, e
-	}
+	// All lane tails belong to this same advisory snapshot. Avoid a full
+	// history reread per lane; admission never uses this read-only observer.
+	m.observation = &snapshot
+	defer func() { m.observation = nil }()
 	for i := range runs {
 		m.observeEndedRun(&runs[i])
 	}
@@ -425,7 +411,9 @@ func (w *Web) dataContext(parent context.Context) (any, error) {
 	}
 	tails := map[string][]string{}
 	lanes := []webLane{}
-	m.mu.Lock()
+	if err := lockContext(ctx, &m.mu); err != nil {
+		return nil, err
+	}
 	for _, s := range status {
 		kind, eta, current := m.agentKind(s.Lane), "-", "-"
 		if s.RunID != "" {
@@ -473,7 +461,7 @@ func (w *Web) dataContext(parent context.Context) (any, error) {
 	if e != nil {
 		return nil, e
 	}
-	return map[string]any{"lane_control_version": controls.Version, "lane_control": controls, "held_messages": m.webHeldMessages(controls), "freeze": frozen, "lanes": lanes, "tails": tails, "history": views, "notes": notes, "audit": audit, "signals": laneSignals, "oversight": readDisplay(oversight, 64000)}, nil
+	return map[string]any{"lane_control_version": controls.Version, "lane_control": controls, "held_messages": snapshot.held, "freeze": frozen, "lanes": lanes, "tails": tails, "history": views, "notes": notes, "audit": audit, "signals": laneSignals, "oversight": readDisplay(oversight, 64000)}, nil
 }
 
 // webLane adds presentation fields without changing Status JSON for CLI or MCP.

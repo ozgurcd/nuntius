@@ -15,10 +15,7 @@ import (
 func TestSettingsBriefContention(t *testing.T) {
 	for _, kind := range []string{"settings", "manager", "control"} {
 		t.Run(kind, func(t *testing.T) {
-			m, w, _ := settingsFixture(t)
-			if err := m.Close(); err != nil {
-				t.Fatal(err)
-			}
+			m, w, _ := settingsQuietFixture(t)
 			var unlock func()
 			switch kind {
 			case "settings":
@@ -37,7 +34,7 @@ func TestSettingsBriefContention(t *testing.T) {
 			done := make(chan struct{})
 			go func() { time.Sleep(40 * time.Millisecond); unlock(); close(done) }()
 			out := settingsHTTP(t, w, "GET", "")
-			<-done
+			p0TestJoin(t, done)
 			if out.Code != 200 {
 				t.Fatalf("brief %s contention: HTTP %d", kind, out.Code)
 			}
@@ -48,10 +45,7 @@ func TestSettingsBriefContention(t *testing.T) {
 func TestSettingsReadCancellation(t *testing.T) {
 	for _, kind := range []string{"settings", "manager", "control"} {
 		t.Run(kind, func(t *testing.T) {
-			m, w, _ := settingsFixture(t)
-			if err := m.Close(); err != nil {
-				t.Fatal(err)
-			}
+			m, w, _ := settingsQuietFixture(t)
 			revision := settingsRevision(t, w)
 			var unlock func()
 			switch kind {
@@ -97,10 +91,7 @@ func TestSettingsReadCancellation(t *testing.T) {
 }
 
 func TestSettingsReadFaultCodes(t *testing.T) {
-	m, w, path := settingsFixture(t)
-	if err := m.Close(); err != nil {
-		t.Fatal(err)
-	}
+	m, w, path := settingsQuietFixture(t)
 	for _, code := range []string{"configuration_unavailable", "invalid_configuration"} {
 		if code == "configuration_unavailable" {
 			m.config.SourcePath = ""
@@ -157,10 +148,7 @@ func TestSettingsIdleProfile(t *testing.T) {
 	if os.Getenv("NUNTIUS_IDLE_PROFILE") != "1" {
 		t.Skip("opt-in CPU measurement")
 	}
-	m, w, p := settingsFixture(t)
-	if err := m.Close(); err != nil {
-		t.Fatal(err)
-	}
+	m, w, p := settingsQuietFixture(t)
 	for i := 0; i < 29; i++ {
 		id := fmt.Sprintf("%032x", i+1)
 		dir := filepath.Join(m.store, "runs", id)
@@ -214,12 +202,18 @@ func TestSettingsIdleProfile(t *testing.T) {
 		defer tick.Stop()
 		for {
 			select {
+			case <-t.Context().Done():
+				return
 			case <-done:
 				return
 			case <-tick.C:
 				_, _ = webManager.Status()
 			}
 		}
+	}()
+	defer func() {
+		close(done)
+		p0TestJoin(t, stopped)
 	}()
 	counts := map[string]int{}
 	for i := 0; i < 8; i++ {
@@ -237,7 +231,5 @@ func TestSettingsIdleProfile(t *testing.T) {
 		counts[key]++
 		time.Sleep(time.Second)
 	}
-	close(done)
-	<-stopped
 	t.Logf("eight Settings reads, one/second, 29 fake ended records, two MCP-equivalent workers and a dashboard worker: %v", counts)
 }

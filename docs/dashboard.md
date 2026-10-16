@@ -8,15 +8,14 @@ known to have ended is not shown as running or draining. Reads observe existing
 files only: they do not repair pending control changes, create signals, recover
 runs or start work. Queue faults do not prevent operational reads.
 
-A contended control lock shows **Controls busy** on each affected lane, with
-holder/restart guidance when it can be established. Contention inside the running
-process names an in-flight operation and asks you to retry after it finishes.
-A corrupt or unsafe control
-record shows **Controls unavailable**. Both block new starts, sends and lane
-hold mutations; the rest of the dashboard still refreshes. Busy observations
-override older saved permission displays. Notes, tails, reports and independent
-safety controls stay available. The dashboard never reads control records
-without their shared lock and never kills an older process.
+Display reads do not acquire the control lock. They use an advisory snapshot
+cached for at most one second, with one metadata decode pass and one held-message
+pass for all lanes. A writer holding the lock alone does not make a lane
+ineligible. A revision change or pending intent shows change pending; admission
+checks the current policy again under its writer guard. A corrupt or unsafe
+control record shows unavailable. Notes, tails, reports and independent safety
+controls remain available. Menu and MCP status use this same observer path.
+No display read repairs, adopts or recovers work, and no older process is killed.
 
 The guarded `POST /lane-control` accepts `schema_version: 1`, a configured
 `lane`, `operation: "pause"` or `"resume"`, and numeric `expected_revision` from

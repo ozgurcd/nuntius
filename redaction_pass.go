@@ -545,6 +545,17 @@ func approveEvents(input []byte, complete bool) approvedSource {
 
 func approveEventsWithCache(input []byte, complete bool, previous map[[32]byte]sourceLexicalProof) approvedSource {
 	var events []tentativeEvent
+	// Repeated physical events still pass through the stateful approval below.
+	// Only their context-free decoding and lexical inspections are reusable.
+	// Keep raw private scalars local to this call, never in a returned proof.
+	type lexicalEvent struct {
+		scalars []sourceScalar
+		inspect []sourceText
+		spans   [][]sourceSpan
+		valid   bool
+	}
+	lexical := make(map[string]lexicalEvent)
+	lexicalBytes := 0
 	held := -1
 	openLabel, openRole, openSession := "", "", ""
 	pending, uncertain := false, false
@@ -580,7 +591,23 @@ func approveEventsWithCache(input []byte, complete bool, previous map[[32]byte]s
 				continue
 			}
 		}
-		scalars, valid := sourceScalars(line)
+		var parsed lexicalEvent
+		var reused bool
+		if len(line) <= 4096 {
+			parsed, reused = lexical[string(line)]
+		}
+		if !reused {
+			parsed.scalars, parsed.valid = sourceScalars(line)
+			for _, s := range parsed.scalars {
+				parsed.inspect = append(parsed.inspect, inspectSourceText(s.text))
+				parsed.spans = append(parsed.spans, ordinarySourceSpans(s.text, false))
+			}
+			if len(line) <= 4096 && len(lexical) < 64 && lexicalBytes+len(line) <= 64<<10 {
+				lexical[string(line)] = parsed
+				lexicalBytes += len(line)
+			}
+		}
+		scalars, valid := parsed.scalars, parsed.valid
 		e.terminal = valid && scalarAt(scalars, "type") == "text" && scalarAt(scalars, "part", "type") == "text"
 		if !valid || sourceUnprovedMCPArguments(scalars) {
 			uncertain = true
@@ -589,8 +616,8 @@ func approveEventsWithCache(input []byte, complete bool, previous map[[32]byte]s
 		if session == "" {
 			session = scalarAt(scalars, "session_id")
 		}
-		for _, s := range scalars {
-			inspect := inspectSourceText(s.text)
+		for scalarIndex, s := range scalars {
+			inspect := parsed.inspect[scalarIndex]
 			role := scalarRole(s, scalars)
 			if openLabel != "" && role != "" && (role != openRole || session != openSession) {
 				uncertain = true
@@ -598,7 +625,8 @@ func approveEventsWithCache(input []byte, complete bool, previous map[[32]byte]s
 			if inspect.uncertain || pending && inspect.continuation || len(inspect.markers) > 0 && role == "" {
 				uncertain = true
 			}
-			spans := ordinarySourceSpans(s.text, false)
+			// Approval appends and sorts spans; never mutate lexical cache data.
+			spans := append([]sourceSpan(nil), parsed.spans[scalarIndex]...)
 			bodyStart := 0
 			wasOpen := openLabel != ""
 			// Opaque scalar data has no safe display mapping in a private range.

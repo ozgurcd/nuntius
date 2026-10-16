@@ -1,6 +1,7 @@
 package nuntius
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,7 +12,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -86,6 +90,17 @@ type activeRun struct {
 	stop chan string
 }
 type Manager struct {
+	metadata             runMetadataCache
+	metadataSource       *runMetadataCache // immutable alias for an inline display reader
+	displayChange        atomic.Uint64
+	admissionScans       atomic.Uint64
+	historyScans         atomic.Uint64
+	followCount          atomic.Int64
+	display              displayCache
+	displayConfig        Config // immutable constructor input; observers reload SourcePath themselves.
+	observation          *displaySnapshot
+	life                 context.Context
+	cancelLife           context.CancelFunc
 	idleGuardStarted     bool
 	idleGuardFault       string
 	readOnly             bool // CLI observation never initializes, reconciles or supervises.
@@ -128,12 +143,13 @@ func NewManager(c Config, store string, resolver ...goalContinuationResolver) (*
 		// Fixed operation/code only: OS paths and private state never enter logs.
 		log.Printf("nuntius: ERROR lane control startup recovery failed (%s); new work remains blocked until controls can be read; if controls stay busy, restart older Nuntius MCP processes", laneControlError(controlRecovery))
 	}
-	if _, e := m.Status(); e != nil {
+	if _, e := m.status(false); e != nil {
 		return nil, e
 	}
 	m.watcher.Go(func() {
-		tick := time.NewTicker(time.Second)
+		tick := time.NewTimer(time.Second)
 		defer tick.Stop()
+		lastRecovery := time.Now()
 		for {
 			select {
 			case <-m.closing:
@@ -142,13 +158,17 @@ func NewManager(c Config, store string, resolver ...goalContinuationResolver) (*
 				if controlRecovery != nil {
 					controlRecovery = m.recoverLaneControls(nil)
 				}
-				_, _ = m.status(false)
-				m.mu.Lock()
-				recovery := m.recovery
-				m.mu.Unlock()
-				if recovery {
-					_ = m.Recover()
+				due := time.Since(lastRecovery) >= 10*time.Second
+				// Only entry waits use D_req. The owned watcher decision remains
+				// cancellable by Close, and shares one guard and history with recovery.
+				_, passErr := m.statusTransaction(m.life, false, false, due)
+				if due && passErr == nil {
+					lastRecovery = time.Now()
 				}
+				// A slow scan must not leave an already-due tick that immediately
+				// retakes m.mu. Leave the full observation interval for follow and
+				// admission; there is no catch-up queue or extra goroutine.
+				tick.Reset(time.Second)
 			}
 		}
 	})
@@ -178,7 +198,8 @@ func newReadManager(c Config, store string) (*Manager, error) {
 			return nil, errors.New("run store must be a real private directory (0700)")
 		}
 	}
-	return &Manager{readOnly: true, config: c, store: store, runtime: d, Grace: 30 * time.Second, active: map[string]*activeRun{}, closing: make(chan struct{}), launcher: newJobLauncher()}, nil
+	life, cancel := context.WithCancel(context.Background())
+	return &Manager{readOnly: true, config: c, displayConfig: cloneDisplayConfig(c), life: life, cancelLife: cancel, store: store, runtime: d, Grace: 30 * time.Second, active: map[string]*activeRun{}, closing: make(chan struct{}), launcher: newJobLauncher()}, nil
 }
 
 func (m *Manager) prepareControlStore() error {
@@ -208,9 +229,33 @@ func (m *Manager) Dispatch(lane, goal, text string) (string, error) {
 }
 func (m *Manager) Reply(lane, text string) (string, error) { return m.start(lane, "", text, true) }
 func (m *Manager) start(name, goal, text string, resume bool) (id string, err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	guard, e := m.admissionControlLockWithin(dispatchControlLockWait)
+	return m.startContext(context.Background(), name, goal, text, resume)
+}
+
+func (m *Manager) startContext(parent context.Context, name, goal, text string, resume bool, waits ...context.Context) (id string, err error) {
+	ctx := parent
+	waitParent := parent
+	if len(waits) != 0 {
+		waitParent = waits[0]
+	}
+	waitCtx, cancel := controlWaitContext(waitParent)
+	defer cancel()
+	defer func() {
+		var outcome *operationOutcome
+		if !errors.As(err, &outcome) && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			err = &laneControlFault{Code: "locked"}
+		}
+	}()
+	if e := lockContext(waitCtx, &m.mu); e != nil {
+		return "", &laneControlFault{Code: "locked", local: true}
+	}
+	heldAt := time.Now()
+	defer func() { controlMetric(3, 1, time.Since(heldAt)); m.mu.Unlock() }()
+	// Scope launcher calls to this request without mutating a shared injected
+	// launcher. All manager launcher access is serialized by this same mutex.
+	defer m.bindLauncherContext(parent)()
+	guard, e := m.admissionControlLockWithin(dispatchControlLockWait, waitCtx)
+	cancel()
 	if e != nil {
 		return "", e
 	}
@@ -236,12 +281,17 @@ func (m *Manager) start(name, goal, text string, resume bool) (id string, err er
 	if len(text) < 1 || len(text) > 12000 {
 		return "", errors.New("text must contain 1..12000 bytes")
 	}
-	if !resume && !goalPattern.MatchString(goal) {
+	if !resume && (!goalPattern.MatchString(goal) || strings.Contains(goal, "..")) {
 		return "", errors.New("invalid goal_id")
 	}
-	if e = m.admitLaneLocked(name); e != nil {
+	var runs []Run
+	if e = m.admitLaneHistoryLocked(name, "", &runs, ctx); e != nil {
 		return "", e
 	}
+	// Match history's name order before its newest-first ordering, including
+	// equal timestamps. The authoritative scan already checked every directory.
+	sort.Slice(runs, func(i, j int) bool { return runs[i].ID < runs[j].ID })
+	sort.Slice(runs, func(i, j int) bool { return runs[i].Started.After(runs[j].Started) })
 	if e = m.checkFrozen(); e != nil {
 		return "", e
 	}
@@ -259,23 +309,49 @@ func (m *Manager) start(name, goal, text string, resume bool) (id string, err er
 		}
 	}()
 	session := ""
-	runs, readErr := m.history()
-	if readErr != nil {
-		return "", readErr
-	}
-	for _, r := range runs {
+	for i := range runs {
+		if ctx.Err() != nil {
+			return "", &laneControlFault{Code: "locked"}
+		}
+		r := &runs[i]
 		if r.State == "running" {
-			if err := m.pendingJob(&r); err != nil {
+			// Detached identity publication does not acquire this guard. Refresh
+			// each active record before the process and admission checks.
+			fresh, err := loadRun(filepath.Join(m.store, "runs", r.ID), r.ID)
+			if err != nil || fresh == nil {
+				return "", errLaneControlUnavailable
+			}
+			*r = *fresh
+			if err := m.pendingJob(r); err != nil {
 				return "", err
 			}
 		}
-		if r.Lane == name && r.State == "running" && (sameProcess(r) || (r.ProcessStart == "" && processExists(r.PID))) {
-			return "", errors.New("lane has a surviving process")
+		if r.Lane == name {
+			m.observeEndedRun(r)
+			if r.State == "running" && len(runEligibilityBlockers(*r)) != 0 {
+				return "", errors.New("lane has a surviving process")
+			}
+		}
+	}
+	if !resume {
+		for _, r := range runs {
+			if r.Lane == name {
+				if r.WaitingToResume {
+					return "", errors.New("waiting_to_resume")
+				}
+				break
+			}
 		}
 	}
 	var nativeParent *Run
 	if resume {
-		last, e := m.latest(name)
+		var last *Run
+		for _, r := range runs {
+			if r.Lane == name {
+				last, e = loadRun(filepath.Join(m.store, "runs", r.ID), r.ID)
+				break
+			}
+		}
 		if e != nil || last == nil {
 			return "", errors.New("reply needs an ended run with a session id")
 		}
@@ -302,8 +378,14 @@ func (m *Manager) start(name, goal, text string, resume bool) (id string, err er
 		keep = m.active[name] != nil
 		return id, err
 	}
-	id, err = m.launch(lane, goal, text, session, lock, nil)
-	keep = err == nil
+	if ctx.Err() != nil {
+		return "", &laneControlFault{Code: "locked"}
+	}
+	// Admission remains valid only while this same manager and EX guard are
+	// held. The launch consumes it once and rechecks coordination identity.
+	admission := &dispatchAdmission{manager: m, guard: guard, lane: name, ctx: ctx}
+	id, err = m.launchMessageInGuard(lane, goal, text, session, lock, nil, nil, nil, nil, admission)
+	keep = err == nil || m.active[name] != nil
 	return id, err
 }
 
@@ -334,7 +416,24 @@ func (m *Manager) launch(lane Lane, goal, text, session string, lock *os.File, p
 	return m.launchMessage(lane, goal, text, session, lock, parent, message, nil, nil)
 }
 
-func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.File, parent *Run, message *heldMessage, ops *laneControlIO, started *bool, native ...*goalLaunchContext) (string, error) {
+func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.File, parent *Run, message *heldMessage, ops *laneControlIO, started *bool, native ...*goalLaunchContext) (result string, failure error) {
+	return m.launchMessageInGuard(lane, goal, text, session, lock, parent, message, ops, started, nil, native...)
+}
+
+func (m *Manager) launchMessageInGuard(lane Lane, goal, text, session string, lock *os.File, parent *Run, message *heldMessage, ops *laneControlIO, started *bool, admission *dispatchAdmission, native ...*goalLaunchContext) (result string, failure error) {
+	accepted := ""
+	effects := false
+	defer func() {
+		if failure != nil && accepted != "" {
+			result = accepted
+			failure = &operationOutcome{Code: "launch_uncertain", RunID: accepted, cause: failure}
+			if r, err := loadRun(filepath.Join(m.store, "runs", accepted), accepted); err == nil && r != nil && sameProcess(*r) {
+				_ = m.superviseGoalDispatch(*r, lock)
+			}
+		} else if failure != nil && effects {
+			failure = &operationOutcome{Code: "uncertain", cause: failure}
+		}
+	}()
 	var launch *goalLaunchContext
 	if len(native) == 1 {
 		launch = native[0]
@@ -372,8 +471,20 @@ func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.
 		}
 		reviewedRun = r.ID
 	}
-	if err := m.admitLaneExceptLocked(name, reviewedRun); err != nil {
-		return "", err
+	if admission != nil {
+		if parent != nil || message != nil || len(native) != 0 {
+			return "", errLaneControlUnavailable
+		}
+		if err := admission.consume(m, name); err != nil {
+			return "", err
+		}
+		if err := m.checkFrozen(); err != nil {
+			return "", err
+		}
+	} else {
+		if err := m.admitLaneExceptLocked(name, reviewedRun); err != nil {
+			return "", err
+		}
 	}
 	sum := sha256.Sum256([]byte(text))
 	digest := hex.EncodeToString(sum[:])
@@ -393,6 +504,7 @@ func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.
 		id = launch.id
 	}
 	if message != nil {
+		effects = true
 		if e := writeMessageReceipt(messageDir, messageReceipt{Version: 1, Binding: *message, State: "reserved", ChildID: id}, ops); e != nil {
 			return "", e
 		}
@@ -401,9 +513,13 @@ func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.
 	if e := checkpoint("prepare_before"); e != nil {
 		return "", e
 	}
+	if admission != nil && admission.ctx.Err() != nil {
+		return "", &laneControlFault{Code: "locked"}
+	}
 	if e := os.Mkdir(dir, 0700); e != nil {
 		return "", errors.New("cannot create run directory")
 	}
+	effects = true
 	if e := checkpoint("prepare_directory"); e != nil {
 		return "", e
 	}
@@ -464,6 +580,7 @@ func (m *Manager) launchMessage(lane Lane, goal, text, session string, lock *os.
 	if e = syncDir(filepath.Join(m.store, "runs")); e != nil {
 		return "", e
 	}
+	accepted = id
 	if e = checkpoint("prepare_sync"); e != nil {
 		return "", e
 	}
@@ -565,6 +682,8 @@ func agentArgs(l Lane, session string) []string {
 	return append(args, "-")
 }
 func (m *Manager) follow(r Run, lock, supervisor *os.File, a *activeRun, grace time.Duration) {
+	m.followCount.Add(1)
+	defer m.followCount.Add(-1)
 	launchAllowed := lock != nil
 	defer supervisor.Close()
 	// Stop requests send SIGINT synchronously. Metadata/identity polling need
@@ -582,7 +701,20 @@ func (m *Manager) follow(r Run, lock, supervisor *os.File, a *activeRun, grace t
 			close(a.done)
 			return
 		case <-tick.C:
-			m.mu.Lock()
+			// StopAt is durable before Cancel acknowledges. Check it before m.mu.
+			m.escalate(m.life, r, grace)
+			// Once the child is gone, keep the existing stop cadence even if a
+			// status scan exhausts this attempt's bounded mutex wait. Waiting an
+			// ordinary interval after each miss can starve end publication.
+			if goalAttemptDefinitelyGone(r) {
+				tick.Reset(50 * time.Millisecond)
+			}
+			ctx, cancel := context.WithTimeout(m.life, 50*time.Millisecond)
+			err := lockContext(ctx, &m.mu)
+			cancel()
+			if err != nil {
+				continue
+			}
 			// Ordinary observations do not participate in control transactions.
 			// Re-read under the guard below only when a mutation may be needed.
 			current, readErr := loadRun(filepath.Join(m.store, "runs", r.ID), r.ID)
@@ -722,48 +854,57 @@ func (m *Manager) follow(r Run, lock, supervisor *os.File, a *activeRun, grace t
 	}
 }
 func (m *Manager) Cancel(name string) (err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	goal := ""
-	defer func() {
-		if err != nil {
-			_ = m.audit("nuntius_cancel", name, goal, "", "refused", err.Error())
-		}
-	}()
-	if _, e := m.lane(name); e != nil {
-		return e
-	}
-	guard, e := m.controlLock()
-	if e != nil {
-		return e
-	}
-	defer guard.Close()
-	r, e := m.latest(name)
-	if e != nil || r == nil || r.State != "running" {
-		return errors.New("lane is not running")
-	}
-	goal = r.GoalID
-	if e = m.requestStop(r, "cancelled"); e != nil {
-		return e
-	}
-	return m.audit("nuntius_cancel", name, r.GoalID, "", "accepted")
+	return m.CancelContext(context.Background(), name)
 }
 func (m *Manager) Status() ([]Status, error) {
 	return m.status(true)
 }
 
 func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]Status, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	// Legacy writable callers may reconcile native bookkeeping after acquiring
+	// the mutex. The admission wait budget is not an end-to-end repair budget.
+	// Public display paths supply their own bounded context below.
+	return m.statusContext(context.Background(), details, controlsOut...)
+}
+
+func (m *Manager) statusContext(ctx context.Context, details bool, controlsOut ...*laneControlSnapshot) ([]Status, error) {
+	return m.statusPass(ctx, details, true, controlsOut...)
+}
+
+func (m *Manager) statusPass(ctx context.Context, details, fallback bool, controlsOut ...*laneControlSnapshot) ([]Status, error) {
+	return m.statusTransaction(ctx, details, fallback, false, controlsOut...)
+}
+
+func (m *Manager) statusTransaction(ctx context.Context, details, fallback, recoverDue bool, controlsOut ...*laneControlSnapshot) ([]Status, error) {
+	if m.readOnly && m.observation == nil {
+		s, err := m.displaySnapshot(ctx)
+		if len(controlsOut) != 0 {
+			*controlsOut[0] = s.controls
+		}
+		return s.rows, err
+	}
+	waitCtx, cancelWait := context.WithTimeout(ctx, dispatchControlLockWait)
+	waitErr := lockContext(waitCtx, &m.mu)
+	cancelWait()
+	if waitErr != nil {
+		return nil, waitErr
+	}
+	heldAt := time.Now()
+	locked := true
+	restoreLauncher := m.bindLauncherContext(ctx)
+	unlock := func() {
+		if locked {
+			restoreLauncher()
+			controlMetric(3, 1, time.Since(heldAt))
+			m.mu.Unlock()
+			locked = false
+		}
+	}
+	defer unlock()
 	var guard *controlFileLock
 	var e error
 	if m.readOnly {
-		if root, err := openLaneControlRoot(m.store); err == nil {
-			guard, e = laneControlReadLock(root)
-			root.Close()
-		} else {
-			e = err
-		}
+		// readDisplay checked atomic revisions and pending intent without a flock.
 	} else {
 		root, err := openLaneControlRoot(m.store)
 		if err != nil {
@@ -773,13 +914,20 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 			root.Close()
 		}
 		if e != nil {
+			if !fallback {
+				return nil, e
+			}
+			config := cloneDisplayConfig(m.config)
+			unlock()
 			// A separate observer preserves read-only projection and independent
 			// controls while a legacy process owns the shared coordination inode.
-			reader, err := newReadManager(m.config, m.store)
+			reader, err := newReadManager(config, m.store)
 			if err != nil {
 				return nil, err
 			}
-			return reader.status(details, controlsOut...)
+			defer reader.cancelLife()
+			reader.metadataSource = m.metadataCache()
+			return reader.statusContext(ctx, details, controlsOut...)
 		}
 	}
 	controlErr := e
@@ -799,7 +947,12 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 	if e != nil {
 		return nil, e
 	}
-	runs, e := m.history()
+	var runs []Run
+	if m.observation != nil {
+		runs = m.observation.runs
+	} else {
+		runs, e = m.historyContext(ctx)
+	}
 	if m.readOnly && os.IsNotExist(e) {
 		runs, e = []Run{}, nil
 	}
@@ -807,9 +960,15 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 		return nil, e
 	}
 	for i := range runs {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		r := &runs[i]
 		if m.readOnly {
 			m.observeEndedRun(r)
+			continue
+		}
+		if r.State != "running" && (r.LaunchdLabel == "" || r.LaunchdCleaned) {
 			continue
 		}
 		if !m.nativeSupervisionAllowed(*r) {
@@ -845,7 +1004,11 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 	}
 	var controls laneControlSnapshot
 	if details {
-		controls = m.laneControlSnapshotLocked(runs, guard != nil)
+		if m.observation != nil {
+			controls = m.observation.controls
+		} else {
+			controls = m.laneControlSnapshotLocked(runs, guard != nil)
+		}
 		if guard == nil && controlErr != nil {
 			controls = m.laneControlFailureSnapshot(runs, controlErr)
 		}
@@ -863,6 +1026,9 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 		monitoring = &health
 	}
 	for _, l := range m.config.Lanes {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		model, effort := effectiveIdentity(l)
 		s := Status{Lane: l.Name, Kind: l.Kind, Model: model, Effort: effort, State: "idle", Freeze: frozen, LaneControlVersion: 1, NativeAttention: nativeAttention}
 		s.Monitoring = monitoring
@@ -978,6 +1144,11 @@ func (m *Manager) status(details bool, controlsOut ...*laneControlSnapshot) ([]S
 		}
 		out = append(out, s)
 	}
+	if recoverDue && m.recovery && !m.readOnly && guard != nil {
+		if err := m.recoverRunsLocked(ctx, runs); err != nil {
+			return nil, err
+		}
+	}
 	return out, nil
 }
 
@@ -1006,6 +1177,10 @@ func (m *Manager) observeEndedRun(r *Run) {
 	}
 }
 func (m *Manager) Close() error {
+	if m.cancelLife != nil {
+		m.cancelLife()
+	}
+	m.metadata.invalidateAll()
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()

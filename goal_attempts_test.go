@@ -1,6 +1,7 @@
 package nuntius
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -139,14 +140,23 @@ func goalEndSavedFixtureSetup(t *testing.T, setup func(*Manager), capture ...*go
 	if err = m.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// The watcher and follow workers are joined. Subsequent offline end repair
+	// belongs to this test, not the cancelled serving lifecycle.
+	repairCtx, cancelRepair := context.WithCancel(t.Context())
+	t.Cleanup(cancelRepair)
+	m.life = repairCtx
 	if err = signalRun(*r, syscall.SIGINT); err != nil {
 		t.Fatal(err)
 	}
-	for deadline := time.Now().Add(4 * time.Second); !goalAttemptDefinitelyGone(*r); {
-		if time.Now().After(deadline) {
+	endedCtx, cancelEnded := context.WithTimeout(repairCtx, 4*time.Second)
+	defer cancelEnded()
+	for !goalAttemptDefinitelyGone(*r) {
+		if endedCtx.Err() != nil {
 			t.Fatal("offline child did not end")
 		}
-		time.Sleep(time.Millisecond)
+		if !p0MonitorPause(endedCtx, time.Millisecond) {
+			t.Fatal("offline child did not end")
+		}
 	}
 	now := time.Now().UTC()
 	r.Ended = &now
@@ -1022,8 +1032,23 @@ func TestGoalAutomaticEndFailedRepairSafety(t *testing.T) {
 	if err = os.WriteFile(path, original, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err = n.Recover(); err != nil {
-		t.Fatal(err)
+	// Status is advisory and may observe exit before another supervisor has
+	// released its writer. Recover remains nonblocking; retry only that fault.
+	repairCtx, cancelRepair := context.WithTimeout(context.Background(), dispatchControlLockWait)
+	defer cancelRepair()
+	for {
+		err = n.Recover()
+		if err == nil {
+			break
+		}
+		if laneControlCode(err) != "locked" {
+			t.Fatal(err)
+		}
+		select {
+		case <-repairCtx.Done():
+			t.Fatal("repair remained locked after bounded retry")
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	_, data := dispatchRecord(t, n, req.GoalID)
 	if data.State != nativeGoalEnded || data.Outcome != nativeOutcomeCancelled || len(data.Ends) != 1 {

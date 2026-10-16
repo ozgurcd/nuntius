@@ -2,6 +2,7 @@ package nuntius
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -76,8 +78,15 @@ func (m *Manager) busy(lane string) (bool, error) {
 	return false, nil
 }
 func (m *Manager) save(r *Run) error {
+	if !runPattern.MatchString(r.ID) {
+		return errLaneControlUnavailable
+	}
+	m.metadataCache().invalidate(r.ID)
+	defer m.metadataCache().invalidate(r.ID)
 	dir := filepath.Join(m.store, "runs", r.ID)
-	return saveAt(dir, r)
+	err := saveAt(dir, r)
+	m.displayChange.Add(1)
+	return err
 }
 func saveAt(dir string, r *Run) error {
 	r.Integrity = ""
@@ -123,15 +132,19 @@ func loadRun(dir, id string) (*Run, error) {
 	}
 	b, err := io.ReadAll(io.LimitReader(f, 131073))
 	_ = f.Close()
-	var r Run
 	if err != nil {
 		return nil, err
 	}
-	if len(b) > 131072 || strictJSON(b, &r) != nil || !validGoalRunEndJSON(b) || r.ID != id || !namePattern.MatchString(r.Lane) || !goalPattern.MatchString(r.GoalID) || r.Started.IsZero() || (r.State != "running" && r.State != "ended" && r.State != "timed_out" && r.State != "interrupted") {
-		return nil, nil
+	return decodeRunMetadata(b, id), nil
+}
+
+func decodeRunMetadata(b []byte, id string) *Run {
+	var r Run
+	if len(b) > 131072 || strictJSON(b, &r) != nil || !validGoalRunEndJSON(b) || r.ID != id || !namePattern.MatchString(r.Lane) || strings.Contains(r.Lane, "..") || !goalPattern.MatchString(r.GoalID) || strings.Contains(r.GoalID, "..") || r.Started.IsZero() || (r.State != "running" && r.State != "ended" && r.State != "timed_out" && r.State != "interrupted") {
+		return nil
 	}
 	if r.ResumeCount < 0 || r.ResumeCount > 2 || len(r.Brief) > 12000 || (r.ParentRunID != "" && !runPattern.MatchString(r.ParentRunID)) || (r.ContinueRunID != "" && !runPattern.MatchString(r.ContinueRunID)) {
-		return nil, nil
+		return nil
 	}
 	if r.Integrity != "" {
 		want := r.Integrity
@@ -140,13 +153,17 @@ func loadRun(dir, id string) (*Run, error) {
 		sum := sha256.Sum256(canonical)
 		r.Integrity = want
 		if want != hex.EncodeToString(sum[:]) {
-			return nil, nil
+			return nil
 		}
 	}
-	return &r, nil
+	return &r
 }
 func (m *Manager) latest(lane string) (*Run, error) {
-	runs, err := m.history()
+	return m.latestContext(context.Background(), lane)
+}
+
+func (m *Manager) latestContext(ctx context.Context, lane string) (*Run, error) {
+	runs, err := m.historyContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -184,6 +201,13 @@ func (m *Manager) audit(tool, lane, goal, digest, result string, reasons ...stri
 }
 
 func (m *Manager) appendAudit(nonblocking bool, tool, lane, goal, digest, result string, reasons ...string) error {
+	return m.appendAuditContext(context.Background(), nonblocking, tool, lane, goal, digest, result, reasons...)
+}
+
+func (m *Manager) appendAuditContext(ctx context.Context, nonblocking bool, tool, lane, goal, digest, result string, reasons ...string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	// Native outcomes belong only to the journal mirror, never generic MCP
 	// success/failure auditing. The generic seam cannot fabricate their IDs.
 	if tool == nativeAuditTool {
@@ -198,7 +222,7 @@ func (m *Manager) appendAudit(nonblocking bool, tool, lane, goal, digest, result
 	if nonblocking {
 		wait = 0
 	}
-	if e = boundedFlock(int(f.Fd()), syscall.LOCK_EX, wait); e != nil {
+	if e = boundedFlock(int(f.Fd()), syscall.LOCK_EX, wait, ctx); e != nil {
 		return errors.New("cannot lock audit")
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
@@ -213,6 +237,9 @@ func (m *Manager) appendAudit(nonblocking bool, tool, lane, goal, digest, result
 		reason = cell(bounded(Redact(reasons[0]), 512))
 	}
 	b, _ := json.Marshal(map[string]any{"time": time.Now().UTC(), "tool": tool, "lane": lane, "goal_id": goal, "sha256": digest, "result": result, "reason": reason})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if _, e = f.Write(append(b, '\n')); e != nil {
 		return errors.New("cannot append audit")
 	}

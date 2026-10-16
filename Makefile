@@ -10,6 +10,11 @@ CHANGELOG_FILE ?= CHANGELOG.md
 
 verify: format-check build vet staticcheck test race govulncheck menubar-verify indicator-test redaction-proof
 
+# Offline, immutable published sources; the tests never fetch or use real agents.
+.PHONY: verify-compat
+verify-compat:
+	go test -tags=integration . -run '^TestP0(MixedVersions|LostClientReconciliation)$$' -count=1 -v
+
 .PHONY: redaction-proof
 # Deterministic recipes execute independently of coverage-guided seed selection.
 # Fuzz payloads are recipe bytes; disposable valid keys exist only in test memory.
@@ -76,8 +81,10 @@ race:
 	go test -race -count=1 -run '^TestNative.*$$' .
 	go test -race -count=1 -run '^Test(Goal|DispatchGoalID|Brief|LinkedWait|VerifiedDependencies|CoveredClosure|Coverage|DependencyCycles).*$$' .
 	go test -race -count=1 -run '^(Test(Redaction|IndependentReview|Review|Rereview|Round3|HotfixReview|Private|ReleasePrivate|ReleaseSplit|ReleasePublic)|Fuzz).*$$' .
+	# Keep coverage/assertions and bound CPU parallelism across the field processes.
+	GOMAXPROCS=2 go test -race -count=1 -run '^TestControlMonitorMCPDispatchSeries$$' .
 	# The complement also runs new tests and fuzz seeds outside those families.
-	go test -race -count=1 -run '.' -skip '^(Test(Native|Goal|DispatchGoalID|Brief|LinkedWait|VerifiedDependencies|CoveredClosure|Coverage|DependencyCycles|Redaction|IndependentReview|Review|Rereview|Round3|HotfixReview|Private|ReleasePrivate|ReleaseSplit|ReleasePublic)|Fuzz).*$$' .
+	go test -race -count=1 -run '.' -skip '^(TestControlMonitorMCPDispatchSeries|(Test(Native|Goal|DispatchGoalID|Brief|LinkedWait|VerifiedDependencies|CoveredClosure|Coverage|DependencyCycles|Redaction|IndependentReview|Review|Rereview|Round3|HotfixReview|Private|ReleasePrivate|ReleaseSplit|ReleasePublic)|Fuzz).*)$$' .
 	# Keep every other package from ./... in the race gate, without root repeats.
 	go test -race -count=1 $(filter-out $(shell go list .),$(shell go list ./...))
 

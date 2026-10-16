@@ -86,7 +86,56 @@ func TestCLIHumanAndJSONStatus(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if strings.TrimSpace(out.String()) != toolText(want) {
+				normalize := func(b []byte) string {
+					var v map[string]any
+					if json.Unmarshal(b, &v) != nil {
+						t.Fatal("status object invalid")
+					}
+					counts, ok := v["concurrency"].(map[string]any)
+					if !ok {
+						t.Fatal("status concurrency absent")
+					}
+					live, ok := counts["live"].(float64)
+					if !ok || live < 1 || live != float64(int(live)) {
+						t.Fatal("status live census invalid")
+					}
+					delete(counts, "live") // changes between two observations by design
+					metrics, ok := v["control_metrics"].(map[string]any)
+					if !ok || metrics["enabled"] != controlMetricsEnabled {
+						t.Fatal("status metrics shape invalid")
+					}
+					if controlMetricsEnabled {
+						sites, ok := metrics["sites"].(map[string]any)
+						if !ok || len(sites) != 4 {
+							t.Fatal("status histogram sites invalid")
+						}
+						for _, name := range []string{"writer", "shared_reader", "admission", "mutex"} {
+							site, ok := sites[name].(map[string]any)
+							if !ok || len(site) != 2 {
+								t.Fatal("status histogram site invalid")
+							}
+							for _, kind := range []string{"wait", "hold"} {
+								buckets, ok := site[kind].([]any)
+								if !ok || len(buckets) != 8 {
+									t.Fatal("status histogram buckets invalid")
+								}
+								for _, bucket := range buckets {
+									n, ok := bucket.(float64)
+									if !ok || n < 0 || n != float64(uint64(n)) {
+										t.Fatal("status histogram count invalid")
+									}
+								}
+							}
+						}
+						delete(metrics, "sites") // observation itself increments these counters
+					}
+					stable, err := json.Marshal(v)
+					if err != nil {
+						t.Fatal("status serialization failed")
+					}
+					return string(stable)
+				}
+				if normalize(out.Bytes()) != normalize([]byte(toolText(want))) {
 					t.Fatal("JSON shape changed")
 				}
 			}

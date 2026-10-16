@@ -78,7 +78,15 @@ Paused dispatch/reply refusals also use structured content and identical text
 JSON: `code:"lane_paused"`, the lane, `paused:true`, `retryable:false`, safe
 `blockers` (including `frozen` when applicable) and a plain explanation.
 Application failures set `isError:true` in the tool result. They are not numeric
-JSON-RPC protocol errors. Other tools retain their existing result shapes.
+JSON-RPC protocol errors. Dispatch/reply errors after durable publication return
+`code:"launch_uncertain"`, the short run ID and `retryable:false`. Cancel errors
+after durable StopAt return `code:"stop_recorded"`; escalation still follows.
+Effects without confirmed publication return `code:"uncertain"`.
+After any such result, or no response at all (timeout, EOF, cancelled or killed
+client), reconcile status/history by lane, goal and time window before sending
+another dispatch/reply. Only an explicit pre-effect refused/locked result is
+retry-safe. A reserved held receipt requires owner review; it is never cleared
+silently. There is no request-id deduplication in this hotfix.
 The manager owns control intent/outcome audit; the transport adds no duplicate
 generic outcome for manager-audited mutations. Audit delivery after repair may
 repeat a correlated outcome; exactly-once delivery is not claimed.

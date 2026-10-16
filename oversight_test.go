@@ -294,12 +294,24 @@ func TestWebViewsNotesQueuedReplyAndQuestions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest("GET", "http://127.0.0.1:8123/data", nil)
-	req.Header.Set("X-Nuntius-Token", w.token)
-	out := httptest.NewRecorder()
-	w.ServeHTTP(out, req)
-	if out.Code != 200 || !strings.Contains(out.Body.String(), "waiting for owner") || !strings.Contains(out.Body.String(), "kept normal approvals") || !strings.Contains(out.Body.String(), "goal") {
-		t.Fatal("dashboard views missing")
+	// An inline advisory snapshot may use the constructor config while follow
+	// finishes its final write. Allow the approved 1s cache plus a read budget.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var out *httptest.ResponseRecorder
+	for {
+		req := httptest.NewRequestWithContext(ctx, "GET", "http://127.0.0.1:8123/data", nil)
+		req.Header.Set("X-Nuntius-Token", w.token)
+		out = httptest.NewRecorder()
+		w.ServeHTTP(out, req)
+		if out.Code == 200 && strings.Contains(out.Body.String(), "waiting for owner") && strings.Contains(out.Body.String(), "kept normal approvals") && strings.Contains(out.Body.String(), "goal") {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("dashboard views missing: status=%d oversight=%t decision=%t goal=%t", out.Code, strings.Contains(out.Body.String(), "waiting for owner"), strings.Contains(out.Body.String(), "kept normal approvals"), strings.Contains(out.Body.String(), "goal"))
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	var data struct {
 		Lanes []struct{ Kind, ETA, Activity string }

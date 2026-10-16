@@ -2,6 +2,7 @@ package nuntius
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -43,7 +44,7 @@ type webHeldSnapshot struct {
 	OlderReceiptsOmitted bool             `json:"older_receipts_omitted"`
 }
 
-func (m *Manager) webHeldMessages(controls laneControlSnapshot) webHeldSnapshot {
+func (m *Manager) webHeldMessages(ctx context.Context, controls laneControlSnapshot, runs []Run) webHeldSnapshot {
 	unknown := webHeldSnapshot{Version: 1, Status: "unavailable", Messages: []webHeldMessage{}}
 	if !m.mu.TryLock() {
 		return unknown
@@ -54,12 +55,8 @@ func (m *Manager) webHeldMessages(controls laneControlSnapshot) webHeldSnapshot 
 		return unknown
 	}
 	defer root.Close()
-	guard, err := laneControlReadLock(root)
-	if err != nil {
-		return unknown
-	}
-	defer guard.Close()
-	if _, err = readLaneControlsAt(root); err != nil {
+	before, err := readLaneControlsAt(root)
+	if err != nil || before.Revision != controls.Revision || ctx.Err() != nil {
 		return unknown
 	}
 	result := webHeldSnapshot{Version: 1, Status: "ok", Messages: []webHeldMessage{}}
@@ -72,7 +69,13 @@ func (m *Manager) webHeldMessages(controls laneControlSnapshot) webHeldSnapshot 
 		return terminal[i].started.After(terminal[j].started) || (terminal[i].started.Equal(terminal[j].started) && terminal[i].message.RunID < terminal[j].message.RunID)
 	}
 	for _, lane := range controls.Lanes {
-		err = visitLaneMessages(root, lane.Name, func(dir *os.File, r Run, message []byte) error {
+		if ctx.Err() != nil {
+			return unknown
+		}
+		err = visitSnapshotMessages(ctx, root, runs, lane.Name, func(dir *os.File, r Run, message []byte) error {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			receipt, err := readMessageReceipt(dir, r)
 			if err != nil {
 				return err
@@ -138,7 +141,54 @@ func (m *Manager) webHeldMessages(controls laneControlSnapshot) webHeldSnapshot 
 	for _, receipt := range terminal {
 		result.Messages = append(result.Messages, receipt.message)
 	}
+	after, err := readLaneControlsAt(root)
+	if err != nil || after.Revision != before.Revision || ctx.Err() != nil {
+		return unknown
+	}
 	return result
+}
+
+// Advisory files are opened relative to the same private root. Metadata was
+// already read and validated once for the immutable display snapshot.
+func visitSnapshotMessages(ctx context.Context, root *os.File, snapshot []Run, lane string, visit func(*os.File, Run, []byte) error) error {
+	runs, err := heldDirectory(root, "runs")
+	if err != nil {
+		return err
+	}
+	defer runs.Close()
+	for _, r := range snapshot {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if r.Lane != lane {
+			continue
+		}
+		if !runPattern.MatchString(r.ID) {
+			return errLaneControlUnavailable
+		}
+		dir, err := heldDirectory(runs, r.ID)
+		if err != nil {
+			return err
+		}
+		err = func() error {
+			defer dir.Close()
+			message, err := readLaneControlPrivate(dir, "message.json", 16384)
+			if errors.Is(err, os.ErrNotExist) {
+				message, err = nil, nil
+			}
+			if err != nil {
+				return err
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return visit(dir, r, message)
+		}()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // One authenticated mutation budget for every dashboard write, including

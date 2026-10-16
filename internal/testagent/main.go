@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"encoding/xml"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ozgurcd/nuntius/internal/fixturelife"
+	"golang.org/x/sys/unix"
 )
 
 // fakeTailscale records every invocation and answers from files in the
@@ -142,25 +144,63 @@ func main() {
 	}
 	// Offline pre-upgrade holder: no owner metadata and no explicit unlock.
 	if len(os.Args) == 3 && os.Args[1] == "__fixture_control_lock" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		f, err := os.OpenFile(os.Args[2], os.O_RDWR, 0)
 		if err != nil {
 			os.Exit(48)
 		}
 		defer f.Close()
-		deadline := time.Now().Add(time.Second)
+		acquire, stopAcquire := context.WithTimeout(ctx, time.Second)
+		defer stopAcquire()
 		for {
 			err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 			if err == nil {
 				break
 			}
-			if err != syscall.EWOULDBLOCK || time.Now().After(deadline) {
+			if err != syscall.EWOULDBLOCK || acquire.Err() != nil {
 				os.Exit(48)
 			}
-			time.Sleep(5 * time.Millisecond)
+			timer := time.NewTimer(5 * time.Millisecond)
+			select {
+			case <-acquire.Done():
+				timer.Stop()
+				os.Exit(48)
+			case <-timer.C:
+			}
 		}
-		fmt.Println("locked")
+		fd, err := unix.Dup(int(os.Stdin.Fd()))
+		if err != nil {
+			os.Exit(48)
+		}
+		unix.CloseOnExec(fd)
+		if unix.SetNonblock(fd, true) != nil {
+			_ = unix.Close(fd)
+			os.Exit(48)
+		}
+		input := os.NewFile(uintptr(fd), "fixture-holder-input")
+		defer input.Close()
+		deadline, _ := ctx.Deadline()
+		if input.SetReadDeadline(deadline) != nil {
+			os.Exit(48)
+		}
+		outFD, err := unix.Dup(int(os.Stdout.Fd()))
+		if err != nil {
+			os.Exit(48)
+		}
+		unix.CloseOnExec(outFD)
+		if unix.SetNonblock(outFD, true) != nil {
+			_ = unix.Close(outFD)
+			os.Exit(48)
+		}
+		output := os.NewFile(uintptr(outFD), "fixture-holder-output")
+		defer output.Close()
+		if output.SetWriteDeadline(deadline) != nil {
+			os.Exit(48)
+		}
+		_, _ = fmt.Fprintln(output, "locked")
 		var release [1]byte
-		_, _ = io.ReadFull(os.Stdin, release[:])
+		_, _ = io.ReadFull(input, release[:])
 		return
 	}
 	if webSession {
@@ -431,6 +471,23 @@ func main() {
 		<-ch
 		return
 	}
+	if strings.Contains(mode, "p0-timeout") {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(ch)
+		emit("ready")
+		select {
+		case <-ctx.Done():
+			return
+		case <-ch:
+			// Numeric timing only; no input, session, PID or report text.
+			b, _ := json.Marshal(time.Now().UnixNano())
+			_ = os.WriteFile(filepath.Join(cwd, "P0-SIGINT-AT.json"), b, 0600)
+		}
+		return
+	}
 	if strings.Contains(mode, "exit-seven") {
 		os.Exit(7)
 	}
@@ -568,7 +625,14 @@ func fakeLaunchctl() {
 		if len(argv) == 0 {
 			os.Exit(1)
 		}
-		f, err := os.OpenFile(output, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		var f *os.File
+		if output == "/dev/fd/1" {
+			// An adversarial utility can leave a descendant holding its stdout.
+			// Reuse the inherited pipe: Darwin cannot reopen it through fdesc.
+			f = os.Stdout
+		} else {
+			f, err = os.OpenFile(output, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		}
 		if err != nil {
 			os.Exit(1)
 		}

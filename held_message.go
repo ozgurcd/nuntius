@@ -40,7 +40,10 @@ func heldDirectory(parent *os.File, name string) (*os.File, error) {
 
 // All callers hold manager -> common control lock. Scan every run, including
 // older ended/interrupted records; timestamps never select message identity.
-func visitLaneMessages(root *os.File, lane string, visit func(*os.File, Run, []byte) error) error {
+func visitLaneMessages(root *os.File, lane string, visit func(*os.File, Run, []byte) error, scans ...runMetadataScan) error {
+	if len(scans) > 1 || len(scans) == 1 && (scans[0].ctx == nil || scans[0].cache == nil) {
+		return errLaneControlUnavailable
+	}
 	runs, err := heldDirectory(root, "runs")
 	if err != nil {
 		return err
@@ -54,6 +57,9 @@ func visitLaneMessages(root *os.File, lane string, visit func(*os.File, Run, []b
 		return errLaneControlUnavailable
 	}
 	for _, id := range names {
+		if len(scans) == 1 && scans[0].ctx.Err() != nil {
+			return scans[0].ctx.Err()
+		}
 		if strings.HasPrefix(id, ".pending-") && runPattern.MatchString(strings.TrimPrefix(id, ".pending-")) {
 			continue
 		}
@@ -66,7 +72,13 @@ func visitLaneMessages(root *os.File, lane string, visit func(*os.File, Run, []b
 		}
 		e = func() error {
 			defer dir.Close()
-			b, e := readLaneControlPrivate(dir, "meta.json", 131072)
+			var b []byte
+			var e error
+			if len(scans) == 1 {
+				b, e = scans[0].cache.read(scans[0].ctx, dir, id)
+			} else {
+				b, e = readLaneControlPrivate(dir, "meta.json", 131072)
+			}
 			if e != nil {
 				return e
 			}
@@ -83,10 +95,20 @@ func visitLaneMessages(root *os.File, lane string, visit func(*os.File, Run, []b
 				}
 				r.Integrity = want
 			}
+			if len(scans) == 1 && scans[0].history != nil {
+				if historical := decodeRunMetadata(b, id); historical != nil {
+					*scans[0].history = append(*scans[0].history, *historical)
+				}
+			}
 			if r.Lane != lane {
 				return nil
 			}
-			message, e := readLaneControlPrivate(dir, "message.json", 16384)
+			var message []byte
+			if len(scans) == 1 {
+				message, e = scans[0].cache.readMessage(scans[0].ctx, dir, id)
+			} else {
+				message, e = readLaneControlPrivate(dir, "message.json", 16384)
+			}
 			if errors.Is(e, os.ErrNotExist) {
 				message = nil
 			} else if e != nil {
@@ -222,7 +244,7 @@ func laneHasHeldMessage(root *os.File, lane string) (bool, error) {
 	return laneHasHeldMessageExcept(root, lane, "")
 }
 
-func laneHasHeldMessageExcept(root *os.File, lane, reviewedRun string) (bool, error) {
+func laneHasHeldMessageExcept(root *os.File, lane, reviewedRun string, scans ...runMetadataScan) (bool, error) {
 	held := false
 	err := visitLaneMessages(root, lane, func(dir *os.File, r Run, _ []byte) error {
 		receipt, err := readMessageReceipt(dir, r)
@@ -248,6 +270,6 @@ func laneHasHeldMessageExcept(root *os.File, lane, reviewedRun string) (bool, er
 			held = true
 		}
 		return nil
-	})
+	}, scans...)
 	return held, err
 }

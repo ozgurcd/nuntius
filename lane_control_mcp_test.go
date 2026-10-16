@@ -383,8 +383,8 @@ func laneMCPLockedExchange(t *testing.T, m *Manager) {
 		t.Fatal("locked response absent")
 	}
 	v := laneMCPStructured(t, response, true)
-	if v["code"] != "locked" || v["lane_control"] != nil {
-		t.Fatal("bounded lock refusal absent")
+	if v["code"] != "locked" || v["lane_control"] == nil {
+		t.Fatal("bounded mutation refusal or unlocked advisory snapshot absent")
 	}
 }
 

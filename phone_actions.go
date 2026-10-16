@@ -141,12 +141,17 @@ func (w *Web) phoneCapabilities(ctx context.Context) (map[string]phoneAction, st
 		}
 		return result, ""
 	}
-	if _, err := w.manager.Status(); err != nil {
+	snapshot, err := w.manager.displaySnapshot(ctx)
+	if err != nil {
 		return refuse("configuration_unavailable")
 	}
-	w.manager.mu.Lock()
-	c := w.manager.config
-	w.manager.mu.Unlock()
+	c := snapshot.config
+	// A menu setting saved in this process is visible immediately. Contention
+	// retains the advisory snapshot instead of waiting on a serving writer.
+	if w.manager.mu.TryLock() {
+		c = cloneDisplayConfig(w.manager.config)
+		w.manager.mu.Unlock()
+	}
 	if w.allowHost == "" {
 		if w.phoneFallback != "" {
 			return refuse(w.phoneFallback)

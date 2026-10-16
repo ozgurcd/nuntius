@@ -350,7 +350,25 @@ func TestGoalCLIRetryLater(t *testing.T) {
 }
 
 func TestGoalCLIResume(t *testing.T) {
-	m, parent, h, _ := linkedHeld(t)
+	prior, parent, h, _ := linkedHeld(t)
+	// This checks explicit resume/end bookkeeping. A periodic repair pass can
+	// occupy the bounded Status wait while the child has already ended. Keep
+	// the real follow worker, with a healthy owner and the same run limits.
+	if err := prior.Close(); err != nil {
+		t.Fatal("close setup owner")
+	}
+	m, err := newReadManager(prior.config, prior.store)
+	if err != nil {
+		t.Fatal("quiet resume fixture")
+	}
+	m.readOnly = false
+	m.continuationResolver = prior.continuationResolver
+	m.Grace = prior.Grace
+	t.Cleanup(func() { _ = m.Close() })
+	linkedCleanup(t, m)
+	if m.life == nil || m.life.Err() != nil {
+		t.Fatal("resume fixture must have a live owner")
+	}
 	linkedControl(t, m, false)
 	id, err := m.sendHeld(h, nil)
 	if err != nil {
@@ -364,6 +382,17 @@ func TestGoalCLIResume(t *testing.T) {
 	if err = m.Cancel(parent.Lane); err != nil {
 		t.Fatal("stop owned fixture")
 	}
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		observed, readErr := loadRun(filepath.Join(m.store, "runs", child.ID), child.ID)
+		if readErr != nil || observed == nil {
+			t.Log("cancel diagnosis: child metadata unavailable")
+			return
+		}
+		t.Logf("cancel diagnosis: state=%s reason=%s stop=%t ended=%t same=%t gone=%t follows=%d owner_cancelled=%t", observed.State, observed.StopReason, observed.StopAt != nil, observed.Ended != nil, sameProcess(*observed), goalAttemptDefinitelyGone(*observed), m.followCount.Load(), m.life.Err() != nil)
+	})
 	waitState(t, m, parent.Lane, "ended")
 	if !goalAttemptDefinitelyGone(*child) {
 		t.Fatal("child still live")

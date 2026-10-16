@@ -40,8 +40,45 @@ func settingsFixture(t *testing.T) (*Manager, *Web, string) {
 	}
 	return m, w, p
 }
+
+// settingsQuietFixture keeps a live settings owner without periodic Status
+// workers competing with the locks that these offline proofs control.
+func settingsQuietFixture(t *testing.T) (*Manager, *Web, string) {
+	t.Helper()
+	prior, _, path := settingsFixture(t)
+	if err := prior.Close(); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SourcePath = path
+	m, err := newReadManager(c, prior.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.readOnly = false
+	t.Cleanup(func() {
+		if err := m.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if m.life == nil || m.life.Err() != nil {
+		t.Fatal("settings fixture must have a live owner")
+	}
+	w, err := NewWeb(m, "127.0.0.1:8123", "fixture.ts.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m, w, path
+}
+
 func settingsHTTP(t *testing.T, w *Web, method, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	if w.manager.life == nil || w.manager.life.Err() != nil {
+		t.Fatal("settings fixture must have a live owner")
+	}
 	r := httptest.NewRequest(method, "http://localhost:8123/settings", strings.NewReader(body))
 	r.Header.Set("X-Nuntius-Token", w.token)
 	r.Header.Set("Origin", "http://localhost:8123")
@@ -106,24 +143,20 @@ func TestSettingsStrictFraming(t *testing.T) {
 }
 
 func TestSettingsConflictLocksAndParity(t *testing.T) {
-	m, w, p := settingsFixture(t)
-	// These assertions control lock ownership explicitly. Stop the unused
-	// periodic Status workers so they cannot independently produce a valid 503.
-	if err := m.Close(); err != nil {
-		t.Fatal(err)
-	}
+	m, w, p := settingsQuietFixture(t)
 	revision := settingsRevision(t, w)
 	c, err := LoadConfig(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := NewManager(c, m.store)
+	other, err := newReadManager(c, m.store)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer other.Close()
-	if err := other.Close(); err != nil {
-		t.Fatal(err)
+	other.readOnly = false
+	if other.life == nil || other.life.Err() != nil {
+		t.Fatal("settings sibling fixture must have a live owner")
 	}
 	if other.SetPool(p, "claude", 3, false) != nil {
 		t.Fatal("CLI writer failed")
@@ -200,10 +233,7 @@ func TestSettingsConflictLocksAndParity(t *testing.T) {
 }
 
 func TestSettingsRevisionIgnoresFileMetadata(t *testing.T) {
-	m, w, p := settingsFixture(t)
-	if err := m.Close(); err != nil {
-		t.Fatal(err)
-	}
+	_, w, p := settingsQuietFixture(t)
 	stamp := time.Unix(1700000000, 0)
 	if err := os.Chtimes(p, stamp, stamp); err != nil {
 		t.Fatal(err)
@@ -251,10 +281,7 @@ func TestSettingsRevisionIgnoresFileMetadata(t *testing.T) {
 }
 
 func TestSettingsStaleRevisionWhileLocked(t *testing.T) {
-	m, w, p := settingsFixture(t)
-	if err := m.Close(); err != nil {
-		t.Fatal(err)
-	}
+	m, w, p := settingsQuietFixture(t)
 	revision := settingsRevision(t, w)
 	if err := m.SetPool(p, "claude", 3, false); err != nil {
 		t.Fatal(err)

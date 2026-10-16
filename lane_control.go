@@ -2,6 +2,7 @@ package nuntius
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,7 +14,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -277,6 +278,16 @@ func (m *Manager) laneControlSnapshotLocked(runs []Run, locked bool) laneControl
 }
 
 func (m *Manager) projectLaneControls(s laneControlStore, root *os.File, runs []Run, available bool) laneControlSnapshot {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	held, err := map[string]bool{}, error(nil)
+	if root != nil {
+		held, err = heldMessagesByLane(ctx, root, runs)
+	}
+	return m.projectLaneControlsHeld(s, runs, available, held, err)
+}
+
+func (m *Manager) projectLaneControlsHeld(s laneControlStore, runs []Run, available bool, held map[string]bool, heldErr error) laneControlSnapshot {
 	views := map[string]laneControlView{}
 	for name, r := range s.Lanes {
 		views[name] = laneControlView{Name: name, laneControlRecord: r}
@@ -300,16 +311,11 @@ func (m *Manager) projectLaneControls(s laneControlStore, root *os.File, runs []
 			r.Phase = "unavailable"
 			r.Blockers = append(r.Blockers, "not_configured")
 		}
+		r.Blockers = append(r.Blockers, lanePolicyBlockers(r.Paused, frozen != nil, freezeErr != nil, held[r.Name], heldErr != nil)...)
 		if r.Paused {
-			r.Blockers = append(r.Blockers, "lane_paused")
 			if available && r.Configured {
 				r.Phase = "paused"
 			}
-		}
-		if freezeErr != nil {
-			r.Blockers = append(r.Blockers, "freeze_unavailable")
-		} else if frozen != nil {
-			r.Blockers = append(r.Blockers, "frozen")
 		}
 		for _, run := range runs {
 			if run.Lane != r.Name {
@@ -319,24 +325,13 @@ func (m *Manager) projectLaneControls(s laneControlStore, root *os.File, runs []
 			// mutation results and refusal fallbacks. Never recover, supervise
 			// or persist history while constructing a control snapshot.
 			m.observeEndedRun(&run)
+			r.Blockers = append(r.Blockers, runEligibilityBlockers(run)...)
 			if run.State == "running" {
-				r.Blockers = append(r.Blockers, "running")
 				if r.Paused && available && r.Configured {
 					r.Phase = "draining"
 				}
 			}
-			if run.WaitingToResume {
-				r.Blockers = append(r.Blockers, "waiting_to_resume")
-			}
 			break
-		}
-		if root != nil {
-			held, err := laneHasHeldMessage(root, r.Name)
-			if err != nil {
-				r.Blockers = append(r.Blockers, "held_message_unavailable")
-			} else if held {
-				r.Blockers = append(r.Blockers, "held_message")
-			}
 		}
 		r.DispatchEligible = len(r.Blockers) == 0
 		r.Explanation = laneControlExplanation(r)
@@ -395,30 +390,44 @@ func laneControlExplanation(v laneControlView) string {
 // operation's lock explicitly before Close, so an unrelated pre-exec child
 // cannot keep a completed operation locked.
 type controlFileLock struct {
+	metricSite int
+	acquiredAt time.Time
 	*os.File
-	mu       sync.Mutex
-	closed   bool
+	closed   atomic.Bool
+	use      atomic.Uint32 // 0 idle, 1 borrowed, 2 release pending, 3 released
 	owner    *controlLockOwner
 	acquired bool
 }
 
 func (lock *controlFileLock) Close() error {
-	lock.mu.Lock()
-	defer lock.mu.Unlock()
-	if lock.closed {
+	if lock.closed.Swap(true) {
 		return os.ErrClosed
 	}
-	lock.closed = true
+	if lock.use.Swap(2) == 1 {
+		// The synchronous borrower owns final cleanup. It always defers
+		// releaseUse, including on cancellation; no worker or wait is needed.
+		return nil
+	}
+	lock.use.Store(3)
+	return lock.release()
+}
+
+func (lock *controlFileLock) releaseUse() {
+	if !lock.use.CompareAndSwap(1, 0) && lock.use.CompareAndSwap(2, 3) {
+		_ = lock.release()
+	}
+}
+
+func (lock *controlFileLock) release() error {
 	var err error
 	if lock.acquired {
+		controlMetric(lock.metricSite, 1, time.Since(lock.acquiredAt))
 		err = unix.Flock(int(lock.File.Fd()), unix.LOCK_UN)
 	}
 	err = errors.Join(err, lock.File.Close())
 	if lock.owner != nil {
-		processControlLocks.Lock()
-		delete(processControlLocks.owners, lock.owner.identity)
+		lock.owner.slot.CompareAndSwap(lock.owner, nil)
 		close(lock.owner.done)
-		processControlLocks.Unlock()
 	}
 	return err
 }
@@ -442,13 +451,13 @@ func (m *Manager) admissionControlLock() (*controlFileLock, error) {
 	return m.admissionControlLockWithin(controlLockWait)
 }
 
-func (m *Manager) admissionControlLockWithin(wait time.Duration) (*controlFileLock, error) {
+func (m *Manager) admissionControlLockWithin(wait time.Duration, contexts ...context.Context) (*controlFileLock, error) {
 	root, err := openLaneControlRoot(m.store)
 	if err != nil {
 		return nil, errLaneControlUnavailable
 	}
 	defer root.Close()
-	lock, err := acquireControlLock(root, unix.LOCK_EX, false, wait)
+	lock, err := acquireControlLock(root, unix.LOCK_EX, false, wait, contexts...)
 	if err != nil {
 		return nil, err
 	}
@@ -502,13 +511,41 @@ func (e *laneAdmissionFault) Error() string { return e.Code }
 // control lock must already be held; never call a lock-acquiring snapshot or
 // intent reconciliation here. Every launch (including follow/Recover) uses it
 // before allocating an ID, prompt, run directory or child.
-func (m *Manager) admitLaneLocked(name string) error {
-	return m.admitLaneExceptLocked(name, "")
+func (m *Manager) admitLaneLocked(name string, parents ...context.Context) error {
+	return m.admitLaneExceptLocked(name, "", parents...)
 }
 
 // The sole exemption is an original reservation validated under these same
 // locks by the internal message protocol. Ordinary callers pass no exemption.
-func (m *Manager) admitLaneExceptLocked(name, reviewedRun string) error {
+func (m *Manager) admitLaneExceptLocked(name, reviewedRun string, parents ...context.Context) error {
+	return m.admitLaneHistoryLocked(name, reviewedRun, nil, parents...)
+}
+
+// history is an optional bounded output, consumed before the caller releases
+// its existing EX guard. It is never stored on the manager or reused later.
+func (m *Manager) admitLaneHistoryLocked(name, reviewedRun string, history *[]Run, parents ...context.Context) error {
+	parent := m.life
+	if m.launcher != nil && m.launcher.ctx != nil {
+		parent = m.launcher.ctx
+	}
+	if len(parents) > 1 || len(parents) == 1 && parents[0] == nil {
+		return errLaneControlUnavailable
+	}
+	if len(parents) == 1 {
+		parent = parents[0]
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx := parent
+	if len(parents) == 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(parent, dispatchControlLockWait)
+		defer cancel()
+	}
+	if ctx.Err() != nil {
+		return &laneControlFault{Code: "locked"}
+	}
 	if _, err := m.lane(name); err != nil {
 		return err
 	}
@@ -529,31 +566,32 @@ func (m *Manager) admitLaneExceptLocked(name, reviewedRun string) error {
 	if err != nil {
 		return errLaneControlUnavailable
 	}
+	frozen, freezeErr := m.freezeState()
 	if controls.Lanes[name].Paused {
-		blockers := []string{"lane_paused"}
-		frozen, err := m.freezeState()
-		if err != nil {
-			blockers = append(blockers, "freeze_unavailable")
-		} else if frozen != nil {
-			blockers = append(blockers, "frozen")
-		}
+		blockers := lanePolicyBlockers(true, frozen != nil, freezeErr != nil, false, false)
 		return &laneAdmissionFault{Code: "lane_paused", Lane: name, Paused: true, Blockers: blockers}
 	}
 	root, err = openLaneControlRoot(m.store)
 	if err != nil {
 		return errLaneControlUnavailable
 	}
-	var held bool
-	if reviewedRun == "" {
-		held, err = laneHasHeldMessage(root, name)
-	} else {
-		held, err = laneHasHeldMessageExcept(root, name, reviewedRun)
-	}
+	m.admissionScans.Add(1)
+	held, err := laneHasHeldMessageExcept(root, name, reviewedRun, runMetadataScan{ctx: ctx, cache: m.metadataCache(), history: history})
 	root.Close()
+	if ctx.Err() != nil {
+		return &laneControlFault{Code: "locked"}
+	}
 	if err != nil {
 		return errLaneControlUnavailable
 	}
-	if held {
+	blockers := lanePolicyBlockers(false, frozen != nil, freezeErr != nil, held, false)
+	if slices.Contains(blockers, "freeze_unavailable") {
+		return errLaneControlUnavailable
+	}
+	if slices.Contains(blockers, "frozen") {
+		return m.checkFrozen()
+	}
+	if slices.Contains(blockers, "held_message") {
 		return errors.New("pending_message_requires_review")
 	}
 	return nil
@@ -1055,6 +1093,7 @@ func appendLaneControlRow(root *os.File, row map[string]any, ops *laneControlIO,
 }
 
 func replaceLaneControl(root *os.File, target string, b []byte, ops *laneControlIO, stage string) error {
+	defer controlDisplayChange.Add(1)
 	// Refuse unsafe existing targets before any replacement. All names here
 	// are fixed or formed from validated exact lane names, never caller paths.
 	fd, err := unix.Openat(int(root.Fd()), target, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)

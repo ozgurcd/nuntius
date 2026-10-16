@@ -2,6 +2,7 @@ package nuntius
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -20,18 +21,7 @@ type FreezeState struct {
 }
 
 func (m *Manager) StatusView() (any, error) {
-	var controls laneControlSnapshot
-	rows, e := m.status(true, &controls)
-	if e != nil {
-		return nil, e
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	f, e := m.freezeState()
-	if e != nil {
-		return nil, e
-	}
-	return map[string]any{"frozen": f != nil, "freeze": f, "lanes": rows, "lane_control_version": 1, "lane_control": controls}, nil
+	return m.StatusViewContext(context.Background())
 }
 
 func (m *Manager) freezeState() (*FreezeState, error) {
@@ -258,25 +248,50 @@ func (m *Manager) AckOwnerNotes(ids []string) error {
 }
 
 func (m *Manager) history() ([]Run, error) {
-	entries, e := os.ReadDir(filepath.Join(m.store, "runs"))
-	if e != nil {
-		return nil, e
+	return m.historyContext(context.Background())
+}
+
+func (m *Manager) readHistoryEntries(ctx context.Context, entries []os.DirEntry) ([]Run, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	if len(entries) > 10000 {
-		return nil, errors.New("run store exceeds 10000 entries")
+	root, err := openLaneControlRoot(m.store)
+	if err != nil {
+		return nil, errLaneControlUnavailable
 	}
+	defer root.Close()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	runs, err := heldDirectory(root, "runs")
+	if err != nil {
+		return nil, err
+	}
+	defer runs.Close()
 	out := []Run{}
 	for _, entry := range entries {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if strings.HasPrefix(entry.Name(), ".pending-") && runPattern.MatchString(strings.TrimPrefix(entry.Name(), ".pending-")) {
 			continue
 		}
 		if !runPattern.MatchString(entry.Name()) || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			return nil, errors.New("invalid run directory")
 		}
-		r, e := loadRun(filepath.Join(m.store, "runs", entry.Name()), entry.Name())
+		dir, e := heldDirectory(runs, entry.Name())
 		if e != nil {
 			return nil, e
 		}
+		b, e := m.metadataCache().read(ctx, dir, entry.Name())
+		dir.Close()
+		if errors.Is(e, errRunMetadataLimit) {
+			continue
+		}
+		if e != nil {
+			return nil, e
+		}
+		r := decodeRunMetadata(b, entry.Name())
 		if r != nil {
 			out = append(out, *r)
 		}

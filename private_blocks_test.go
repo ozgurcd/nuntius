@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func privateMessage(text string) []byte {
@@ -17,6 +18,20 @@ func privateMessage(text string) []byte {
 func assertPrivateOutputs(t *testing.T, m *Manager, path, body string) {
 	t.Helper()
 	for range 2 { // Cold/rebuilt and digest-reused windows.
+		// Exercise a genuinely cold dashboard before Tail warms any event cache.
+		w, err := NewWeb(m, "127.0.0.1:0")
+		if err != nil {
+			t.Fatal("web fixture failed")
+		}
+		request := httptest.NewRequest("GET", "http://127.0.0.1:0/data", nil)
+		request.Header.Set("X-Nuntius-Token", w.token)
+		out := httptest.NewRecorder()
+		started := time.Now()
+		w.ServeHTTP(out, request)
+		t.Logf("private_boundary_http_status=%d contains_private=%t elapsed_ms=%.3f", out.Code, strings.Contains(out.Body.String(), body), float64(time.Since(started))/float64(time.Millisecond))
+		if out.Code != 200 || strings.Contains(out.Body.String(), body) {
+			t.Error("private body reached authenticated data or request failed")
+		}
 		rows, err := m.Tail("claude", 50)
 		if err != nil || strings.Contains(strings.Join(rows, "\n"), body) {
 			t.Error("private body reached Tail or tail read failed")
@@ -30,17 +45,6 @@ func assertPrivateOutputs(t *testing.T, m *Manager, path, body string) {
 				t.Error("private body reached uncached actions")
 				break
 			}
-		}
-		w, err := NewWeb(m, "127.0.0.1:0")
-		if err != nil {
-			t.Fatal("web fixture failed")
-		}
-		request := httptest.NewRequest("GET", "http://127.0.0.1:0/data", nil)
-		request.Header.Set("X-Nuntius-Token", w.token)
-		out := httptest.NewRecorder()
-		w.ServeHTTP(out, request)
-		if out.Code != 200 || strings.Contains(out.Body.String(), body) {
-			t.Error("private body reached authenticated data or request failed")
 		}
 		for _, window := range m.eventWindows {
 			if strings.Contains(window.final+strings.Join(window.tail, "\n")+window.latest.Summary, body) {

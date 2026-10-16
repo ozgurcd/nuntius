@@ -135,7 +135,11 @@ for the owner. History links the chain and displays `Ended · resumed 1/2`
 (or the failed, cancelled or timed-out outcome with the same count).
 
 A busy lane leaves the interrupted goal `waiting to resume`. The running MCP
-server retries when the lane frees. Freeze prevents launching; cancellation
+server checks recovery at startup and then every ten seconds. Survivor adoption
+and ordinary cleanup still run on the writable watcher, which waits one second
+between completed passes instead of catching up after a slow scan. A newly
+eligible automatic resume may therefore wait for the next ten-second check.
+Freeze prevents launching; cancellation
 and timeout never trigger recovery. Disabled or removed lanes retain their
 interrupted records. `status`, `agents`, `history` and web views only display
 and observe; they never launch recovery. Without MCP, run `recover` again after
